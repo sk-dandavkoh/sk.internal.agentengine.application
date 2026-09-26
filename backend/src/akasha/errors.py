@@ -35,3 +35,24 @@ class InvalidStateTransitionError(AkashaError):
 
     code = "INVALID_STATE_TRANSITION"
     http_status = 409
+
+
+class NodeContractError(AkashaError):
+    """A Node definition itself is malformed (developer error, not user data)."""
+
+    code = "NODE_CONTRACT_ERROR"
+    http_status = 500
+
+
+class NodeConfigurationError(AkashaError):
+    """A node instance's configuration violates the node's config schema."""
+
+    code = "NODE_CONFIGURATION_ERROR"
+    http_status = 422
+
+
+class NodeValidationError(AkashaError):
+    """Runtime values for a node's ports violate the port contract."""
+
+    code = "NODE_VALIDATION_ERROR"
+    http_status = 422
