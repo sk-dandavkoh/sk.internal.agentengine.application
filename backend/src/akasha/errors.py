@@ -21,3 +21,17 @@ class AkashaError(Exception):
 class ConfigurationError(AkashaError):
     code = "CONFIGURATION_ERROR"
     http_status = 500
+
+
+class DomainValidationError(AkashaError):
+    """A domain invariant was violated (bad construction or invalid edge)."""
+
+    code = "DOMAIN_VALIDATION_ERROR"
+    http_status = 422
+
+
+class InvalidStateTransitionError(AkashaError):
+    """A lifecycle state transition is not legal from the current state."""
+
+    code = "INVALID_STATE_TRANSITION"
+    http_status = 409
