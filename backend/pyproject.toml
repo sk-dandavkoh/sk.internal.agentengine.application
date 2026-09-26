@@ -1,0 +1,43 @@
+[project]
+name = "akasha-engine"
+version = "0.1.0"
+description = "Self-hosted AI Agent Orchestration Engine — backend"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.scripts]
+akasha = "akasha.main:main"
+
+[dependency-groups]
+dev = [
+    "pytest~=9.0",
+    "ruff~=0.14",
+    "mypy~=1.18",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/akasha"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v"
+
+[tool.ruff]
+src = ["src", "tests"]
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC", "S", "T20", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]  # assert is the pytest idiom
+
+[tool.mypy]
+mypy_path = "src"
+packages = ["akasha"]
+strict = true
