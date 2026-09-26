@@ -1,17 +1,18 @@
-"""Application entry point.
+"""Process entry point: load config, build the app, serve it with uvicorn."""
 
-Phase 00 scope: proves the process starts. Bootstrap, configuration and the
-HTTP server are introduced in Phase 01.
-"""
+import uvicorn
 
-import sys
-
-from akasha import __version__
+from akasha.config import Settings, load_settings
 
 
 def main() -> int:
-    """Start the backend process."""
-    sys.stdout.write(f"akasha-engine {__version__}\n")
+    settings: Settings = load_settings()  # fails fast on invalid config
+    uvicorn.run(
+        "akasha.api.app:create_app",
+        factory=True,
+        host=settings.host,
+        port=settings.port,
+    )
     return 0
 
 

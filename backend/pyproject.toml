@@ -4,7 +4,11 @@ version = "0.1.0"
 description = "Self-hosted AI Agent Orchestration Engine — backend"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "fastapi>=0.141.1",
+    "pydantic-settings>=2.15.0",
+    "uvicorn[standard]>=0.54.0",
+]
 
 [project.scripts]
 akasha = "akasha.main:main"
@@ -14,6 +18,7 @@ dev = [
     "pytest~=9.0",
     "ruff~=0.14",
     "mypy~=1.18",
+    "httpx>=0.28.1",
 ]
 
 [build-system]
