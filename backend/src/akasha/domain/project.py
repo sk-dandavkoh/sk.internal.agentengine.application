@@ -6,12 +6,15 @@ ProjectVersion; afterwards no draft mutation can reach the version
 monotonically increasing and unique per project.
 """
 
+from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum, auto
 
 from akasha.domain.graph import Graph
+from akasha.domain.graph_validation import ValidationResult, validate_graph
+from akasha.domain.node import NodeDefinition
 from akasha.domain.primitives import (
     Entity,
     Timestamps,
@@ -58,6 +61,14 @@ class ProjectDraft:
     triggers: list[Trigger] = field(default_factory=list)
     dependencies: list[Dependency] = field(default_factory=list)
     description: str = ""
+
+    def validate(self, definitions: Mapping[str, NodeDefinition]) -> ValidationResult:
+        """Full graph validation without executing (roadmap Phase 04).
+
+        Callers (ValidateProject / PublishProject, Phase 06) decide what to
+        do with the issues; the draft itself never raises on user data here.
+        """
+        return validate_graph(self.graph, definitions)
 
     def publish(
         self,

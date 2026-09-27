@@ -84,3 +84,14 @@ class Graph:
         if edge in self.edges:
             raise DomainValidationError("duplicate edge")
         self.edges.append(edge)
+
+    def remove_edge(self, edge: Edge) -> None:
+        if edge not in self.edges:
+            raise DomainValidationError("unknown edge")
+        self.edges.remove(edge)
+
+    def node(self, node_id: str) -> NodeInstance:
+        try:
+            return self.nodes[node_id]
+        except KeyError:
+            raise DomainValidationError(f"unknown node: {node_id}") from None
