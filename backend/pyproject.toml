@@ -5,8 +5,12 @@ description = "Self-hosted AI Agent Orchestration Engine — backend"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "alembic>=1.14",
+    "asyncpg>=0.30",
     "fastapi>=0.141.1",
+    "psycopg[binary]>=3.2",
     "pydantic-settings>=2.15.0",
+    "sqlalchemy[asyncio]>=2.0",
     "uvicorn[standard]>=0.54.0",
 ]
 
@@ -20,6 +24,8 @@ dev = [
     "mypy~=1.18",
     "httpx>=0.28.1",
     "hypothesis>=6.168.2",
+    "testcontainers[postgres]>=4.10",
+    "pytest-asyncio>=0.25",
 ]
 
 [build-system]
@@ -32,6 +38,9 @@ packages = ["src/akasha"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
 
 [tool.ruff]
 src = ["src", "tests"]
@@ -47,3 +56,5 @@ select = ["E", "F", "I", "UP", "B", "ASYNC", "S", "T20", "RUF"]
 mypy_path = "src"
 packages = ["akasha"]
 strict = true
+# Without package bases, two conftest.py files collide as the same module.
+explicit_package_bases = true

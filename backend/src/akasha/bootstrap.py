@@ -9,6 +9,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
 from akasha.config import Settings
+from akasha.infrastructure.database import Database, normalize_async_url
 
 # A readiness check returns None when healthy, or a human-readable reason.
 ReadyCheck = Callable[[], Awaitable[str | None]]
@@ -16,9 +17,11 @@ ReadyCheck = Callable[[], Awaitable[str | None]]
 
 @dataclass
 class Container:
-    """Composition root. Later phases register repositories/services here."""
+    """Composition root. Repositories per Phase 05 are constructed from
+    ``database`` at the use-site (one UnitOfWork per transaction boundary)."""
 
     settings: Settings
+    database: Database | None = None
     ready_checks: dict[str, ReadyCheck] = field(default_factory=dict)
 
     async def readiness_failures(self) -> dict[str, str]:
@@ -30,6 +33,22 @@ class Container:
                 failures[name] = reason
         return failures
 
+    async def shutdown(self) -> None:
+        """Release resources held by the container (connections, pools)."""
+        if self.database is not None:
+            await self.database.dispose()
+
 
 def create_container(settings: Settings) -> Container:
-    return Container(settings=settings)
+    """Wire infrastructure from configuration.
+
+    A missing ``database_url`` yields a container *without* a database: the
+    engine still boots (persistence consumers fail at use), but readiness
+    has nothing to check. Tests inject their own container.
+    """
+    database: Database | None = None
+    ready_checks: dict[str, ReadyCheck] = {}
+    if settings.database_url:
+        database = Database(normalize_async_url(settings.database_url))
+        ready_checks["database"] = database.check
+    return Container(settings=settings, database=database, ready_checks=ready_checks)

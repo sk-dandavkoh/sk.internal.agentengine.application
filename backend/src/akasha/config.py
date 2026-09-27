@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     host: str = "127.0.0.1"
     port: int = 8000
     log_level: str = "INFO"
+    database_url: str | None = None  # required when persistence is enabled
 
 
 def load_settings() -> Settings:
