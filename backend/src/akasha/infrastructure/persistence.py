@@ -6,8 +6,9 @@ Repositories see an externally owned ``AsyncSession``; commits and rollbacks
 are the exclusive job of ``SqlAlchemyUnitOfWork`` (backend/AGENTS.md §16).
 """
 
+import json
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import TracebackType
 from typing import Any, cast
 
@@ -18,10 +19,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from akasha.application.persistence import (
     ConcurrentModificationError,
+    ExecutionRepository,
     ProjectRepository,
     ProjectVersionRepository,
     UnitOfWork,
 )
+from akasha.domain.execution import (
+    CancellationState,
+    Execution,
+    ExecutionError,
+    ExecutionMetadata,
+    ExecutionStatus,
+    NodeExecution,
+    NodeExecutionStatus,
+    RetryPolicy,
+    TimeoutPolicy,
+)
+from akasha.domain.node import NodeErrorKind
 from akasha.domain.primitives import Timestamps
 from akasha.domain.project import (
     Project,
@@ -29,6 +43,8 @@ from akasha.domain.project import (
     ProjectStatus,
     ProjectVersion,
 )
+from akasha.domain.trigger import TriggerType
+from akasha.errors import DomainValidationError
 from akasha.infrastructure import db_models as m
 from akasha.infrastructure.database import Database
 from akasha.infrastructure.graph_serialization import (
@@ -226,6 +242,258 @@ class SqlAlchemyProjectVersionRepository(ProjectVersionRepository):
         )
 
 
+class SqlAlchemyExecutionRepository(ExecutionRepository):
+    def __init__(
+        self, session: AsyncSession, versions: ProjectVersionRepository
+    ) -> None:
+        self._session = session
+        self._versions = versions
+
+    async def get(self, execution_id: str) -> Execution | None:
+        # FOR SHARE: the execution row and its node rows are read by two
+        # statements; under READ COMMITTED a writer committing in between
+        # would yield a torn aggregate (e.g. QUEUED execution with READY
+        # nodes). Writers update the execution row first, so holding a share
+        # lock on it makes both reads see the same committed state.
+        row = (
+            (
+                await self._session.execute(
+                    select(m.executions)
+                    .where(m.executions.c.id == execution_id)
+                    .with_for_update(read=True)
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if row is None:
+            return None
+        version = await self._versions.get(row["project_id"], row["project_version"])
+        if version is None:  # unreachable while the FK holds
+            raise DomainValidationError(
+                "execution references a missing project version",
+                details={"execution_id": execution_id},
+            )
+        node_rows = (
+            (
+                await self._session.execute(
+                    select(m.node_executions)
+                    .where(m.node_executions.c.execution_id == execution_id)
+                    .order_by(m.node_executions.c.node_id)
+                )
+            )
+            .mappings()
+            .all()
+        )
+        nodes = [_node_to_domain(r) for r in node_rows]
+        return Execution(
+            id=row["id"],
+            project_id=row["project_id"],
+            project_version=version,
+            metadata=_metadata(row["metadata"]),
+            retry_policy=_retry_policy(row["retry_policy"]),
+            timeout_policy=_timeout_policy(row["timeout_policy"]),
+            status=ExecutionStatus(row["status"]),
+            node_executions={ne.node_id: ne for ne in nodes},
+            error=None if row["error"] is None else _error(row["error"]),
+            cancellation=None
+            if row["cancellation"] is None
+            else CancellationState(
+                requested_at=datetime.fromisoformat(
+                    row["cancellation"]["requested_at"]
+                ),
+                reason=row["cancellation"]["reason"],
+            ),
+            created_at=_ensure_utc(row["created_at"]),
+            started_at=_opt_utc(row["started_at"]),
+            finished_at=_opt_utc(row["finished_at"]),
+            revision=row["revision"],
+        )
+
+    async def save(self, execution: Execution) -> None:
+        e = execution
+        values = {
+            "status": e.status.value,
+            "metadata": {
+                "trigger_type": e.metadata.trigger_type.value,
+                "trigger_id": e.metadata.trigger_id,
+                "correlation_id": e.metadata.correlation_id,
+                "engine_version": e.metadata.engine_version,
+            },
+            "retry_policy": {
+                "max_attempts": e.retry_policy.max_attempts,
+                "initial_backoff_s": e.retry_policy.initial_backoff.total_seconds(),
+                "backoff_multiplier": e.retry_policy.backoff_multiplier,
+                "max_backoff_s": e.retry_policy.max_backoff.total_seconds(),
+                "retryable_kinds": sorted(
+                    k.value for k in e.retry_policy.retryable_kinds
+                ),
+            },
+            "timeout_policy": {
+                "execution_timeout_s": _seconds(e.timeout_policy.execution_timeout),
+                "node_timeout_s": _seconds(e.timeout_policy.node_timeout),
+            },
+            "error": None if e.error is None else _error_doc(e.error),
+            "cancellation": None
+            if e.cancellation is None
+            else {
+                "requested_at": e.cancellation.requested_at.isoformat(),
+                "reason": e.cancellation.reason,
+            },
+            "revision": e.revision + 1,
+            "created_at": e.created_at,
+            "started_at": e.started_at,
+            "finished_at": e.finished_at,
+        }
+        # Same single-statement CAS as projects (see there): a second writer
+        # holding a stale revision loses instead of interleaving state.
+        if e.revision == 0:
+            stmt: Insert | Update = (
+                pg_insert(m.executions)
+                .values(
+                    id=e.id,
+                    project_id=e.project_id,
+                    project_version=e.project_version.version,
+                    **values,
+                )
+                .on_conflict_do_nothing(index_elements=[m.executions.c.id])
+            )
+        else:
+            stmt = (
+                m.executions.update()
+                .where(m.executions.c.id == e.id, m.executions.c.revision == e.revision)
+                .values(**values)
+            )
+        result = cast("CursorResult[Any]", await self._session.execute(stmt))
+        if result.rowcount != 1:
+            raise ConcurrentModificationError(
+                "The execution was modified concurrently; reload and retry.",
+                details={"execution_id": e.id},
+            )
+        rows = [_node_row(e.id, ne) for ne in e.node_executions.values()]
+        if rows:
+            # ponytail: rewrites every node row per save (O(nodes) per
+            # transition); track dirty nodes when graphs get large (Phase 24).
+            upsert = pg_insert(m.node_executions).values(rows)
+            await self._session.execute(
+                upsert.on_conflict_do_update(
+                    index_elements=[m.node_executions.c.id],
+                    set_={
+                        col: upsert.excluded[col]
+                        for col in rows[0]
+                        if col not in ("id", "execution_id", "node_id")
+                    },
+                )
+            )
+        e.revision += 1
+
+
+def _opt_utc(dt: datetime | None) -> datetime | None:
+    return None if dt is None else _ensure_utc(dt)
+
+
+def _seconds(td: timedelta | None) -> float | None:
+    return None if td is None else td.total_seconds()
+
+
+def _opt_timedelta(seconds: float | None) -> timedelta | None:
+    return None if seconds is None else timedelta(seconds=seconds)
+
+
+def _error_doc(error: ExecutionError) -> dict[str, Any]:
+    return {
+        "code": error.code,
+        "message": error.message,
+        "kind": error.kind.value,
+        "node_id": error.node_id,
+        "details": dict(error.details),
+    }
+
+
+def _error(doc: dict[str, Any]) -> ExecutionError:
+    return ExecutionError(
+        code=doc["code"],
+        message=doc["message"],
+        kind=NodeErrorKind(doc["kind"]),
+        node_id=doc["node_id"],
+        details=doc["details"],
+    )
+
+
+def _metadata(doc: dict[str, Any]) -> ExecutionMetadata:
+    return ExecutionMetadata(
+        trigger_type=TriggerType(doc["trigger_type"]),
+        trigger_id=doc["trigger_id"],
+        correlation_id=doc["correlation_id"],
+        engine_version=doc["engine_version"],
+    )
+
+
+def _retry_policy(doc: dict[str, Any]) -> RetryPolicy:
+    return RetryPolicy(
+        max_attempts=doc["max_attempts"],
+        initial_backoff=timedelta(seconds=doc["initial_backoff_s"]),
+        backoff_multiplier=doc["backoff_multiplier"],
+        max_backoff=timedelta(seconds=doc["max_backoff_s"]),
+        retryable_kinds=frozenset(NodeErrorKind(k) for k in doc["retryable_kinds"]),
+    )
+
+
+def _timeout_policy(doc: dict[str, Any]) -> TimeoutPolicy:
+    return TimeoutPolicy(
+        execution_timeout=_opt_timedelta(doc["execution_timeout_s"]),
+        node_timeout=_opt_timedelta(doc["node_timeout_s"]),
+    )
+
+
+def _persistable(outputs: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Node outputs as JSONB. Values JSON cannot hold (bytes, objects) are
+    stored as a type stub — persisted outputs are an inspection record, the
+    runtime propagates the in-memory values."""
+    if outputs is None:
+        return None
+    try:
+        doc: dict[str, Any] = json.loads(
+            json.dumps(
+                outputs,
+                allow_nan=False,  # JSONB rejects NaN/Infinity
+                default=lambda v: {"$unpersisted": type(v).__name__},
+            )
+        )
+    except (TypeError, ValueError):  # e.g. NaN, circular data, tuple keys
+        return {"$unpersisted": "value not representable as JSON"}
+    return doc
+
+
+def _node_row(execution_id: str, ne: NodeExecution) -> dict[str, Any]:
+    return {
+        "id": ne.id,
+        "execution_id": execution_id,
+        "node_id": ne.node_id,
+        "status": ne.status.value,
+        "attempt": ne.attempt,
+        "failures": [_error_doc(f) for f in ne.failures],
+        "outputs": _persistable(ne.outputs),
+        "retry_at": ne.retry_at,
+        "started_at": ne.started_at,
+        "finished_at": ne.finished_at,
+    }
+
+
+def _node_to_domain(row: RowMapping) -> NodeExecution:
+    return NodeExecution(
+        id=row["id"],
+        node_id=row["node_id"],
+        status=NodeExecutionStatus(row["status"]),
+        attempt=row["attempt"],
+        failures=[_error(f) for f in row["failures"]],
+        retry_at=_opt_utc(row["retry_at"]),
+        started_at=_opt_utc(row["started_at"]),
+        finished_at=_opt_utc(row["finished_at"]),
+        outputs=None if row["outputs"] is None else dict(row["outputs"]),
+    )
+
+
 class SqlAlchemyUnitOfWork(UnitOfWork):
     """One session = one transaction; commit is explicit, exit rolls back."""
 
@@ -234,6 +502,9 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
         self.projects: ProjectRepository = SqlAlchemyProjectRepository(self._session)
         self.versions: ProjectVersionRepository = SqlAlchemyProjectVersionRepository(
             self._session
+        )
+        self.executions: ExecutionRepository = SqlAlchemyExecutionRepository(
+            self._session, self.versions
         )
 
     async def __aenter__(self) -> "SqlAlchemyUnitOfWork":

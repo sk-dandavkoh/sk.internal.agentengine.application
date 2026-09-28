@@ -16,6 +16,7 @@ from collections.abc import Sequence
 from types import TracebackType
 from typing import Protocol
 
+from akasha.domain.execution import Execution
 from akasha.domain.project import Project, ProjectVersion
 from akasha.errors import AkashaError
 
@@ -65,6 +66,20 @@ class ProjectVersionRepository(Protocol):
     ) -> Sequence[ProjectVersion]: ...
 
 
+class ExecutionRepository(Protocol):
+    """Execution aggregate (execution row + its node executions).
+
+    ``save`` is compare-and-swap on ``execution.revision`` exactly like
+    ``ProjectRepository.save``: the runtime owning an execution is its only
+    writer, and any other writer (a second runtime, an out-of-process cancel)
+    makes the loser fail with ``ConcurrentModificationError`` instead of
+    silently interleaving state.
+    """
+
+    async def get(self, execution_id: str) -> Execution | None: ...
+    async def save(self, execution: Execution) -> None: ...
+
+
 class UnitOfWork(Protocol):
     """Explicit transaction boundary (backend/AGENTS.md §16).
 
@@ -74,6 +89,7 @@ class UnitOfWork(Protocol):
 
     projects: ProjectRepository
     versions: ProjectVersionRepository
+    executions: ExecutionRepository
 
     async def __aenter__(self) -> "UnitOfWork": ...
     async def __aexit__(

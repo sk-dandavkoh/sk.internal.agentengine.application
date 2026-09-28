@@ -34,7 +34,7 @@ UowFactory = Callable[[], AbstractAsyncContextManager[SqlAlchemyUnitOfWork]]
 pytestmark = pytest.mark.usefixtures("clean_db")
 
 _BACKENDS_DIR = Path(__file__).resolve().parents[2]
-_HEAD = "0002_project_revision"
+_HEAD = "0003_executions"
 
 
 def _alembic_command(verb: str, db_url: str, target: str) -> None:
@@ -414,7 +414,12 @@ async def test_migrations_upgrade_downgrade_upgrade_on_empty_database(
                 rev: str = (
                     await conn.execute(text("SELECT version_num FROM alembic_version"))
                 ).scalar_one()
-            assert {"projects", "project_versions"} <= tables
+            assert {
+                "projects",
+                "project_versions",
+                "executions",
+                "node_executions",
+            } <= tables
             assert rev == _HEAD
 
             await asyncio.to_thread(_alembic_command, "downgrade", scratch_url, "base")
@@ -430,6 +435,8 @@ async def test_migrations_upgrade_downgrade_upgrade_on_empty_database(
                 }
             assert "projects" not in tables
             assert "project_versions" not in tables
+            assert "executions" not in tables
+            assert "node_executions" not in tables
 
             await asyncio.to_thread(_alembic_command, "upgrade", scratch_url, "head")
             async with verify.engine.connect() as conn:

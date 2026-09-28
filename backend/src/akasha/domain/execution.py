@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import StrEnum, auto
 from math import inf
-from typing import Final
+from typing import Any, Final
 
 from akasha import __version__
 from akasha.domain.node import RETRYABLE_ERROR_KINDS, NodeError, NodeErrorKind
@@ -322,6 +322,8 @@ class NodeExecution(Entity):
     retry_at: datetime | None = None
     started_at: datetime | None = None  # start of the current/last attempt
     finished_at: datetime | None = None
+    # Values keyed by output port; set exactly when the node COMPLETED.
+    outputs: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         self.id = validate_id(self.id)
@@ -332,6 +334,8 @@ class NodeExecution(Entity):
             raise DomainValidationError("more failures than attempts")
         if self.status is _N.FAILED and not self.failures:
             raise DomainValidationError("failed node execution requires an error")
+        if self.outputs is not None and self.status is not _N.COMPLETED:
+            raise DomainValidationError("only a completed node has outputs")
 
     @classmethod
     def for_node(cls, node_id: str) -> "NodeExecution":
@@ -375,8 +379,11 @@ class NodeExecution(Entity):
         self.started_at = now
         self.retry_at = None
 
-    def complete(self, *, now: datetime | None = None) -> None:
+    def complete(
+        self, *, outputs: Mapping[str, Any] | None = None, now: datetime | None = None
+    ) -> None:
         self._finish("complete", now)
+        self.outputs = dict(outputs or {})
 
     def fail(self, error: ExecutionError, *, now: datetime | None = None) -> None:
         self._check_error(error)
@@ -426,11 +433,16 @@ class Execution(Entity):
     created_at: datetime = field(default_factory=utcnow)
     started_at: datetime | None = None
     finished_at: datetime | None = None
+    # Optimistic-concurrency token of the persisted row (0 = never
+    # persisted); advanced by persistence, only read by the domain.
+    revision: int = 0
 
     def __post_init__(self) -> None:
         self.id = validate_id(self.id)
         validate_id(self.project_id)
         self.status = ExecutionStatus(self.status)
+        if self.revision < 0:
+            raise DomainValidationError("revision must be >= 0")
         graph_nodes = self.project_version.graph.nodes
         for key, ne in self.node_executions.items():
             if key != ne.node_id or key not in graph_nodes:
@@ -443,6 +455,10 @@ class Execution(Entity):
             ne.is_terminal for ne in self.node_executions.values()
         ):
             raise DomainValidationError("terminal execution with unfinished nodes")
+        if self.status in (_E.CREATED, _E.QUEUED) and any(
+            ne.status is not _N.PENDING for ne in self.node_executions.values()
+        ):
+            raise DomainValidationError("unstarted execution with progressed nodes")
         if self.status in (_E.FAILED, _E.TIMEOUT) and self.error is None:
             raise DomainValidationError(f"{self.status} execution requires an error")
         if self.status is _E.CANCELLED and self.cancellation is None:
@@ -638,10 +654,16 @@ class Execution(Entity):
 
     # In-flight nodes may finish after a pause or cancellation request: the
     # work (and its side effects) really happened, so the record stays true.
-    def complete_node(self, node_id: str, *, now: datetime | None = None) -> None:
+    def complete_node(
+        self,
+        node_id: str,
+        *,
+        outputs: Mapping[str, Any] | None = None,
+        now: datetime | None = None,
+    ) -> None:
         self._node_for(
             node_id, "complete", _E_STARTED, blocked_by_cancellation=False
-        ).complete(now=now)
+        ).complete(outputs=outputs, now=now)
 
     def fail_node(
         self, node_id: str, error: ExecutionError, *, now: datetime | None = None

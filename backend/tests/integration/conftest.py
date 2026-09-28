@@ -78,7 +78,12 @@ async def database(db_url: str) -> AsyncIterator[Database]:
 async def clean_db(database: Database) -> None:
     """Guaranteed-empty tables per test; no inter-test state leakage (§54)."""
     async with database.engine.begin() as conn:
-        for table in ("project_versions", "projects"):
+        for table in (
+            "node_executions",
+            "executions",
+            "project_versions",
+            "projects",
+        ):
             await conn.execute(text(f"TRUNCATE {table} CASCADE"))
 
 

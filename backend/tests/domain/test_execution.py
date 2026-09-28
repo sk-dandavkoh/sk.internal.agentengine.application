@@ -1134,3 +1134,54 @@ class TestBreakRegressions:
                 project_version=_version(0),
                 status="exploded",  # type: ignore[arg-type]  # the attack itself
             )
+
+
+class TestPhase08Additions:
+    """Outputs, revision and the extra rehydration invariant (Phase 08)."""
+
+    def test_completed_node_records_a_private_copy_of_its_outputs(self) -> None:
+        e = _running(1)
+        (a,) = _ids(e)
+        e.mark_node_ready(a)
+        e.start_node(a, now=T0)
+        produced = {"out": "x"}
+        e.complete_node(a, outputs=produced, now=T0)
+        produced["out"] = "mutated later"
+        assert e.node(a).outputs == {"out": "x"}
+
+    def test_only_completed_nodes_carry_outputs(self) -> None:
+        with pytest.raises(DomainValidationError):
+            NodeExecution(
+                id="nexec_" + "a" * 32,
+                node_id="node_" + "a" * 32,
+                status=N.CANCELLED,
+                outputs={"out": 1},
+            )
+
+    @pytest.mark.parametrize("status", [E.CREATED, E.QUEUED])
+    def test_unstarted_execution_rejects_progressed_nodes(
+        self, status: ExecutionStatus
+    ) -> None:
+        # Closes Phase 07 L6 for rehydration: e.g. a torn read produced a
+        # QUEUED execution whose nodes were already READY.
+        version = _version(1)
+        (node_id,) = version.graph.nodes
+        ne = NodeExecution.for_node(node_id)
+        ne.mark_ready()
+        with pytest.raises(DomainValidationError):
+            Execution(
+                id="exec_" + "a" * 32,
+                project_id="proj_" + "a" * 32,
+                project_version=version,
+                status=status,
+                node_executions={node_id: ne},
+            )
+
+    def test_negative_revision_rejected(self) -> None:
+        with pytest.raises(DomainValidationError):
+            Execution(
+                id="exec_" + "a" * 32,
+                project_id="proj_" + "a" * 32,
+                project_version=_version(0),
+                revision=-1,
+            )

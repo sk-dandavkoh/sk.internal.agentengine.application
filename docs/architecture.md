@@ -810,6 +810,37 @@ Execution Runtime
        └── Event Publisher
 ```
 
+Implementation (Phase 08, `backend/src/akasha/runtime/`): `plan.py` is the
+Graph Loader, Graph Validator integration and Dependency Resolver;
+`executor.py` is the Node Executor; `runtime.py` holds the Execution
+Runtime, Scheduler loop and State Manager. Retry, Timeout and Cancellation
+handling live in the scheduler loop; the Event Publisher is Phase 11.
+Runtime rules:
+
+- Only `QUEUED` executions run. The pinned version is re-validated against
+  the runtime's node catalog before start; an invalid snapshot fails the
+  execution (`EXECUTION_GRAPH_INVALID`) without starting any node.
+- One scheduler coroutine owns the aggregate and is its only writer; node
+  attempts are tasks that only return an outcome. No node task outlives a
+  run.
+- A node is ready when it is `PENDING` and every upstream node is
+  `COMPLETED` (no control flow yet). Ready nodes start in node-id order, at
+  most `max_concurrency` at a time. `RUNNING` is persisted before node code
+  can run.
+- Inputs are resolved from upstream outputs and deep-copied per consumer; a
+  `multiple` input collects one value per edge in graph edge order.
+- Failure is fail-fast: the first failure (node-id order) stops in-flight
+  siblings and fails the execution with that node's error. Precedence when
+  several apply at once: cancellation, execution timeout, node failure.
+- Stopped attempts receive `CancelledError` and see `is_cancelled()`; an
+  attempt that finishes anyway is recorded truthfully. A node timeout is a
+  `NODE_TIMEOUT` failure; the execution timeout ends in `TIMEOUT`.
+- Every save is compare-and-swap on the execution revision: a second writer
+  (another runtime, an out-of-process cancel) makes one side lose.
+- A cancelled or crashed run (outer task cancellation) leaves the execution
+  `RUNNING`; recovery is Phase 23. Retries are not executed yet: an
+  execution with `max_attempts > 1` is refused.
+
 ----------
 
 # 12. Scheduler
@@ -2108,6 +2139,22 @@ cost
 ```
 
 Large payloads should be stored through the artifact/storage subsystem when appropriate.
+
+Implementation (Phase 08, migration `0003_executions`):
+
+- `executions`: one row per execution; `(project_id, project_version)` is a
+  foreign key to `project_versions` (`RESTRICT`), so a version with
+  executions cannot be removed. Metadata, retry/timeout policies, error and
+  cancellation are JSONB documents. `revision` is the CAS token.
+- `node_executions`: one row per node of the pinned graph (unique
+  `(execution_id, node_id)`, `CASCADE` from the execution) with status,
+  attempt, failures (JSONB), outputs (JSONB) and timestamps.
+- Outputs are stored as JSON; values JSON cannot represent (bytes, NaN) are
+  stored as a `{"$unpersisted": ...}` stub. Size limits (Phase 24) and
+  redaction (Phase 13) are not applied yet. Inputs are not stored; they are
+  derivable from upstream outputs and the pinned graph.
+- Loading takes a share lock on the execution row, so the execution and
+  its node rows always come from the same committed state.
 
 ----------
 
