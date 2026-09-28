@@ -4,6 +4,9 @@ from fastapi import APIRouter
 from fastapi.testclient import TestClient
 
 from akasha.api.app import create_app
+from akasha.application.persistence import UnitOfWork
+from akasha.application.projects import ProjectService
+from akasha.bootstrap import Container
 from akasha.config import Settings
 from akasha.errors import AkashaError
 
@@ -61,10 +64,30 @@ def test_404_is_structured(client: TestClient) -> None:
     assert body["request_id"]
 
 
-def test_request_validation_error_is_structured(client: TestClient) -> None:
-    response = client.get("/health", headers={"x-request-id": "req_42"})
-    assert response.status_code == 200
-    # Validation path: malformed JSON body on an endpoint that would accept one
-    # is exercised via /ready 404 here implicitly; dedicated payloads arrive
-    # with real request schemas in Phase 06.
-    assert response.json()["version"]
+def test_request_validation_error_is_structured(settings: Settings) -> None:
+    """Invalid bodies are rejected at the boundary: structured 422, request
+    id echoed, and the service / persistence is never reached."""
+
+    def no_persistence() -> UnitOfWork:
+        raise AssertionError("invalid requests must not reach persistence")
+
+    container = Container(
+        settings=settings, projects=ProjectService(no_persistence, {})
+    )
+    with TestClient(create_app(settings=settings, container=container)) as client:
+        response = client.post(
+            "/api/v1/projects", json={"name": ""}, headers={"x-request-id": "req_42"}
+        )
+    assert response.status_code == 422
+    body = response.json()
+    assert body["code"] == "VALIDATION_ERROR"
+    assert body["request_id"] == "req_42"
+    assert "body.name" in body["details"]
+
+
+def test_project_api_without_persistence_is_a_configuration_error(
+    client: TestClient,
+) -> None:
+    response = client.get("/api/v1/projects")
+    assert response.status_code == 500
+    assert response.json()["code"] == "CONFIGURATION_ERROR"

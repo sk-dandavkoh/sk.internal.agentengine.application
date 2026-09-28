@@ -8,6 +8,8 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
+from akasha.errors import DomainValidationError
+
 _ID_RE = re.compile(r"^[a-z][a-z0-9_]*_[0-9a-f]{32}$")
 
 # Loose semver: MAJOR.MINOR.PATCH with optional pre-release/build suffix.
@@ -34,16 +36,14 @@ def new_id(prefix: str) -> str:
 def validate_id(value: str) -> str:
     """Return the ID if it has the canonical ``<prefix>_<hex>`` shape."""
     if not isinstance(value, str) or not _ID_RE.match(value):
-        msg = f"malformed domain id: {value!r}"
-        raise ValueError(msg)
+        raise DomainValidationError(f"malformed domain id: {value!r}")
     return value
 
 
 def validate_name(value: str) -> str:
     """Non-blank human-readable name."""
     if not value.strip():
-        msg = "name must not be blank"
-        raise ValueError(msg)
+        raise DomainValidationError("name must not be blank")
     return value
 
 

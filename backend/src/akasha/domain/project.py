@@ -114,36 +114,65 @@ class ProjectVersion:
 
 @dataclass(eq=False)
 class Project(Entity):
-    """Long-lived identity: owns one mutable draft and its published versions."""
+    """Long-lived identity: owns one mutable draft and a published-version
+    counter.
+
+    The published versions themselves are not part of the loaded aggregate:
+    history is unbounded and lives behind ``ProjectVersionRepository``.
+    ``current_version`` is the number of the latest published version (0 =
+    never published) and is all publishing needs to pick the next number.
+
+    ``revision`` is the optimistic-concurrency token of the persisted row
+    (0 = never persisted). Persistence advances it on every successful save;
+    domain logic only reads it.
+    """
 
     name: str
     draft: ProjectDraft = field(default_factory=ProjectDraft)
-    versions: list[ProjectVersion] = field(default_factory=list)
     status: ProjectStatus = ProjectStatus.DRAFT
+    current_version: int = 0
+    revision: int = 0
     timestamps: Timestamps = field(default_factory=Timestamps)
 
     def __post_init__(self) -> None:
         self.id = validate_id(self.id)
         validate_name(self.name)
         self.status = ProjectStatus(self.status)
+        if self.current_version < 0 or self.revision < 0:
+            raise DomainValidationError("version counters must be >= 0")
 
     @classmethod
-    def create(cls, name: str) -> "Project":
-        return cls(id=new_id("proj"), name=name)
+    def create(cls, name: str, *, description: str = "") -> "Project":
+        return cls(
+            id=new_id("proj"), name=name, draft=ProjectDraft(description=description)
+        )
 
-    @property
-    def current_version(self) -> int:
-        return max((v.version for v in self.versions), default=0)
+    def replace_draft(self, draft: ProjectDraft, *, name: str) -> None:
+        """Replace the editable state wholesale (autosave semantics).
+
+        Never touches published versions or the version counter.
+        """
+        validate_name(name)
+        self.name = name
+        self.draft = draft
+        self._touch(utcnow())
 
     def publish_draft(self, *, published_at: datetime | None = None) -> ProjectVersion:
-        """Publish the draft as the next version; attach and return it."""
+        """Freeze the draft as the next version and return the snapshot.
+
+        The caller persists the snapshot; the project only advances its
+        counter, so version numbers stay monotonic and gap-free.
+        """
         snapshot = self.draft.publish(
             version=self.current_version + 1, published_at=published_at
         )
-        self.versions.append(snapshot)
+        self.current_version = snapshot.version
         if self.status is ProjectStatus.DRAFT:
             self.status = ProjectStatus.PUBLISHED
-        self.timestamps = Timestamps(
-            created_at=self.timestamps.created_at, updated_at=snapshot.published_at
-        )
+        self._touch(snapshot.published_at)
         return snapshot
+
+    def _touch(self, at: datetime) -> None:
+        self.timestamps = Timestamps(
+            created_at=self.timestamps.created_at, updated_at=at
+        )

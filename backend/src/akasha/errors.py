@@ -5,6 +5,8 @@ an HTTP status. API error handlers map these to structured responses
 (API layer), so domain/application errors never surface as bare HTTP 500s.
 """
 
+from collections.abc import Mapping
+
 
 class AkashaError(Exception):
     """Base class for all engine errors."""
@@ -12,10 +14,12 @@ class AkashaError(Exception):
     code = "INTERNAL_ERROR"
     http_status = 500
 
-    def __init__(self, message: str, *, details: dict[str, str] | None = None) -> None:
+    def __init__(
+        self, message: str, *, details: Mapping[str, object] | None = None
+    ) -> None:
         super().__init__(message)
         self.message = message
-        self.details = details or {}
+        self.details = dict(details or {})
 
 
 class ConfigurationError(AkashaError):
@@ -23,8 +27,12 @@ class ConfigurationError(AkashaError):
     http_status = 500
 
 
-class DomainValidationError(AkashaError):
-    """A domain invariant was violated (bad construction or invalid edge)."""
+class DomainValidationError(AkashaError, ValueError):
+    """A domain invariant was violated (bad construction or invalid edge).
+
+    Also a ``ValueError``: it *is* one, and callers that construct domain
+    objects from untrusted input may catch either.
+    """
 
     code = "DOMAIN_VALIDATION_ERROR"
     http_status = 422

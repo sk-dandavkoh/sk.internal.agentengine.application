@@ -3965,25 +3965,30 @@ Compatibility constraints must be machine-readable where possible.
 
 # 146. API Error Format
 
-API errors should use a consistent structure.
-
-Example:
+API errors must use a consistent, flat structure — not nested under an
+`error` key. This is the actual contract implemented starting in the
+backend skeleton phase and used by every endpoint since:
 
 ```json
 {
-  "error": {
-    "code": "PROJECT_VALIDATION_FAILED",
-    "message": "The project contains validation errors.",
-    "details": [
+  "code": "PROJECT_VALIDATION_FAILED",
+  "message": "The project contains validation errors.",
+  "details": {
+    "issues": [
       {
-        "code": "INVALID_CONNECTION",
+        "code": "invalid_port_connection",
         "node_id": "node_123"
       }
-    ],
-    "request_id": "req_123"
-  }
+    ]
+  },
+  "request_id": "req_123"
 }
 ```
+
+`details` is a JSON object, not an array — its shape is error-specific
+(e.g. `{"issues": [...]}` for validation failures, or plain scalar fields
+for others). `code` and `request_id` are always present; `details`
+defaults to `{}` when there is nothing further to report.
 
 ----------
 

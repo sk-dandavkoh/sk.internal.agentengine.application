@@ -44,8 +44,31 @@ class TestPublish:
         v1 = p.publish_draft()
         v2 = p.publish_draft()
         assert (v1.version, v2.version) == (1, 2)
-        assert p.versions == [v1, v2]
+        assert p.current_version == 2
         assert p.status is ProjectStatus.PUBLISHED
+
+    def test_replace_draft_keeps_versions_and_touches_timestamp(self) -> None:
+        p = Project.create(name="Demo", description="old")
+        published = p.publish_draft()
+        before = p.timestamps
+        new_draft = ProjectDraft(description="new")
+        p.replace_draft(new_draft, name="Renamed")
+        assert (p.name, p.draft) == ("Renamed", new_draft)
+        assert p.current_version == 1
+        assert p.status is ProjectStatus.PUBLISHED
+        assert published.description == "old"
+        assert p.timestamps.created_at == before.created_at
+        assert p.timestamps.updated_at >= before.updated_at
+
+    def test_replace_draft_rejects_blank_name(self) -> None:
+        p = Project.create(name="Demo")
+        with pytest.raises(DomainValidationError, match="blank"):
+            p.replace_draft(ProjectDraft(), name=" ")
+        assert p.name == "Demo"
+
+    def test_negative_counters_rejected(self) -> None:
+        with pytest.raises(DomainValidationError, match="counters"):
+            Project(id=new_id("proj"), name="x", current_version=-1)
 
     def test_published_version_is_frozen(self) -> None:
         v = Project.create(name="Demo").publish_draft()

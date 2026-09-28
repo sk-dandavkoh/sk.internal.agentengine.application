@@ -6,16 +6,23 @@ tables via TRUNCATE — tests never depend on each other's rows or on any
 developer-local PostgreSQL.
 """
 
-import os
-import shutil
-import socket
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 
 import pytest
 from sqlalchemy import text
 from testcontainers.community.postgres import PostgresContainer
+from testcontainers.core.docker_client import DockerClient
 
+from akasha.application.projects import ProjectService
+from akasha.domain.node import (
+    NodeConfigSchema,
+    NodeDefinition,
+    NodeInput,
+    NodeMetadata,
+    NodeOutput,
+    PortType,
+)
 from akasha.infrastructure.database import Database, normalize_async_url
 from akasha.infrastructure.persistence import SqlAlchemyUnitOfWork
 
@@ -26,26 +33,18 @@ UowFactory = Callable[[], AbstractAsyncContextManager[SqlAlchemyUnitOfWork]]
 
 def _docker_available() -> bool:
     """A missing daemon must skip, not hang (backend/AGENTS.md §117: keep the
-    real integration test, report the infrastructure limitation)."""
-    host = os.environ.get("DOCKER_HOST", "")
-    sock = host[len("unix://") :] if host.startswith("unix://") else None
-    if sock is None:
-        if shutil.which("docker") is None:
-            return False
-        for candidate in ("/var/run/docker.sock", "~/.docker/run/docker.sock"):
-            candidate = os.path.expanduser(candidate)
-            if os.path.exists(candidate):
-                sock = candidate
-                break
-        else:
-            return False
+    real integration test, report the infrastructure limitation).
+
+    Asks the daemon itself through the same client Testcontainers uses, so
+    unix sockets, Windows named pipes and DOCKER_HOST all behave alike.
+    """
     try:
-        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
-            s.settimeout(1)
-            s.connect(sock)
-        return True
-    except OSError:
+        DockerClient(timeout=2).client.ping()
+    except Exception:
+        # Any failure to reach the daemon (missing client config, refused
+        # connection, timeout) means exactly one thing here: skip.
         return False
+    return True
 
 
 @pytest.fixture(scope="session")
@@ -93,3 +92,38 @@ def uow(database: Database) -> UowFactory:
             yield uow_ctx
 
     return make
+
+
+# Two tiny node types: enough to build valid and invalid graphs. The real
+# Node Registry is Phase 09; the service takes the catalog as a mapping.
+SOURCE = NodeDefinition(
+    metadata=NodeMetadata(
+        node_id="test.source", name="Source", description="Emits text.", version="1.0.0"
+    ),
+    outputs=(NodeOutput(name="text", port_type=PortType.STRING),),
+)
+SINK = NodeDefinition(
+    metadata=NodeMetadata(
+        node_id="test.sink", name="Sink", description="Consumes text.", version="1.0.0"
+    ),
+    inputs=(NodeInput(name="text", port_type=PortType.STRING),),
+    config_schema=NodeConfigSchema(
+        {
+            "type": "object",
+            "properties": {"prefix": {"type": "string"}},
+            "additionalProperties": False,
+        }
+    ),
+)
+
+
+@pytest.fixture
+def node_definitions() -> dict[str, NodeDefinition]:
+    return {d.node_id: d for d in (SOURCE, SINK)}
+
+
+@pytest.fixture
+def project_service(
+    database: Database, node_definitions: dict[str, NodeDefinition]
+) -> ProjectService:
+    return ProjectService(lambda: SqlAlchemyUnitOfWork(database), node_definitions)

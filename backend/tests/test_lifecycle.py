@@ -26,3 +26,17 @@ def test_container_is_wired_into_app_state() -> None:
     container = create_container(settings)
     app = create_app(settings=settings, container=container)
     assert app.state.container is container
+    assert container.projects is None  # no database configured
+
+
+async def test_container_wires_project_service_with_database() -> None:
+    # Engine creation is lazy: no connection is attempted here.
+    settings = Settings(
+        environment="test", database_url="postgresql://u:p@127.0.0.1:1/akasha"
+    )
+    container = create_container(settings)
+    try:
+        assert container.projects is not None
+        assert set(container.ready_checks) == {"database"}
+    finally:
+        await container.shutdown()

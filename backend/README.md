@@ -32,6 +32,28 @@ uv run mypy .
 uv run pytest
 ```
 
+`tests/integration/` needs a running Docker daemon (Testcontainers starts a
+throwaway `postgres:17.2`; unix socket, Windows named pipe and `DOCKER_HOST`
+all work). Without Docker those tests are skipped, not faked.
+
+## Project API (`/api/v1/projects`)
+
+| Method | Path | Use case |
+|---|---|---|
+| POST | `/api/v1/projects` | CreateProject → 201 |
+| GET | `/api/v1/projects?offset=&limit=` | ListProjects (summaries, `limit` ≤ 100) |
+| GET | `/api/v1/projects/{id}` | GetProject (incl. draft) |
+| PUT | `/api/v1/projects/{id}` | UpdateProjectDraft — full replace, requires `expected_revision` |
+| DELETE | `/api/v1/projects/{id}` | DeleteProject → 204; 409 once versions exist |
+| POST | `/api/v1/projects/{id}/validate` | ValidateProject → `{valid, issues}` |
+| POST | `/api/v1/projects/{id}/publish` | PublishProject → 201 immutable version; 422 if invalid |
+| GET | `/api/v1/projects/{id}/versions` | ListProjectVersions (summaries) |
+| GET | `/api/v1/projects/{id}/versions/{n}` | GetProjectVersion (read-only; no write methods exist) |
+
+Every write is optimistic-concurrency controlled: a stale `expected_revision`
+(or a concurrent writer) yields `409 CONCURRENT_MODIFICATION`. Errors are
+`{code, message, details, request_id}`. Interactive schema: `/docs`.
+
 ## Layout
 
 ```text
@@ -40,7 +62,7 @@ src/akasha/
 ├── bootstrap.py        composition root (Container, create_container)
 ├── errors.py           AkashaError base with stable codes / HTTP status
 ├── api/                FastAPI app factory, routers (/health, /ready, /api/v1), error handlers
-├── application/        use-case services (Phase 06+)
+├── application/        use-case services (projects: Phase 06)
 ├── domain/             domain model (Phase 02+) — no FastAPI/SQLAlchemy/infra imports
 ├── infrastructure/     PostgreSQL/Redis/storage adapters (Phase 05+)
 ├── runtime/            execution runtime (Phase 08)

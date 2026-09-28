@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from akasha import __version__
+from akasha.api.projects import create_projects_router
 
 
 class HealthResponse(BaseModel):
@@ -40,5 +41,7 @@ def create_operational_router() -> APIRouter:
 
 
 def create_api_v1_router() -> APIRouter:
-    """Business API under /api/v1. Endpoints arrive in Phase 06+."""
-    return APIRouter(prefix="/api/v1")
+    """Business API under /api/v1."""
+    router = APIRouter(prefix="/api/v1")
+    router.include_router(create_projects_router())
+    return router

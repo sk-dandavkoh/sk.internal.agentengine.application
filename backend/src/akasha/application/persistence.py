@@ -17,14 +17,36 @@ from types import TracebackType
 from typing import Protocol
 
 from akasha.domain.project import Project, ProjectVersion
+from akasha.errors import AkashaError
+
+
+class ConcurrentModificationError(AkashaError):
+    """The persisted state changed since it was read (optimistic locking)."""
+
+    code = "CONCURRENT_MODIFICATION"
+    http_status = 409
 
 
 class ProjectRepository(Protocol):
     """CRUD for the long-lived Project identity plus its mutable draft."""
 
     async def get(self, project_id: str) -> Project | None: ...
-    async def save(self, project: Project) -> None: ...
-    async def delete(self, project_id: str) -> bool: ...
+
+    async def save(self, project: Project) -> None:
+        """Compare-and-swap on ``project.revision``.
+
+        Revision 0 inserts; any other revision updates only if the stored
+        revision still equals it. On success ``project.revision`` advances.
+        Raises ``ConcurrentModificationError`` when the stored row moved on,
+        was deleted, or (on insert) already exists.
+        """
+        ...
+
+    async def delete(self, project_id: str, *, revision: int) -> bool:
+        """Delete only if the stored revision still equals ``revision``;
+        False when the project is missing or has moved on."""
+        ...
+
     async def list(self, *, offset: int = 0, limit: int = 100) -> Sequence[Project]: ...
 
 

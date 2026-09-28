@@ -11,11 +11,13 @@ from datetime import UTC, datetime
 from types import TracebackType
 from typing import Any, cast
 
-from sqlalchemy import delete, select
+from sqlalchemy import Insert, Update, delete, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import CursorResult, RowMapping
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from akasha.application.persistence import (
+    ConcurrentModificationError,
     ProjectRepository,
     ProjectVersionRepository,
     UnitOfWork,
@@ -64,7 +66,6 @@ class SqlAlchemyProjectRepository(ProjectRepository):
 
     async def save(self, project: Project) -> None:
         values = {
-            "id": project.id,
             "name": project.name,
             "description": project.draft.description,
             "status": project.status.value,
@@ -73,24 +74,44 @@ class SqlAlchemyProjectRepository(ProjectRepository):
             "draft_dependencies": [
                 serialize_dependency(d) for d in project.draft.dependencies
             ],
+            "current_version": project.current_version,
+            "revision": project.revision + 1,
             "created_at": project.timestamps.created_at,
             "updated_at": project.timestamps.updated_at,
         }
-        exists = await self.get(project.id)
-        if exists is None:
-            await self._session.execute(m.projects.insert().values(**values))
-        else:
-            await self._session.execute(
-                m.projects.update()
-                .where(m.projects.c.id == project.id)
-                .values(**{k: v for k, v in values.items() if k != "id"})
+        # Single-statement CAS: PostgreSQL re-checks the WHERE clause after
+        # waiting for a concurrent writer's row lock, so two writers holding
+        # the same revision can never both succeed (no lost updates).
+        if project.revision == 0:
+            stmt: Insert | Update = (
+                pg_insert(m.projects)
+                .values(id=project.id, **values)
+                .on_conflict_do_nothing(index_elements=[m.projects.c.id])
             )
+        else:
+            stmt = (
+                m.projects.update()
+                .where(
+                    m.projects.c.id == project.id,
+                    m.projects.c.revision == project.revision,
+                )
+                .values(**values)
+            )
+        result = cast("CursorResult[Any]", await self._session.execute(stmt))
+        if result.rowcount != 1:
+            raise ConcurrentModificationError(
+                "The project was modified concurrently; reload and retry.",
+                details={"project_id": project.id},
+            )
+        project.revision += 1
 
-    async def delete(self, project_id: str) -> bool:
+    async def delete(self, project_id: str, *, revision: int) -> bool:
         result = cast(
             "CursorResult[Any]",
             await self._session.execute(
-                delete(m.projects).where(m.projects.c.id == project_id)
+                delete(m.projects).where(
+                    m.projects.c.id == project_id, m.projects.c.revision == revision
+                )
             ),
         )
         return result.rowcount > 0
@@ -124,6 +145,8 @@ class SqlAlchemyProjectRepository(ProjectRepository):
             name=r["name"],
             draft=draft,
             status=ProjectStatus(r["status"]),
+            current_version=r["current_version"],
+            revision=r["revision"],
             timestamps=Timestamps(
                 created_at=_ensure_utc(r["created_at"]),
                 updated_at=_ensure_utc(r["updated_at"]),

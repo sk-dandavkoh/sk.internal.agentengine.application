@@ -9,6 +9,7 @@ semantic validation happens in the domain, not in SQL.
 
 from sqlalchemy import (
     JSON,
+    CheckConstraint,
     Column,
     DateTime,
     ForeignKey,
@@ -36,8 +37,15 @@ projects = Table(
     Column("draft_graph", JSONB_VARIANT, nullable=False),
     Column("draft_triggers", JSONB_VARIANT, nullable=False),
     Column("draft_dependencies", JSONB_VARIANT, nullable=False),
+    # Optimistic-concurrency token; every successful write increments it.
+    Column("revision", Integer, nullable=False, server_default="1"),
+    Column("current_version", Integer, nullable=False, server_default="0"),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("updated_at", DateTime(timezone=True), nullable=False),
+    CheckConstraint("revision >= 1", name="ck_projects_revision_positive"),
+    CheckConstraint(
+        "current_version >= 0", name="ck_projects_current_version_non_negative"
+    ),
 )
 
 project_versions = Table(
