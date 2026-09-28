@@ -423,7 +423,7 @@ class NodeErrorKind(StrEnum):
     CANCELLATION = auto()
 
 
-_RETRYABLE = frozenset({NodeErrorKind.TRANSIENT, NodeErrorKind.TIMEOUT})
+RETRYABLE_ERROR_KINDS = frozenset({NodeErrorKind.TRANSIENT, NodeErrorKind.TIMEOUT})
 
 
 class NodeError(AkashaError):
@@ -442,7 +442,7 @@ class NodeError(AkashaError):
     ) -> None:
         super().__init__(message, details=details)
         self.kind = kind
-        self.retryable = kind in _RETRYABLE
+        self.retryable = kind in RETRYABLE_ERROR_KINDS
 
 
 class Node(ABC):

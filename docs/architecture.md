@@ -276,6 +276,29 @@ CANCELLED
 
 State transitions must be validated.
 
+The authoritative tables live in `backend/src/akasha/domain/execution.py`
+(`EXECUTION_ACTIONS`, `NODE_ACTIONS`); transitions are keyed by named action
+(`start`, `resume`, `retry`, ...), not by target state, because different
+actions share a target with different legal sources. Rules (Phase 07):
+
+- Terminal states (`COMPLETED`, `FAILED`, `CANCELLED`, `TIMEOUT`; node:
+  `COMPLETED`, `FAILED`, `SKIPPED`, `CANCELLED`) have no exits.
+- `Execution` is the aggregate root; node transitions go through it. Nodes
+  start only while the execution is `RUNNING`; in-flight nodes may still
+  finish while `PAUSED`/`WAITING` or after a cancellation request.
+- `COMPLETED` requires every node `COMPLETED` or `SKIPPED`. Entering any
+  terminal state cancels every unfinished node.
+- Retry reuses the NodeExecution (`RUNNING → READY`), only for retryable
+  error kinds, within `RetryPolicy.max_attempts` (default 1 = no retry),
+  never after a cancellation request; the next start is rejected before the
+  recorded backoff elapses. A node that already ran cannot be skipped.
+- Timeout: the execution deadline counts from first start, including paused
+  and waiting time; `TIMEOUT` is only reachable once started. A node timeout
+  is a `TIMEOUT`-kind error and follows the retry policy.
+- Cancellation is cooperative: `request_cancellation` records a sticky,
+  idempotent `CancellationState`; afterwards the only legal execution
+  transition is `cancel`, so a cancelled run can never report success.
+
 ----------
 
 ## 3.7 Immutable Published Versions
