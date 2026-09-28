@@ -29,6 +29,8 @@ RULES: dict[str, set[str]] = {
 INTERNAL_RULES: dict[str, set[str]] = {
     "domain": {"api", "application", "infrastructure", "runtime"},
     "api": {"infrastructure"},
+    # Nodes see only the contract (+ security guards); never the engine.
+    "nodes": {"api", "application", "infrastructure", "runtime"},
 }
 
 

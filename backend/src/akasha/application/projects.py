@@ -113,8 +113,8 @@ class ProjectService:
     """Application service for the Project lifecycle.
 
     ``node_definitions`` is the node-type catalog drafts are validated
-    against. The Node Registry (Phase 09) will supply it; until then the
-    composition root injects it.
+    against: ``NodeRegistry.definitions`` in production (a live view), any
+    mapping in tests.
     """
 
     def __init__(

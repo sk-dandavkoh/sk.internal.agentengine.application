@@ -3,8 +3,39 @@
 import pytest
 
 from akasha.domain.graph import Edge, Graph, NodeInstance
-from akasha.domain.primitives import new_id, utcnow, validate_id
+from akasha.domain.primitives import (
+    new_id,
+    semver_key,
+    utcnow,
+    validate_id,
+    version_satisfies,
+)
 from akasha.errors import DomainValidationError
+
+
+class TestSemver:
+    def test_ordering_is_numeric_and_prerelease_first(self) -> None:
+        ordered = ["0.9.9", "1.0.0-alpha", "1.0.0-beta", "1.0.0", "1.0.1", "1.10.0"]
+        assert sorted(ordered, key=semver_key) == ordered
+        assert semver_key("1.0.0+build.7") == semver_key("1.0.0")
+
+    def test_constraints(self) -> None:
+        assert version_satisfies("1.2.3", "*")
+        assert version_satisfies("1.2.3", ">=1.2.0, <2.0.0")
+        assert version_satisfies("1.2.3", "=1.2.3")
+        assert not version_satisfies("2.0.0", ">=1.2.0,<2.0.0")
+        assert not version_satisfies("1.0.0-rc", ">=1.0.0")
+
+    def test_malformed_input_rejected(self) -> None:
+        for version, constraint in [
+            ("1.2", "*"),
+            ("1.2.3", "~1.2.0"),
+            ("1.2.3", ">= 1.2"),
+            ("1.2.3", ""),
+            ("1.2.3", ">=1.0.0 <2.0.0"),
+        ]:
+            with pytest.raises(DomainValidationError):
+                version_satisfies(version, constraint)
 
 
 class TestPrimitives:

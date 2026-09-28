@@ -3,6 +3,7 @@
 Pure stdlib on purpose — the domain layer stays infrastructure-free.
 """
 
+import operator
 import re
 import uuid
 from dataclasses import dataclass, field
@@ -14,6 +15,52 @@ _ID_RE = re.compile(r"^[a-z][a-z0-9_]*_[0-9a-f]{32}$")
 
 # Loose semver: MAJOR.MINOR.PATCH with optional pre-release/build suffix.
 SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
+_CLAUSE_RE = re.compile(r"^(>=|<=|>|<|==|=)?\s*(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$")
+_VERSION_OPS = {
+    ">=": operator.ge,
+    "<=": operator.le,
+    ">": operator.gt,
+    "<": operator.lt,
+    "==": operator.eq,
+    "=": operator.eq,
+}
+
+type SemverKey = tuple[int, int, int, int, str]
+
+
+def semver_key(version: str) -> SemverKey:
+    """Sort key: numeric core, then a pre-release sorts before its release.
+
+    ponytail: pre-release identifiers compare as one string, not per
+    dot-separated identifier (so ``rc.10 < rc.9``); implement full SemVer
+    §11 precedence if plugins start publishing numbered pre-releases.
+    """
+    if not SEMVER_RE.match(version):
+        raise DomainValidationError(f"not a semantic version: {version!r}")
+    core, _, pre = version.split("+", 1)[0].partition("-")
+    major, minor, patch = (int(p) for p in core.split("."))
+    return (major, minor, patch, 0 if pre else 1, pre)
+
+
+def version_satisfies(version: str, constraint: str) -> bool:
+    """Does ``version`` satisfy ``constraint``?
+
+    Grammar: ``*`` (any), or comma-separated clauses that must all hold,
+    each ``[op]MAJOR.MINOR.PATCH`` with op one of ``>= <= > < == =``
+    (none means ``==``), e.g. ``">=1.2.0,<2.0.0"``. Raises
+    ``DomainValidationError`` for a malformed version or constraint.
+    """
+    key = semver_key(version)
+    if constraint.strip() == "*":
+        return True
+    for clause in constraint.split(","):
+        match = _CLAUSE_RE.match(clause.strip())
+        if match is None:
+            raise DomainValidationError(f"malformed version constraint: {constraint!r}")
+        compare = _VERSION_OPS[match.group(1) or "=="]
+        if not compare(key, semver_key(match.group(2))):
+            return False
+    return True
 
 
 def utcnow() -> datetime:

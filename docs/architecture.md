@@ -823,10 +823,17 @@ Runtime rules:
 - One scheduler coroutine owns the aggregate and is its only writer; node
   attempts are tasks that only return an outcome. No node task outlives a
   run.
-- A node is ready when it is `PENDING` and every upstream node is
-  `COMPLETED` (no control flow yet). Ready nodes start in node-id order, at
-  most `max_concurrency` at a time. `RUNNING` is persisted before node code
-  can run.
+- A node is decided once every upstream node is decided (`COMPLETED` or
+  `SKIPPED`). An edge is *live* when its source completed and produced the
+  edge's port, *dead* when the source was skipped or omitted the port. The
+  node becomes `READY` if at least one incoming edge is live and every
+  required input is fed by a live edge; otherwise `SKIPPED`, which cascades
+  downstream. Only live edges feed inputs. Ready nodes start in node-id
+  order, at most `max_concurrency` at a time. `RUNNING` is persisted before
+  node code can run. The loop never inspects node types (see §14).
+- The pinned version is re-validated against the runtime catalog including
+  declared node-version dependencies; the resolved versions are recorded in
+  `metadata.node_versions` when the execution starts.
 - Inputs are resolved from upstream outputs and deep-copied per consumer; a
   `multiple` input collects one value per edge in graph edge order.
 - Failure is fail-fast: the first failure (node-id order) stops in-flight
@@ -906,6 +913,15 @@ Subgraph
 The architecture must prevent control-flow behavior from becoming hard-coded throughout the runtime.
 
 Prefer explicit interfaces and capabilities.
+
+Implementation (Phase 09): branching is one generic capability. A node
+declaring `capabilities.is_control_flow` may omit declared outputs; an
+omitted output is an inactive branch whose consumers the runtime skips
+(readiness rule in §11). `core.if` and `core.switch` route their input to
+exactly one port; `core.merge` joins whatever branches are live. Conditions
+are declarative config (operator + operand, JSON equality), not
+expressions. Loops/ForEach, Try/Catch and subgraphs are not implemented;
+graph validation still rejects every cycle.
 
 ----------
 
@@ -1663,6 +1679,28 @@ community.example_node
 plugin_name.node_name
 ```
 
+Implementation (Phase 09, `backend/src/akasha/nodes/registry.py`): one
+`NodeRegistry` class provides register (contract check + factory check),
+unregister, get, `list_nodes` (sorted), `resolve(node_id, constraint)` and
+two live read-only views: `definitions` (for `ProjectService`) and
+`catalog` (for `ExecutionRuntime`), so publish-time and run-time validation
+use the same node set. Duplicate ids are rejected
+(`NODE_ALREADY_REGISTERED`); unknown ids raise `NODE_NOT_FOUND`.
+
+- One version per node type id: `NodeInstance` references a type id only.
+  Compatibility is expressed by project `Dependency(kind="node")`
+  constraints (`*` or comma-separated `>= <= > < ==` clauses), checked at
+  validate/publish and before every run (`MISSING_DEPENDENCY`,
+  `INCOMPATIBLE_DEPENDENCY`, `INVALID_DEPENDENCY`).
+- A registration pairs the definition with a zero-argument factory
+  (`NodeFactory` protocol). Stateless nodes register their class; nodes
+  with deployment dependencies (network policy, search endpoint) register
+  a closure. The runtime creates a fresh instance per attempt.
+- Built-ins (`nodes/builtins.py`): core.input, core.output, core.log,
+  core.if, core.switch, core.delay, core.merge, core.http, core.web_search
+  (SearXNG JSON API), core.smtp. The composition root builds the registry
+  from settings (`bootstrap.create_node_registry`).
+
 ----------
 
 # 38. Frontend Architecture
@@ -2156,6 +2194,14 @@ Implementation (Phase 08, migration `0003_executions`):
 - Loading takes a share lock on the execution row, so the execution and
   its node rows always come from the same committed state.
 
+Phase 09 additions (migration `0004_execution_input`):
+
+- `executions.input` (JSONB object, default `{}`): the payload the
+  execution was started with; entry nodes (`core.input`) read it. Written
+  once at creation. Rows from before 0004 read as `{}`.
+- `metadata.node_versions`: node type → version resolved by the runtime at
+  start (reproducibility, AGENTS §73). Absent in older rows (read as `{}`).
+
 ----------
 
 # 54. Execution Inspector
@@ -2384,6 +2430,22 @@ retry policy
 ```
 
 Future SSRF protections should be considered part of the security architecture.
+
+Implementation (Phase 09, `security/network.py`, `nodes/http.py`):
+
+- User-configured destinations (core.http, core.smtp) must resolve only to
+  globally routable addresses; loopback, private, link-local, CGNAT,
+  multicast, reserved and IPv4-mapped variants are blocked unless the
+  operator sets `AKASHA_NETWORK_ALLOW_PRIVATE` or lists hosts in
+  `AKASHA_NETWORK_ALLOWED_HOSTS`. Operator-configured endpoints
+  (`AKASHA_WEB_SEARCH_URL`) are trusted.
+- Only http/https, no credentials in URLs, no environment proxies.
+  Redirects are off by default; when on, each hop (max 5) is re-checked.
+- One total time limit per exchange, response cap
+  `AKASHA_HTTP_MAX_RESPONSE_BYTES` (Content-Length and streamed), stable
+  error codes: 429/5xx transient, other 4xx permanent.
+- Known gap: the guard resolves, then the client resolves again (DNS
+  rebinding window); pinning the checked IP is security-hardening scope.
 
 ----------
 

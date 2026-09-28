@@ -20,9 +20,11 @@ Retry/timeout *policies* live here as values; *enforcement* (sleeping for
 backoff, watching deadlines) is the runtime's job (Phase 08+).
 """
 
+import json
 import re
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from copy import deepcopy
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from enum import StrEnum, auto
 from math import inf
@@ -139,6 +141,17 @@ def _apply[S: StrEnum](
 # --------------------------------------------------------------------------
 
 _CODE_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
+
+
+def _is_json(value: Any) -> bool:
+    """JSON-serializable without NaN/Infinity or NUL characters — the values
+    PostgreSQL JSONB cannot store. (The substring test also rejects the
+    literal six-character text ``\\u0000``; an accepted false positive.)"""
+    try:
+        text = json.dumps(value, allow_nan=False)
+    except (TypeError, ValueError):
+        return False
+    return "\\u0000" not in text
 
 
 @dataclass(frozen=True)
@@ -278,19 +291,22 @@ class CancellationState:
 
 @dataclass(frozen=True)
 class ExecutionMetadata:
-    """Reproducibility metadata captured at creation (AGENTS §73).
+    """Reproducibility metadata (AGENTS §73).
 
-    Resolved node/plugin versions are added once the registry exists
-    (Phase 09/17).
+    Captured at creation, except ``node_versions``: the node type → version
+    map the runtime actually resolved, recorded when the execution starts
+    (``Execution.start``). Plugin versions follow with plugins (Phase 17).
     """
 
     trigger_type: TriggerType = TriggerType.MANUAL
     trigger_id: str | None = None
     correlation_id: str | None = None
     engine_version: str = __version__
+    node_versions: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "trigger_type", TriggerType(self.trigger_type))
+        object.__setattr__(self, "node_versions", dict(self.node_versions))
         if self.trigger_id is not None:
             validate_id(self.trigger_id)
         cid = self.correlation_id
@@ -436,6 +452,9 @@ class Execution(Entity):
     # Optimistic-concurrency token of the persisted row (0 = never
     # persisted); advanced by persistence, only read by the domain.
     revision: int = 0
+    # The JSON object the execution was started with (manual/API/trigger
+    # payload); entry nodes read it via NodeExecutionContext.execution_input.
+    input: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self.id = validate_id(self.id)
@@ -443,6 +462,8 @@ class Execution(Entity):
         self.status = ExecutionStatus(self.status)
         if self.revision < 0:
             raise DomainValidationError("revision must be >= 0")
+        if not isinstance(self.input, dict) or not _is_json(self.input):
+            raise DomainValidationError("execution input must be a JSON object")
         graph_nodes = self.project_version.graph.nodes
         for key, ne in self.node_executions.items():
             if key != ne.node_id or key not in graph_nodes:
@@ -473,6 +494,7 @@ class Execution(Entity):
         metadata: ExecutionMetadata | None = None,
         retry_policy: RetryPolicy | None = None,
         timeout_policy: TimeoutPolicy | None = None,
+        input: Mapping[str, Any] | None = None,
         now: datetime | None = None,
     ) -> "Execution":
         return cls(
@@ -487,6 +509,8 @@ class Execution(Entity):
                 for node_id in project_version.graph.nodes
             },
             created_at=now or utcnow(),
+            # Deep copy: the caller's payload must not alias the record.
+            input=deepcopy(dict(input or {})),
         )
 
     # -- queries ------------------------------------------------------------
@@ -542,9 +566,18 @@ class Execution(Entity):
     def enqueue(self) -> None:
         self.status = self._target("enqueue")
 
-    def start(self, *, now: datetime | None = None) -> None:
+    def start(
+        self,
+        *,
+        now: datetime | None = None,
+        node_versions: Mapping[str, str] | None = None,
+    ) -> None:
+        """``node_versions``: the node type → version map resolved for this
+        run, recorded for reproducibility (AGENTS §73)."""
         self.status = self._target("start")
         self.started_at = now or utcnow()
+        if node_versions is not None:
+            self.metadata = replace(self.metadata, node_versions=node_versions)
 
     def pause(self) -> None:
         self.status = self._target("pause")

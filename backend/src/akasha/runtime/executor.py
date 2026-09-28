@@ -14,10 +14,10 @@ from datetime import timedelta
 
 from akasha.domain.execution import ExecutionError
 from akasha.domain.node import (
-    Node,
     NodeError,
     NodeErrorKind,
     NodeExecutionContext,
+    NodeFactory,
     NodeResult,
 )
 from akasha.errors import NodeValidationError
@@ -34,7 +34,7 @@ def _invalid(code: str, message: str, node_id: str) -> ExecutionError:
 
 
 async def execute_node(
-    node_cls: type[Node],
+    node_cls: NodeFactory,
     context: NodeExecutionContext,
     *,
     limit: timedelta | None,

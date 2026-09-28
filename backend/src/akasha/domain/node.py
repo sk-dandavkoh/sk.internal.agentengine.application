@@ -7,8 +7,8 @@ lives in a ``NodeExecutionContext``; everything a node produces is a
 ``NodeResult``. Errors cross the boundary only as ``NodeError``.
 
 This module is pure domain: stdlib only, no registry, no runtime, no FastAPI.
-Node implementations live in akasha/nodes (built-ins, Phase 09) or plugins
-(Phase 17); the registry is Phase 09 — deliberately not here.
+Node implementations and the Node Registry live in akasha/nodes (built-ins)
+or plugins (Phase 17) — deliberately not here.
 """
 
 import json
@@ -145,12 +145,13 @@ class NodeConfigSchema:
                 raise NodeContractError("config schema 'required' must be a list")
 
     def validate_config(self, config: Mapping[str, Any]) -> None:
-        """Reject configs violating the schema's structural subset.
+        """Reject configs violating the schema's supported subset.
 
-        ponytail: only ``type``, ``required`, ``properties`` (recursively) and
-        ``additionalProperties`` are enforced — a subset of JSON Schema.
-        Upgrade path: adopt the ``jsonschema`` package when formats, enums or
-        combinators (oneOf/anyOf) become requirements.
+        ponytail: enforced keywords are ``type``, ``required``, ``properties``
+        (recursively), ``additionalProperties``, ``items``, ``enum``,
+        ``minimum``, ``maximum``, ``minLength``, ``maxItems`` and ``pattern``
+        — a subset of JSON Schema. Upgrade path: adopt the ``jsonschema``
+        package when formats or combinators (oneOf/anyOf) become requirements.
         """
         props: dict[str, Any] = self.json_schema.get("properties", {})
         for key in self.json_schema.get("required", []):
@@ -171,10 +172,61 @@ class NodeConfigSchema:
             _check_json_type(value, props[key], f"config.{key}")
 
 
+def json_equal(a: Any, b: Any) -> bool:
+    """Equality with JSON semantics: ``1 == 1.0``, but booleans are not
+    numbers (Python's ``True == 1`` would make ``true`` match ``1``)."""
+    if isinstance(a, bool) or isinstance(b, bool):
+        return type(a) is type(b) and a == b
+    if isinstance(a, dict) and isinstance(b, dict):
+        return a.keys() == b.keys() and all(json_equal(a[k], b[k]) for k in a)
+    if isinstance(a, list) and isinstance(b, list):
+        return len(a) == len(b) and all(map(json_equal, a, b))
+    if isinstance(a, int | float) and isinstance(b, int | float):
+        return a == b
+    return type(a) is type(b) and a == b
+
+
+def _is_number(value: Any) -> bool:
+    return isinstance(value, int | float) and not isinstance(value, bool)
+
+
 def _check_json_type(value: Any, schema: Mapping[str, Any], path: str) -> None:
     expected = schema.get("type")
-    if expected is None:
-        return
+    if expected is not None:
+        _check_type_keyword(value, expected, path)
+    _check_constraints(value, schema, path)
+    if expected == "object":
+        for key, item in value.items():
+            _check_json_type(
+                item, schema.get("properties", {}).get(key, {}), f"{path}.{key}"
+            )
+    if expected == "array" and "items" in schema:
+        for i, item in enumerate(value):
+            _check_json_type(item, schema["items"], f"{path}[{i}]")
+
+
+def _check_constraints(value: Any, schema: Mapping[str, Any], path: str) -> None:
+    def fail(reason: str) -> None:
+        raise NodeConfigurationError(f"{path} {reason}", details={"path": path})
+
+    if "enum" in schema and not any(json_equal(value, c) for c in schema["enum"]):
+        fail("is not one of the allowed values")
+    if _is_number(value):
+        if "minimum" in schema and value < schema["minimum"]:
+            fail(f"must be >= {schema['minimum']}")
+        if "maximum" in schema and value > schema["maximum"]:
+            fail(f"must be <= {schema['maximum']}")
+    if isinstance(value, str):
+        if len(value) < schema.get("minLength", 0):
+            fail(f"must have at least {schema['minLength']} characters")
+        # Patterns come from node authors (trusted code), never from users.
+        if "pattern" in schema and not re.search(schema["pattern"], value):
+            fail("does not match the required format")
+    if isinstance(value, list) and len(value) > schema.get("maxItems", len(value)):
+        fail(f"must have at most {schema['maxItems']} items")
+
+
+def _check_type_keyword(value: Any, expected: Any, path: str) -> None:
     ok = {
         "string": isinstance(value, str),
         "integer": isinstance(value, int) and not isinstance(value, bool),
@@ -192,14 +244,6 @@ def _check_json_type(value: Any, schema: Mapping[str, Any], path: str) -> None:
         raise NodeConfigurationError(
             f"{path} must be {expected}", details={"path": path, "expected": expected}
         )
-    if expected == "object":
-        for key, item in value.items():
-            _check_json_type(
-                item, schema.get("properties", {}).get(key, {}), f"{path}.{key}"
-            )
-    if expected == "array" and "items" in schema:
-        for i, item in enumerate(value):
-            _check_json_type(item, schema["items"], f"{path}[{i}]")
 
 
 @dataclass(frozen=True)
@@ -258,14 +302,18 @@ class NodeDefinition:
             )
         for port in ports:
             # Inputs: only required ones must be present. Outputs: all declared
-            # ports must be present — a successful node produces all of them.
+            # ports must be present — a successful node produces all of them —
+            # except for control-flow nodes, where an omitted output is an
+            # inactive branch: its consumers are skipped by the runtime.
             required = (
-                port.required if isinstance(port, NodeInput) else direction == "output"
+                port.required
+                if isinstance(port, NodeInput)
+                else not self.capabilities.is_control_flow
             )
             if port.name not in values:
                 if required:
                     raise NodeValidationError(
-                        f"missing required input: {port.name}",
+                        f"missing required {direction}: {port.name}",
                         details={"port": port.name},
                     )
                 continue
@@ -399,6 +447,9 @@ class NodeExecutionContext:
     credentials: CredentialResolver | None = None
     is_cancelled: Callable[[], bool] = lambda: False
     runtime_metadata: Mapping[str, Any] = field(default_factory=dict)
+    # The payload the execution was started with (manual/API/trigger input).
+    # Read by entry nodes such as core.input; other nodes use their ports.
+    execution_input: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -439,10 +490,13 @@ class NodeError(AkashaError):
         *,
         kind: NodeErrorKind,
         details: dict[str, str] | None = None,
+        code: str | None = None,
     ) -> None:
         super().__init__(message, details=details)
         self.kind = kind
         self.retryable = kind in RETRYABLE_ERROR_KINDS
+        if code is not None:  # a node-specific stable code, e.g. HTTP_STATUS
+            self.code = code
 
 
 class Node(ABC):
@@ -457,6 +511,21 @@ class Node(ABC):
 
     @abstractmethod
     async def execute(self, context: NodeExecutionContext) -> NodeResult: ...
+
+
+class NodeFactory(Protocol):
+    """What the runtime needs to run a node type: its definition and a way
+    to create a fresh instance per attempt.
+
+    A ``Node`` subclass with a no-argument constructor is itself a factory.
+    Nodes with injected dependencies (network policy, provider endpoint) are
+    registered with a factory closure instead (``NodeRegistry.register``).
+    """
+
+    @property
+    def definition(self) -> NodeDefinition: ...
+
+    def __call__(self) -> Node: ...
 
 
 def check_node_contract(node_cls: type[Node]) -> None:

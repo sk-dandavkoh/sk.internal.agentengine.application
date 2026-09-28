@@ -12,7 +12,7 @@ by id, edges in insertion order), so the same graph always yields the same
 issues in the same order (architecture §72).
 
 Node definition lookup is a plain ``Mapping[str, NodeDefinition]``; the
-real Node Registry is Phase 09 and will simply provide that mapping.
+Node Registry provides it (``NodeRegistry.definitions``).
 """
 
 from collections.abc import Mapping
@@ -37,6 +37,10 @@ class ValidationCode(StrEnum):
     INVALID_CONFIG = auto()
     CYCLE_DETECTED = auto()
     DISCONNECTED_NODE = auto()
+    # Declared project dependencies (architecture §3.8/§144).
+    MISSING_DEPENDENCY = auto()
+    INCOMPATIBLE_DEPENDENCY = auto()
+    INVALID_DEPENDENCY = auto()
 
 
 @dataclass(frozen=True)
@@ -294,8 +298,8 @@ def _check_cycles(graph: Graph) -> list[ValidationIssue]:
     """Iterative DFS over existing nodes; each distinct cycle reported once.
 
     ponytail: any directed cycle is invalid. Loop constructs (architecture
-    §14) will need a marked loop-body exception once control-flow nodes
-    exist (Phase 09+); until then an executable graph is a DAG.
+    §14) will need a marked loop-body exception once loop nodes exist;
+    If/Switch branch without cycles, so an executable graph is still a DAG.
     """
     adjacency: dict[str, list[str]] = {node_id: [] for node_id in graph.nodes}
     for edge in graph.edges:

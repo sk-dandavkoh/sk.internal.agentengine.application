@@ -12,7 +12,6 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager
 import pytest
 from sqlalchemy import text
 from testcontainers.community.postgres import PostgresContainer
-from testcontainers.core.docker_client import DockerClient
 
 from akasha.application.projects import ProjectService
 from akasha.domain.node import (
@@ -25,31 +24,16 @@ from akasha.domain.node import (
 )
 from akasha.infrastructure.database import Database, normalize_async_url
 from akasha.infrastructure.persistence import SqlAlchemyUnitOfWork
+from tests.support import docker_available
 
 _POSTGRES_IMAGE = "postgres:17.2"
 
 UowFactory = Callable[[], AbstractAsyncContextManager[SqlAlchemyUnitOfWork]]
 
 
-def _docker_available() -> bool:
-    """A missing daemon must skip, not hang (backend/AGENTS.md §117: keep the
-    real integration test, report the infrastructure limitation).
-
-    Asks the daemon itself through the same client Testcontainers uses, so
-    unix sockets, Windows named pipes and DOCKER_HOST all behave alike.
-    """
-    try:
-        DockerClient(timeout=2).client.ping()
-    except Exception:
-        # Any failure to reach the daemon (missing client config, refused
-        # connection, timeout) means exactly one thing here: skip.
-        return False
-    return True
-
-
 @pytest.fixture(scope="session")
 def pg_container() -> Iterator[PostgresContainer]:
-    if not _docker_available():
+    if not docker_available():
         pytest.skip("Docker daemon not available for Testcontainers")
     with PostgresContainer(_POSTGRES_IMAGE) as container:
         yield container
@@ -100,7 +84,7 @@ def uow(database: Database) -> UowFactory:
 
 
 # Two tiny node types: enough to build valid and invalid graphs. The real
-# Node Registry is Phase 09; the service takes the catalog as a mapping.
+# built-in registry is not needed here; the service takes any mapping.
 SOURCE = NodeDefinition(
     metadata=NodeMetadata(
         node_id="test.source", name="Source", description="Emits text.", version="1.0.0"

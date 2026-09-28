@@ -23,6 +23,15 @@ AKASHA_PORT=9000 uv run akasha
 Configuration is loaded from `AKASHA_*` environment variables
 (`src/akasha/config.py`) and validated at startup — invalid config fails fast.
 
+Built-in node settings:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `AKASHA_NETWORK_ALLOW_PRIVATE` | `false` | let core.http/core.smtp reach private/loopback addresses |
+| `AKASHA_NETWORK_ALLOWED_HOSTS` | `[]` | JSON list of hosts allowed despite resolving privately |
+| `AKASHA_HTTP_MAX_RESPONSE_BYTES` | `5242880` | response cap for core.http/core.web_search |
+| `AKASHA_WEB_SEARCH_URL` | unset | SearXNG base URL for core.web_search |
+
 ## Quality gates
 
 ```bash
@@ -32,9 +41,11 @@ uv run mypy .
 uv run pytest
 ```
 
-`tests/integration/` needs a running Docker daemon (Testcontainers starts a
-throwaway `postgres:17.2`; unix socket, Windows named pipe and `DOCKER_HOST`
-all work). Without Docker those tests are skipped, not faked.
+`tests/integration/` and the SMTP node tests need a running Docker daemon
+(Testcontainers starts throwaway `postgres:17.2` and `axllent/mailpit:v1.21.8`;
+unix socket, Windows named pipe and `DOCKER_HOST` all work). Without Docker
+those tests are skipped, not faked. HTTP and web-search tests use an
+in-process loopback server; no test touches the public internet.
 
 ## Project API (`/api/v1/projects`)
 

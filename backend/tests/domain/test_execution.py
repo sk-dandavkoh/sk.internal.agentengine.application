@@ -449,6 +449,36 @@ class TestLifecycle:
         with pytest.raises(ValueError):  # DomainValidationError is a ValueError
             make()
 
+    def test_start_records_resolved_node_versions(self) -> None:
+        e = _execution()
+        e.enqueue()
+        versions = {"core.http": "1.0.0"}
+        e.start(now=T0, node_versions=versions)
+        versions["core.http"] = "9.9.9"  # the record is a copy
+        assert e.metadata.node_versions == {"core.http": "1.0.0"}
+        assert e.metadata.engine_version == __version__  # rest untouched
+
+    def test_input_is_a_private_json_object(self) -> None:
+        payload = {"lead": {"name": "Ada"}}
+        e = Execution.create(
+            project_id="proj_" + "a" * 32, project_version=_version(1), input=payload
+        )
+        payload["lead"]["name"] = "changed"
+        assert e.input == {"lead": {"name": "Ada"}}
+        assert _execution().input == {}
+
+    @pytest.mark.parametrize(
+        "payload",
+        [{"x": float("nan")}, {"x": b"bytes"}, {"x": "nul\u0000"}, {"x": object()}],
+    )
+    def test_input_must_be_storable_json(self, payload: dict[str, object]) -> None:
+        with pytest.raises(ValueError, match="JSON object"):
+            Execution.create(
+                project_id="proj_" + "a" * 32,
+                project_version=_version(1),
+                input=payload,
+            )
+
     def test_execution_pins_version_not_draft(self) -> None:
         project = Project.create(name="Demo")
         node = NodeInstance.create(node_type="core.log")

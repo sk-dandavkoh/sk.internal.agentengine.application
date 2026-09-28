@@ -13,17 +13,20 @@ import pytest
 
 from akasha.domain.node import (
     Node,
+    NodeCapabilities,
     NodeConfigSchema,
     NodeDefinition,
     NodeError,
     NodeErrorKind,
     NodeExecutionContext,
+    NodeFactory,
     NodeInput,
     NodeMetadata,
     NodeOutput,
     NodeResult,
     PortType,
     check_node_contract,
+    json_equal,
     validate_port_value,
 )
 from akasha.errors import (
@@ -388,3 +391,75 @@ def test_deterministic_contract_behavior() -> None:
         UpperCaseNode.definition.validate_inputs({"text": "x"})
         with pytest.raises(NodeValidationError):
             UpperCaseNode.definition.validate_inputs({"text": 1})
+
+
+# ---------------------------------------------------------------------------
+# Phase 09 contract additions: schema keywords, control-flow outputs,
+# JSON equality, factories
+# ---------------------------------------------------------------------------
+
+
+def test_config_constraint_keywords() -> None:
+    schema = NodeConfigSchema(
+        {
+            "type": "object",
+            "properties": {
+                "method": {"type": "string", "enum": ["GET", "POST"]},
+                "seconds": {"type": "number", "minimum": 0, "maximum": 10},
+                "url": {"type": "string", "minLength": 1, "pattern": "^https?://"},
+                "cases": {"type": "array", "maxItems": 2},
+                "flag": {"enum": [True]},
+            },
+        }
+    )
+    schema.validate_config(
+        {"method": "GET", "seconds": 10, "url": "http://x", "cases": [1, 2]}
+    )
+    bad: list[dict[str, Any]] = [
+        {"method": "get"},
+        {"seconds": -0.1},
+        {"seconds": 10.5},
+        {"url": ""},
+        {"url": "file:///etc/passwd"},
+        {"cases": [1, 2, 3]},
+        {"flag": 1},  # 1 is not the boolean true
+    ]
+    for config in bad:
+        with pytest.raises(NodeConfigurationError):
+            schema.validate_config(config)
+
+
+def test_json_equal_is_strict_about_booleans() -> None:
+    assert json_equal(1, 1.0)
+    assert json_equal({"a": [1, "x"]}, {"a": [1.0, "x"]})
+    assert not json_equal(True, 1)
+    assert not json_equal(0, False)
+    assert not json_equal([True], [1])
+    assert not json_equal({"a": 1}, {"a": 1, "b": 2})
+    assert not json_equal("1", 1)
+    assert json_equal(None, None)
+
+
+def _branching(*, control_flow: bool) -> NodeDefinition:
+    return NodeDefinition(
+        metadata=NodeMetadata(
+            node_id="test.branch", name="Branch", description="D", version="1.0.0"
+        ),
+        outputs=(NodeOutput("yes", PortType.JSON), NodeOutput("no", PortType.JSON)),
+        capabilities=NodeCapabilities(is_control_flow=control_flow),
+    )
+
+
+def test_control_flow_node_may_omit_outputs() -> None:
+    _branching(control_flow=True).validate_outputs({"yes": 1})
+    _branching(control_flow=True).validate_outputs({})
+    with pytest.raises(NodeValidationError, match="missing required output: no"):
+        _branching(control_flow=False).validate_outputs({"yes": 1})
+    with pytest.raises(NodeValidationError, match="unknown output"):
+        _branching(control_flow=True).validate_outputs({"maybe": 1})
+
+
+def test_node_class_is_a_node_factory() -> None:
+    factory: NodeFactory = UpperCaseNode
+    assert factory.definition is UpperCaseNode.definition
+    assert isinstance(factory(), UpperCaseNode)

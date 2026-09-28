@@ -8,6 +8,8 @@ the caller hands the execution id to ``ExecutionRuntime.run``. Triggers
 """
 
 import logging
+from collections.abc import Mapping
+from typing import Any
 
 from akasha.application.persistence import UnitOfWork
 from akasha.application.projects import ProjectVersionNotFoundError, UowFactory
@@ -40,10 +42,12 @@ class ExecutionService:
         project_id: str,
         version: int,
         *,
+        input: Mapping[str, Any] | None = None,
         metadata: ExecutionMetadata | None = None,
         timeout_policy: TimeoutPolicy | None = None,
     ) -> Execution:
-        """Pin ``version`` and queue a new execution of it.
+        """Pin ``version`` and queue a new execution of it with ``input``
+        (a JSON object; entry nodes such as ``core.input`` read it).
 
         Never reads the draft: later draft edits or publishes cannot change
         what this execution runs. Retry policy stays the default (no retry)
@@ -57,7 +61,11 @@ class ExecutionService:
                     details={"project_id": project_id, "version": version},
                 )
             execution = Execution.create(
-                project_id, snapshot, metadata=metadata, timeout_policy=timeout_policy
+                project_id,
+                snapshot,
+                metadata=metadata,
+                timeout_policy=timeout_policy,
+                input=input,
             )
             execution.enqueue()
             await uow.executions.save(execution)

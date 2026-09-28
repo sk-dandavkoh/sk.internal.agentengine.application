@@ -308,6 +308,7 @@ class SqlAlchemyExecutionRepository(ExecutionRepository):
             started_at=_opt_utc(row["started_at"]),
             finished_at=_opt_utc(row["finished_at"]),
             revision=row["revision"],
+            input=dict(row["input"]),
         )
 
     async def save(self, execution: Execution) -> None:
@@ -319,6 +320,7 @@ class SqlAlchemyExecutionRepository(ExecutionRepository):
                 "trigger_id": e.metadata.trigger_id,
                 "correlation_id": e.metadata.correlation_id,
                 "engine_version": e.metadata.engine_version,
+                "node_versions": dict(e.metadata.node_versions),
             },
             "retry_policy": {
                 "max_attempts": e.retry_policy.max_attempts,
@@ -354,6 +356,8 @@ class SqlAlchemyExecutionRepository(ExecutionRepository):
                     id=e.id,
                     project_id=e.project_id,
                     project_version=e.project_version.version,
+                    # Immutable after creation: written by the insert only.
+                    input=e.input,
                     **values,
                 )
                 .on_conflict_do_nothing(index_elements=[m.executions.c.id])
@@ -426,6 +430,8 @@ def _metadata(doc: dict[str, Any]) -> ExecutionMetadata:
         trigger_id=doc["trigger_id"],
         correlation_id=doc["correlation_id"],
         engine_version=doc["engine_version"],
+        # Absent in rows written before Phase 09 (no registry existed then).
+        node_versions=doc.get("node_versions", {}),
     )
 
 

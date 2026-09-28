@@ -1,10 +1,11 @@
-"""Built-in nodes.
+"""Node Registry and built-in nodes.
 
-Implementations of the Node contract (core.input, core.http, ...) live here
-(Phase 09). Nodes depend on the node contracts defined by the domain/node
-layers and are executable without HTTP controllers.
+``registry.py`` resolves node type ids to definitions and factories;
+``builtins.py`` registers the core.* set (core.py, control.py, http.py,
+smtp.py). Nodes implement the domain Node contract and are executable
+without HTTP controllers.
 
 Dependency rules:
-    - may depend on: domain node contracts
-    - must not depend on: api, fastapi
+    - may depend on: domain node contracts, security guards
+    - must not depend on: api, fastapi, runtime internals
 """

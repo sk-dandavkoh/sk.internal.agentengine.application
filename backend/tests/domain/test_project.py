@@ -6,6 +6,8 @@ from datetime import UTC, datetime
 import pytest
 
 from akasha.domain.graph import Graph, NodeInstance
+from akasha.domain.graph_validation import ValidationCode
+from akasha.domain.node import NodeDefinition, NodeMetadata
 from akasha.domain.primitives import new_id
 from akasha.domain.project import (
     Dependency,
@@ -13,6 +15,7 @@ from akasha.domain.project import (
     ProjectDraft,
     ProjectStatus,
     ProjectVersion,
+    validate_dependencies,
 )
 from akasha.domain.trigger import Trigger, TriggerType
 from akasha.errors import DomainValidationError
@@ -129,3 +132,55 @@ class TestDependency:
     def test_blank_constraint_rejected(self) -> None:
         with pytest.raises(DomainValidationError, match="constraint"):
             Dependency(kind="node", name="core.llm", version_constraint=" ")
+
+
+def _definition(node_id: str, version: str) -> NodeDefinition:
+    return NodeDefinition(
+        metadata=NodeMetadata(
+            node_id=node_id, name=node_id, description="D", version=version
+        )
+    )
+
+
+_DEFS = {"core.http": _definition("core.http", "1.4.2")}
+
+
+class TestDependencyValidation:
+    """Node version compatibility (architecture §3.8/§144): declared node
+    dependencies are checked at validate/publish and before every run."""
+
+    def codes(self, *deps: Dependency) -> list[ValidationCode]:
+        return [i.code for i in validate_dependencies(deps, _DEFS)]
+
+    def test_satisfied_constraints_pass(self) -> None:
+        for constraint in ("*", "1.4.2", "==1.4.2", ">=1.0.0,<2.0.0", ">1.4.1"):
+            assert self.codes(Dependency("node", "core.http", constraint)) == []
+
+    def test_unsatisfied_constraint_is_incompatible(self) -> None:
+        for constraint in (">=2.0.0", "<1.4.2", "1.4.3", ">=1.0.0,<1.4.0"):
+            assert self.codes(Dependency("node", "core.http", constraint)) == [
+                ValidationCode.INCOMPATIBLE_DEPENDENCY
+            ]
+
+    def test_missing_node_type(self) -> None:
+        assert self.codes(Dependency("node", "core.nope")) == [
+            ValidationCode.MISSING_DEPENDENCY
+        ]
+
+    def test_malformed_constraint_is_an_issue_not_an_exception(self) -> None:
+        for constraint in ("^1.0.0", "latest", ">=1.0", ">=1.0.0,,"):
+            assert self.codes(Dependency("node", "core.http", constraint)) == [
+                ValidationCode.INVALID_DEPENDENCY
+            ]
+
+    def test_plugin_dependencies_are_left_to_the_plugin_system(self) -> None:
+        assert self.codes(Dependency("plugin", "community.web", ">=9.0.0")) == []
+
+    def test_draft_and_version_validation_include_dependencies(self) -> None:
+        draft = ProjectDraft(dependencies=[Dependency("node", "core.nope")])
+        for result in (
+            draft.validate(_DEFS),
+            draft.publish(version=1).validate(_DEFS),
+        ):
+            assert result.by_code(ValidationCode.MISSING_DEPENDENCY)
+            assert result.by_code(ValidationCode.EMPTY_GRAPH)  # graph still checked

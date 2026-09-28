@@ -6,14 +6,19 @@ ProjectVersion; afterwards no draft mutation can reach the version
 monotonically increasing and unique per project.
 """
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum, auto
 
 from akasha.domain.graph import Graph
-from akasha.domain.graph_validation import ValidationResult, validate_graph
+from akasha.domain.graph_validation import (
+    ValidationCode,
+    ValidationIssue,
+    ValidationResult,
+    validate_graph,
+)
 from akasha.domain.node import NodeDefinition
 from akasha.domain.primitives import (
     Entity,
@@ -22,6 +27,7 @@ from akasha.domain.primitives import (
     utcnow,
     validate_id,
     validate_name,
+    version_satisfies,
 )
 from akasha.domain.trigger import Trigger
 from akasha.errors import DomainValidationError
@@ -53,6 +59,59 @@ class Dependency:
             raise DomainValidationError("version constraint must not be blank")
 
 
+def validate_dependencies(
+    dependencies: Iterable[Dependency], definitions: Mapping[str, NodeDefinition]
+) -> tuple[ValidationIssue, ...]:
+    """Check declared node dependencies against the available node types.
+
+    A malformed constraint is a validation issue, not a construction error:
+    already persisted projects must stay loadable to be fixed. Plugin
+    dependencies are not checked here — plugins do not exist before the
+    Plugin System (Phase 17), which owns that check.
+    """
+    issues: list[ValidationIssue] = []
+    for dep in dependencies:
+        if dep.kind != "node":
+            continue
+        definition = definitions.get(dep.name)
+        if definition is None:
+            issues.append(
+                ValidationIssue(
+                    ValidationCode.MISSING_DEPENDENCY,
+                    f"required node type {dep.name!r} is not available",
+                )
+            )
+            continue
+        try:
+            ok = version_satisfies(definition.version, dep.version_constraint)
+        except DomainValidationError:
+            issues.append(
+                ValidationIssue(
+                    ValidationCode.INVALID_DEPENDENCY,
+                    f"malformed version constraint for node type {dep.name!r}",
+                )
+            )
+            continue
+        if not ok:
+            issues.append(
+                ValidationIssue(
+                    ValidationCode.INCOMPATIBLE_DEPENDENCY,
+                    f"node type {dep.name!r} {definition.version} does not satisfy "
+                    f"{dep.version_constraint!r}",
+                )
+            )
+    return tuple(issues)
+
+
+def _validate(
+    graph: Graph,
+    dependencies: Iterable[Dependency],
+    definitions: Mapping[str, NodeDefinition],
+) -> ValidationResult:
+    issues = validate_graph(graph, definitions).issues
+    return ValidationResult(issues + validate_dependencies(dependencies, definitions))
+
+
 @dataclass
 class ProjectDraft:
     """The editable state of a project. Mutable by design."""
@@ -63,12 +122,12 @@ class ProjectDraft:
     description: str = ""
 
     def validate(self, definitions: Mapping[str, NodeDefinition]) -> ValidationResult:
-        """Full graph validation without executing (roadmap Phase 04).
+        """Full graph and dependency validation without executing.
 
         Callers (ValidateProject / PublishProject, Phase 06) decide what to
         do with the issues; the draft itself never raises on user data here.
         """
-        return validate_graph(self.graph, definitions)
+        return _validate(self.graph, self.dependencies, definitions)
 
     def publish(
         self,
@@ -110,6 +169,11 @@ class ProjectVersion:
             raise DomainValidationError("version number must be >= 1")
         if self.schema_version < 1:
             raise DomainValidationError("schema_version must be >= 1")
+
+    def validate(self, definitions: Mapping[str, NodeDefinition]) -> ValidationResult:
+        """Same rules as the draft: the node catalog may have changed since
+        publish, so the runtime re-checks the snapshot before every run."""
+        return _validate(self.graph, self.dependencies, definitions)
 
 
 @dataclass(eq=False)

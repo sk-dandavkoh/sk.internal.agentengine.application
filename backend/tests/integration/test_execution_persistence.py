@@ -103,10 +103,11 @@ async def test_full_aggregate_round_trip(uow: UowFactory) -> None:
             max_attempts=3, initial_backoff=timedelta(seconds=0.5)
         ),
         timeout_policy=TimeoutPolicy(execution_timeout=timedelta(minutes=2)),
+        input={"lead": {"name": "Ada", "score": 0.5, "tags": ["a", None]}},
         now=T0,
     )
     execution.enqueue()
-    execution.start(now=T0)
+    execution.start(now=T0, node_versions={"test.echo": "1.0.0", "test.emit": "2.1.0"})
     execution.mark_node_ready(a)
     execution.start_node(a, now=T0)
     transient = ExecutionError(
@@ -134,6 +135,8 @@ async def test_full_aggregate_round_trip(uow: UowFactory) -> None:
     assert loaded.revision == execution.revision == 1
     assert loaded.project_version.id == version.id
     assert loaded.metadata == execution.metadata
+    assert loaded.metadata.node_versions == {"test.echo": "1.0.0", "test.emit": "2.1.0"}
+    assert loaded.input == {"lead": {"name": "Ada", "score": 0.5, "tags": ["a", None]}}
     assert loaded.retry_policy == execution.retry_policy
     assert loaded.timeout_policy == execution.timeout_policy
     assert loaded.cancellation == execution.cancellation
@@ -404,6 +407,116 @@ async def test_upgrade_from_0002_then_execute_existing_version(db_url: str) -> N
             result = await runtime.run(queued.id)
             assert result.status is ExecutionStatus.COMPLETED
             assert result.node(b).outputs == {"out": "hello"}
+        finally:
+            await db.dispose()
+    finally:
+        async with admin.engine.connect() as conn:
+            await conn.execution_options(isolation_level="AUTOCOMMIT")
+            await conn.execute(text(f"DROP DATABASE IF EXISTS {scratch}"))
+        await admin.dispose()
+
+
+async def test_upgrade_from_0003_keeps_existing_executions_runnable(
+    db_url: str,
+) -> None:
+    """0003 schema + a queued execution written before inputs and node
+    versions existed → 0004 → it loads with ``{}`` for both and runs."""
+    admin = Database(normalize_async_url(db_url))
+    scratch = "akasha_migration_0004"
+    try:
+        async with admin.engine.connect() as conn:
+            await conn.execution_options(isolation_level="AUTOCOMMIT")
+            await conn.execute(text(f"DROP DATABASE IF EXISTS {scratch}"))
+            await conn.execute(text(f"CREATE DATABASE {scratch}"))
+        scratch_url = f"{db_url.rpartition('/')[0]}/{scratch}"
+        await asyncio.to_thread(_alembic, "upgrade", scratch_url, "0003_executions")
+
+        graph, a, b = two_node_graph()
+        project_id, execution_id = new_id("proj"), new_id("exec")
+        db = Database(normalize_async_url(scratch_url))
+        try:
+            async with db.engine.begin() as conn:
+                await conn.execute(
+                    text(
+                        "INSERT INTO projects (id, name, status, draft_graph,"
+                        " draft_triggers, draft_dependencies, current_version,"
+                        " created_at, updated_at) VALUES (:id, 'old', 'published',"
+                        " '{\"nodes\": [], \"edges\": []}', '[]', '[]', 1,"
+                        " now(), now())"
+                    ),
+                    {"id": project_id},
+                )
+                await conn.execute(
+                    text(
+                        "INSERT INTO project_versions (id, project_id, version,"
+                        " schema_version, graph, triggers, dependencies,"
+                        " published_at) VALUES (:id, :pid, 1, 1,"
+                        " CAST(:graph AS jsonb), '[]', '[]', now())"
+                    ),
+                    {
+                        "id": new_id("pver"),
+                        "pid": project_id,
+                        "graph": json.dumps(serialize_graph(graph)),
+                    },
+                )
+                await conn.execute(
+                    text(
+                        "INSERT INTO executions (id, project_id, project_version,"
+                        " status, metadata, retry_policy, timeout_policy, revision,"
+                        " created_at) VALUES (:id, :pid, 1, 'queued',"
+                        " CAST(:metadata AS jsonb), CAST(:retry AS jsonb),"
+                        " CAST(:timeout AS jsonb), 1, now())"
+                    ),
+                    {
+                        "id": execution_id,
+                        "pid": project_id,
+                        "metadata": json.dumps(
+                            {
+                                "trigger_type": "manual",
+                                "trigger_id": None,
+                                "correlation_id": None,
+                                "engine_version": "0.1.0",
+                            }
+                        ),
+                        "retry": json.dumps(
+                            {
+                                "max_attempts": 1,
+                                "initial_backoff_s": 1.0,
+                                "backoff_multiplier": 2.0,
+                                "max_backoff_s": 300.0,
+                                "retryable_kinds": ["timeout", "transient"],
+                            }
+                        ),
+                        "timeout": json.dumps(
+                            {"execution_timeout_s": None, "node_timeout_s": None}
+                        ),
+                    },
+                )
+                for node_id in (a, b):
+                    await conn.execute(
+                        text(
+                            "INSERT INTO node_executions (id, execution_id,"
+                            " node_id, status, attempt, failures) VALUES"
+                            " (:id, :eid, :nid, 'pending', 0, '[]')"
+                        ),
+                        {"id": new_id("nexec"), "eid": execution_id, "nid": node_id},
+                    )
+            await asyncio.to_thread(_alembic, "upgrade", scratch_url, "head")
+
+            def factory() -> SqlAlchemyUnitOfWork:
+                return SqlAlchemyUnitOfWork(db)
+
+            before = await ExecutionService(factory).get_execution(execution_id)
+            assert before.input == {}
+            assert before.metadata.node_versions == {}
+            runtime = ExecutionRuntime(factory, {"test.emit": Emit, "test.echo": Echo})
+            result = await runtime.run(execution_id)
+            assert result.status is ExecutionStatus.COMPLETED
+            after = await ExecutionService(factory).get_execution(execution_id)
+            assert after.metadata.node_versions == {
+                "test.echo": "1.0.0",
+                "test.emit": "1.0.0",
+            }
         finally:
             await db.dispose()
     finally:

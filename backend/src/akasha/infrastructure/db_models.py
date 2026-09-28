@@ -95,6 +95,8 @@ executions = Table(
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("started_at", DateTime(timezone=True), nullable=True),
     Column("finished_at", DateTime(timezone=True), nullable=True),
+    # Start payload (JSON object); written once at creation.
+    Column("input", JSONB_VARIANT, nullable=False, server_default="{}"),
     # Pins the immutable snapshot; RESTRICT keeps history reproducible.
     ForeignKeyConstraint(
         ["project_id", "project_version"],

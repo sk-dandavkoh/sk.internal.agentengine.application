@@ -7,16 +7,18 @@ input resolution are pure functions of the plan and the aggregate.
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import replace
 from datetime import timedelta
 from typing import Any
 
 import pytest
 
 from akasha.application.persistence import UnitOfWork
-from akasha.domain.execution import Execution, ExecutionError
+from akasha.domain.execution import Execution, ExecutionError, NodeExecutionStatus
 from akasha.domain.graph import Edge, Graph, NodeInstance
 from akasha.domain.node import (
     Node,
+    NodeCapabilities,
     NodeDefinition,
     NodeError,
     NodeErrorKind,
@@ -28,13 +30,14 @@ from akasha.domain.node import (
     PortType,
 )
 from akasha.domain.primitives import new_id
-from akasha.domain.project import ProjectDraft
+from akasha.domain.project import Dependency, ProjectDraft
 from akasha.errors import ConfigurationError
 from akasha.runtime.executor import execute_node
 from akasha.runtime.plan import ExecutionGraphInvalidError, load_plan
 from akasha.runtime.runtime import ExecutionRuntime
 
 S = PortType.STRING
+_N = NodeExecutionStatus
 Body = Callable[[NodeExecutionContext], Awaitable[Any]]
 
 
@@ -44,6 +47,7 @@ def make(
     inputs: tuple[NodeInput, ...] = (),
     outputs: tuple[NodeOutput, ...] = (NodeOutput("out", S),),
     node_id: str = "test.node",
+    capabilities: NodeCapabilities | None = None,
 ) -> type[Node]:
     definition_ = NodeDefinition(
         metadata=NodeMetadata(
@@ -51,6 +55,7 @@ def make(
         ),
         inputs=inputs,
         outputs=outputs,
+        capabilities=capabilities or NodeCapabilities(),
     )
 
     class N(Node):
@@ -256,12 +261,74 @@ def test_node_becomes_ready_only_after_every_upstream_completed() -> None:
     execution, ids = diamond()
     plan = load_plan(execution.project_version, CATALOG)
     finish(execution, ids["s1"], {"out": "a"})
-    assert plan.ready_after(ids["s1"], execution) == []
+    assert plan.readiness(ids["c"], execution) is None  # s2 still open
     finish(execution, ids["s2"], {"out": ["b", "c"]})
-    assert plan.ready_after(ids["s2"], execution) == [ids["c"]]
-    execution.mark_node_ready(ids["c"])
-    # Already READY: a second completed parent must not re-mark it.
-    assert plan.ready_after(ids["s1"], execution) == []
+    assert plan.readiness(ids["c"], execution) is _N.READY
+
+
+def test_skipped_upstream_kills_its_edge_but_a_live_edge_still_feeds() -> None:
+    """Merge semantics: one live edge into a multiple input is enough."""
+    execution, ids = diamond()
+    plan = load_plan(execution.project_version, CATALOG)
+    execution.skip_node(ids["s2"])
+    assert plan.readiness(ids["c"], execution) is None
+    finish(execution, ids["s1"], {"out": "a"})
+    assert plan.readiness(ids["c"], execution) is _N.READY
+    assert plan.inputs_for(ids["c"], execution) == {
+        "items": ["a"],
+        "opts": {"k": []},
+    }
+
+
+def test_all_edges_dead_means_skipped() -> None:
+    execution, ids = diamond()
+    plan = load_plan(execution.project_version, CATALOG)
+    execution.skip_node(ids["s1"])
+    execution.skip_node(ids["s2"])
+    assert plan.readiness(ids["c"], execution) is _N.SKIPPED
+
+
+BRANCH = make(
+    ok,
+    node_id="test.branch",
+    outputs=(NodeOutput("yes", S), NodeOutput("no", S)),
+    capabilities=NodeCapabilities(is_control_flow=True),
+)
+PAIR = make(ok, node_id="test.pair", inputs=(NodeInput("a", S), NodeInput("b", S)))
+
+
+def test_omitted_control_flow_output_is_a_dead_edge() -> None:
+    """``pair`` needs both inputs; the branch only produced ``yes``, so the
+    edge from ``no`` is dead and a required input stays unfed → SKIPPED."""
+    branch, pair = NodeInstance.create("test.branch"), NodeInstance.create("test.pair")
+    graph = Graph()
+    for n in (branch, pair):
+        graph.add_node(n)
+    graph.add_edge(Edge(branch.id, "yes", pair.id, "a"))
+    graph.add_edge(Edge(branch.id, "no", pair.id, "b"))
+    execution = Execution.create(new_id("proj"), ProjectDraft(graph).publish(version=1))
+    execution.enqueue()
+    execution.start()
+    plan = load_plan(
+        execution.project_version, {"test.branch": BRANCH, "test.pair": PAIR}
+    )
+
+    finish(execution, branch.id, {"yes": "y"})
+    assert plan.readiness(pair.id, execution) is _N.SKIPPED
+    assert plan.node_versions == {"test.branch": "1.0.0", "test.pair": "1.0.0"}
+
+
+def test_declared_dependency_versions_are_rechecked_at_load() -> None:
+    execution, _ = diamond()
+    version = replace(
+        execution.project_version,
+        dependencies=(Dependency("node", "test.source", ">=2.0.0"),),
+    )
+    with pytest.raises(ExecutionGraphInvalidError) as err:
+        load_plan(version, CATALOG)
+    assert [i.code.value for i in err.value.result.issues] == [
+        "incompatible_dependency"
+    ]
 
 
 def test_inputs_collect_in_edge_order_and_defaults_are_private_copies() -> None:

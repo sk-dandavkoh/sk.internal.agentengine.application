@@ -14,13 +14,15 @@ Concurrency model (the reason this is race-free by construction):
 - A node is persisted RUNNING *before* its task is created, so the stored
   state never hides that a node may have produced side effects.
 
-Scope (Phase 08): no retries (Phase 23), no queue/worker/leases (Phase 22),
-no recovery of executions left RUNNING by a dead process (Phase 23), no
-control flow (Phase 09+), no events (Phase 11).
+Scope: no retries (Phase 23), no queue/worker/leases (Phase 22), no
+recovery of executions left RUNNING by a dead process (Phase 23), no events
+(Phase 11). Control flow is generic (``ExecutionPlan.readiness``): the loop
+never inspects node types.
 """
 
 import asyncio
 import logging
+from collections import deque
 from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -204,7 +206,7 @@ class ExecutionRuntime:
             _log("execution_failed", execution, error_code=exc.code)
             return execution
 
-        execution.start(now=self._clock())
+        execution.start(now=self._clock(), node_versions=plan.node_versions)
         for node_id in plan.roots:
             execution.mark_node_ready(node_id)
         await self._state.save(execution)
@@ -243,9 +245,9 @@ class ExecutionRuntime:
                 finished = [t for t in running if t in done]
                 completed, failure = self._record(execution, running, finished)
                 dirty = bool(finished)
-                for completed_id in completed:
-                    for node_id in plan.ready_after(completed_id, execution):
-                        execution.mark_node_ready(node_id)
+                if failure is None:
+                    for completed_id in completed:
+                        self._advance(execution, plan, completed_id)
             execution.complete(now=self._clock())
             await self._finish(execution, "execution_completed")
         finally:
@@ -323,6 +325,8 @@ class ExecutionRuntime:
                     "engine_version": execution.metadata.engine_version,
                     "attempt": ne.attempt,
                 },
+                # A copy for the same reason as ``config``.
+                execution_input=deepcopy(execution.input),
             )
             task = asyncio.create_task(
                 execute_node(
@@ -334,6 +338,23 @@ class ExecutionRuntime:
             running[task] = node_id
             _log("node_started", execution, node_id=node_id)
         return True
+
+    def _advance(self, execution: Execution, plan: ExecutionPlan, done: str) -> None:
+        """DependencyResolver step after ``done`` completed: mark decided
+        downstream nodes READY or SKIPPED. A skip decides that node's own
+        downstream too, so skips cascade (breadth-first, id order)."""
+        queue = deque([done])
+        while queue:
+            for node_id in plan.downstream[queue.popleft()]:
+                if execution.node(node_id).status is not NodeExecutionStatus.PENDING:
+                    continue
+                decision = plan.readiness(node_id, execution)
+                if decision is NodeExecutionStatus.READY:
+                    execution.mark_node_ready(node_id)
+                elif decision is NodeExecutionStatus.SKIPPED:
+                    execution.skip_node(node_id, now=self._clock())
+                    _log("node_skipped", execution, node_id=node_id)
+                    queue.append(node_id)
 
     def _record(
         self,
