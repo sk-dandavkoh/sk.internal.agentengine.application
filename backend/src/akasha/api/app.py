@@ -21,6 +21,7 @@ logger = logging.getLogger("akasha")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
+    await app.state.container.start()
     logger.info("application_started", extra={"event": "application_started"})
     try:
         yield

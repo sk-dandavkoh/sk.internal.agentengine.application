@@ -29,7 +29,7 @@ from akasha.domain.primitives import (
     validate_name,
     version_satisfies,
 )
-from akasha.domain.trigger import Trigger
+from akasha.domain.trigger import Trigger, schedule_problem
 from akasha.errors import DomainValidationError
 
 _SCHEMA_VERSION = 1  # project structure schema; bumped when the format changes
@@ -103,6 +103,39 @@ def validate_dependencies(
     return tuple(issues)
 
 
+def validate_triggers(triggers: Iterable[Trigger]) -> tuple[ValidationIssue, ...]:
+    """Trigger rules that publishing requires.
+
+    Trigger ids must be unique within a project: webhook and invoke calls
+    address a trigger by (project, trigger id). Schedules must be
+    evaluable (``schedule_problem``). Both are validation issues, not
+    construction errors, for the same reason as dependency constraints:
+    persisted drafts must stay loadable so they can be fixed.
+    """
+    issues: list[ValidationIssue] = []
+    seen: set[str] = set()
+    for trigger in triggers:
+        if trigger.id in seen:
+            issues.append(
+                ValidationIssue(
+                    ValidationCode.DUPLICATE_TRIGGER_ID,
+                    "trigger id is used more than once in this project",
+                    trigger_id=trigger.id,
+                )
+            )
+        seen.add(trigger.id)
+        problem = schedule_problem(trigger)
+        if problem is not None:
+            issues.append(
+                ValidationIssue(
+                    ValidationCode.INVALID_TRIGGER_SCHEDULE,
+                    problem,
+                    trigger_id=trigger.id,
+                )
+            )
+    return tuple(issues)
+
+
 def _validate(
     graph: Graph,
     dependencies: Iterable[Dependency],
@@ -122,12 +155,13 @@ class ProjectDraft:
     description: str = ""
 
     def validate(self, definitions: Mapping[str, NodeDefinition]) -> ValidationResult:
-        """Full graph and dependency validation without executing.
+        """Full graph, dependency and trigger validation without executing.
 
         Callers (ValidateProject / PublishProject, Phase 06) decide what to
         do with the issues; the draft itself never raises on user data here.
         """
-        return _validate(self.graph, self.dependencies, definitions)
+        result = _validate(self.graph, self.dependencies, definitions)
+        return ValidationResult(result.issues + validate_triggers(self.triggers))
 
     def publish(
         self,
@@ -171,8 +205,10 @@ class ProjectVersion:
             raise DomainValidationError("schema_version must be >= 1")
 
     def validate(self, definitions: Mapping[str, NodeDefinition]) -> ValidationResult:
-        """Same rules as the draft: the node catalog may have changed since
-        publish, so the runtime re-checks the snapshot before every run."""
+        """The draft's graph and dependency rules: the node catalog may have
+        changed since publish, so the runtime re-checks the snapshot before
+        every run. Trigger rules are left out on purpose: they gate
+        publishing, and a run never depends on how it was triggered."""
         return _validate(self.graph, self.dependencies, definitions)
 
 

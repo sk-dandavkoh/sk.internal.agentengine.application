@@ -16,6 +16,7 @@ from akasha.domain.project import (
     ProjectStatus,
     ProjectVersion,
     validate_dependencies,
+    validate_triggers,
 )
 from akasha.domain.trigger import Trigger, TriggerType
 from akasha.errors import DomainValidationError
@@ -184,3 +185,43 @@ class TestDependencyValidation:
         ):
             assert result.by_code(ValidationCode.MISSING_DEPENDENCY)
             assert result.by_code(ValidationCode.EMPTY_GRAPH)  # graph still checked
+
+
+class TestTriggerValidation:
+    """Trigger ids are unique per project and schedules must be evaluable.
+    Both rules gate publishing as issues, never as construction errors, so
+    persisted drafts stay loadable and fixable (architecture §125)."""
+
+    def test_duplicate_trigger_ids_are_an_issue(self) -> None:
+        tid = new_id("trig")
+        draft = ProjectDraft(
+            triggers=[
+                Trigger(id=tid, trigger_type=TriggerType.WEBHOOK),
+                Trigger(id=tid, trigger_type=TriggerType.API),
+            ]
+        )
+        issues = validate_triggers(draft.triggers)
+        assert [(i.code, i.trigger_id) for i in issues] == [
+            (ValidationCode.DUPLICATE_TRIGGER_ID, tid)
+        ]
+        assert draft.validate(_DEFS).by_code(ValidationCode.DUPLICATE_TRIGGER_ID)
+
+    def test_unschedulable_triggers_are_issues_with_location(self) -> None:
+        never = Trigger.create(TriggerType.CRON, {"cron": "0 0 31 2 *"})
+        too_long = Trigger.create(TriggerType.INTERVAL, {"interval_seconds": 1e12})
+        fine = Trigger.create(TriggerType.CRON, {"cron": "*/5 * * * *"})
+        issues = validate_triggers([never, fine, too_long])
+        assert [(i.code, i.trigger_id) for i in issues] == [
+            (ValidationCode.INVALID_TRIGGER_SCHEDULE, never.id),
+            (ValidationCode.INVALID_TRIGGER_SCHEDULE, too_long.id),
+        ]
+
+    def test_trigger_rules_do_not_block_running_a_published_version(self) -> None:
+        # ProjectVersion.validate is the runtime's pre-run check: how a run
+        # was triggered must not stop a published version from executing.
+        draft = ProjectDraft(
+            triggers=[Trigger.create(TriggerType.CRON, {"cron": "0 0 31 2 *"})]
+        )
+        assert draft.validate(_DEFS).by_code(ValidationCode.INVALID_TRIGGER_SCHEDULE)
+        version_result = draft.publish(version=1).validate(_DEFS)
+        assert not version_result.by_code(ValidationCode.INVALID_TRIGGER_SCHEDULE)

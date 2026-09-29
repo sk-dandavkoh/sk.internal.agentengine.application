@@ -233,6 +233,7 @@ class ValidationIssueOut(BaseModel):
     node_id: str | None
     port: str | None
     edge: EdgeBody | None
+    trigger_id: str | None
 
 
 class ValidationResponse(BaseModel):

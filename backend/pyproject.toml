@@ -7,6 +7,7 @@ requires-python = ">=3.12"
 dependencies = [
     "alembic>=1.14",
     "asyncpg>=0.30",
+    "croniter>=6.2.4",
     "fastapi>=0.141.1",
     "httpx>=0.28.1",
     "psycopg[binary]>=3.2",
@@ -58,3 +59,7 @@ packages = ["akasha"]
 strict = true
 # Without package bases, two conftest.py files collide as the same module.
 explicit_package_bases = true
+
+[[tool.mypy.overrides]]
+module = ["croniter", "croniter.*"]
+ignore_missing_imports = true

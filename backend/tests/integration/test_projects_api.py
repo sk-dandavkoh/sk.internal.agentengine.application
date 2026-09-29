@@ -344,12 +344,15 @@ async def test_validate_reports_structured_issues(api: httpx.AsyncClient) -> Non
     assert by_code["unknown_port"]["port"] == "nope"
     assert by_code["unknown_port"]["edge"]["source_node_id"] == source
     assert by_code["missing_required_input"]["node_id"] == sink
+    # Phase 10 added the trigger location (null for graph issues).
+    assert by_code["missing_required_input"]["trigger_id"] is None
     assert set(by_code["missing_required_input"]) == {
         "code",
         "message",
         "node_id",
         "port",
         "edge",
+        "trigger_id",
     }
 
 

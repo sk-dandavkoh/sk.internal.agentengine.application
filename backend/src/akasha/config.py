@@ -33,6 +33,13 @@ class Settings(BaseSettings):
     # SEARCH_NOT_CONFIGURED. Operator-trusted, so it may be private.
     web_search_url: AnyHttpUrl | None = None
 
+    # Trigger system (Phase 10). Until workers exist (Phase 22) CRON/INTERVAL
+    # triggers are fired by one in-process scheduler task per API process.
+    scheduler_enabled: bool = True
+    scheduler_poll_seconds: float = Field(default=1.0, gt=0)
+    # Inbound webhook body cap; the payload becomes the execution input.
+    webhook_max_payload_bytes: int = Field(default=1024 * 1024, gt=0)
+
 
 def load_settings() -> Settings:
     """Load and validate configuration. Raises ValidationError on bad config."""

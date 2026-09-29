@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 from types import TracebackType
 from typing import Any, cast
 
-from sqlalchemy import Insert, Update, delete, select
+from sqlalchemy import Insert, Update, delete, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import CursorResult, RowMapping
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -226,6 +226,36 @@ class SqlAlchemyProjectVersionRepository(ProjectVersionRepository):
             .all()
         )
         return [self._to_domain(row) for row in rows]
+
+    async def list_latest(
+        self, *, project_id: str | None = None
+    ) -> Sequence[tuple[str, ProjectVersion]]:
+        # ponytail: the scheduler scans one full row per project and filters
+        # triggers in Python; push trigger matching into SQL (JSONB ops) when
+        # catalogs get large. Webhook/invoke resolution passes project_id.
+        latest = select(
+            m.project_versions.c.project_id,
+            func.max(m.project_versions.c.version).label("max_version"),
+        ).group_by(m.project_versions.c.project_id)
+        if project_id is not None:
+            latest = latest.where(m.project_versions.c.project_id == project_id)
+        newest = latest.subquery()
+        rows = (
+            (
+                await self._session.execute(
+                    select(m.project_versions)
+                    .join(
+                        newest,
+                        (m.project_versions.c.project_id == newest.c.project_id)
+                        & (m.project_versions.c.version == newest.c.max_version),
+                    )
+                    .order_by(m.project_versions.c.project_id)
+                )
+            )
+            .mappings()
+            .all()
+        )
+        return [(row["project_id"], self._to_domain(row)) for row in rows]
 
     @staticmethod
     def _to_domain(row: RowMapping) -> ProjectVersion:

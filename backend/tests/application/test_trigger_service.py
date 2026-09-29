@@ -1,0 +1,310 @@
+"""TriggerService / TriggerRegistry unit tests over an in-memory UoW.
+
+Service semantics (enabled checks, type matching, metadata, latest-version
+resolution) are deterministic application logic — no database needed here;
+the SQL behind ``list_latest`` is covered by the PostgreSQL integration
+tests (backend/AGENTS.md §52/§54).
+"""
+
+from collections.abc import Sequence
+from types import TracebackType
+from typing import Any
+
+import pytest
+
+from akasha.application.executions import ExecutionService
+from akasha.application.persistence import (
+    ExecutionRepository,
+    ProjectRepository,
+    ProjectVersionRepository,
+    UnitOfWork,
+)
+from akasha.application.projects import ProjectVersionNotFoundError
+from akasha.application.triggers import (
+    ResolvedTrigger,
+    TriggerDisabledError,
+    TriggerRegistry,
+    TriggerService,
+)
+from akasha.domain.execution import Execution, ExecutionStatus
+from akasha.domain.graph import Graph
+from akasha.domain.primitives import new_id
+from akasha.domain.project import Project, ProjectDraft, ProjectVersion
+from akasha.domain.trigger import Trigger, TriggerContext, TriggerType
+from akasha.errors import DomainValidationError
+
+
+class FakeVersions(ProjectVersionRepository):
+    def __init__(self) -> None:
+        self.rows: dict[tuple[str, int], ProjectVersion] = {}
+
+    async def get(self, project_id: str, version: int) -> ProjectVersion | None:
+        return self.rows.get((project_id, version))
+
+    async def save(self, project_id: str, version: ProjectVersion) -> None:
+        self.rows[(project_id, version.version)] = version
+
+    async def list(
+        self, project_id: str, *, offset: int = 0, limit: int = 100
+    ) -> Sequence[ProjectVersion]:
+        return [v for (pid, _), v in sorted(self.rows.items()) if pid == project_id][
+            offset : offset + limit
+        ]
+
+    async def list_latest(
+        self, *, project_id: str | None = None
+    ) -> Sequence[tuple[str, ProjectVersion]]:
+        latest: dict[str, ProjectVersion] = {}
+        for (pid, _), version in self.rows.items():
+            if project_id is not None and pid != project_id:
+                continue
+            if pid not in latest or version.version > latest[pid].version:
+                latest[pid] = version
+        return sorted(latest.items())
+
+
+class FakeExecutions(ExecutionRepository):
+    def __init__(self) -> None:
+        self.items: dict[str, Execution] = {}
+
+    async def get(self, execution_id: str) -> Execution | None:
+        return self.items.get(execution_id)
+
+    async def save(self, execution: Execution) -> None:
+        self.items[execution.id] = execution
+
+
+class FakeProjects(ProjectRepository):
+    """Unused by the trigger services; the UoW protocol demands the member."""
+
+    async def get(self, project_id: str) -> Project | None:
+        return None
+
+    async def save(self, project: Project) -> None:
+        raise NotImplementedError
+
+    async def delete(self, project_id: str, *, revision: int) -> bool:
+        return False
+
+    async def list(self, *, offset: int = 0, limit: int = 100) -> Sequence[Project]:
+        return []
+
+
+class FakeUow(UnitOfWork):
+    def __init__(self) -> None:
+        self.versions = FakeVersions()
+        self.executions = FakeExecutions()
+        self.projects = FakeProjects()
+
+    async def __aenter__(self) -> "FakeUow":
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        pass
+
+    async def commit(self) -> None:
+        pass
+
+
+class Harness:
+    def __init__(self) -> None:
+        self.uow = FakeUow()
+        executions = ExecutionService(lambda: self.uow)
+        self.service = TriggerService(executions)
+        self.registry = TriggerRegistry(lambda: self.uow)
+
+    def publish(
+        self, project_id: str, version: int, triggers: list[Trigger] | None = None
+    ) -> ProjectVersion:
+        snapshot = ProjectDraft(graph=Graph(), triggers=list(triggers or [])).publish(
+            version=version
+        )
+        self.uow.versions.rows[(project_id, version)] = snapshot
+        return snapshot
+
+
+def api_trigger(**kwargs: Any) -> Trigger:
+    return Trigger.create(TriggerType.API, **kwargs)
+
+
+class TestFire:
+    async def test_fire_creates_queued_execution_with_metadata(self) -> None:
+        harness = Harness()
+        trigger = api_trigger()
+        project_id = new_id("proj")
+        harness.publish(project_id, 1, [trigger])
+
+        execution = await harness.service.fire(
+            ResolvedTrigger(project_id, 1, trigger),
+            TriggerContext(
+                trigger_type=TriggerType.API,
+                payload={"name": "ada"},
+                source="api",
+                metadata={"correlation_id": "req-1"},
+            ),
+        )
+
+        assert execution.status is ExecutionStatus.QUEUED
+        assert execution.input == {"name": "ada"}
+        assert execution.metadata.trigger_type is TriggerType.API
+        assert execution.metadata.trigger_id == trigger.id
+        assert execution.metadata.correlation_id == "req-1"
+        # Convergence: persisted via ExecutionService (§32) — the same
+        # canonical Execution every trigger type produces.
+        stored = await harness.uow.executions.get(execution.id)
+        assert stored is execution
+
+    async def test_fire_disabled_trigger_rejected(self) -> None:
+        harness = Harness()
+        trigger = api_trigger()
+        trigger.enabled = False
+        project_id = new_id("proj")
+        harness.publish(project_id, 1, [trigger])
+
+        with pytest.raises(TriggerDisabledError):
+            await harness.service.fire(
+                ResolvedTrigger(project_id, 1, trigger),
+                TriggerContext(trigger_type=TriggerType.API),
+            )
+
+    async def test_fire_context_type_mismatch_rejected(self) -> None:
+        harness = Harness()
+        trigger = api_trigger()
+        project_id = new_id("proj")
+        harness.publish(project_id, 1, [trigger])
+
+        with pytest.raises(DomainValidationError, match="does not match"):
+            await harness.service.fire(
+                ResolvedTrigger(project_id, 1, trigger),
+                TriggerContext(trigger_type=TriggerType.WEBHOOK),
+            )
+
+    async def test_fire_unknown_version_rejected(self) -> None:
+        harness = Harness()
+        with pytest.raises(ProjectVersionNotFoundError):
+            await harness.service.fire(
+                ResolvedTrigger(new_id("proj"), 42, api_trigger()),
+                TriggerContext(trigger_type=TriggerType.API),
+            )
+
+    async def test_fire_manual(self) -> None:
+        harness = Harness()
+        project_id = new_id("proj")
+        harness.publish(project_id, 3)
+
+        execution = await harness.service.fire_manual(
+            project_id, 3, input={"q": "x"}, correlation_id="req-9"
+        )
+
+        assert execution.status is ExecutionStatus.QUEUED
+        assert execution.metadata.trigger_type is TriggerType.MANUAL
+        assert execution.metadata.trigger_id is None
+        assert execution.metadata.correlation_id == "req-9"
+        assert execution.input == {"q": "x"}
+
+
+class TestRegistry:
+    async def test_resolve_finds_trigger_on_latest_version(self) -> None:
+        harness = Harness()
+        trigger = api_trigger()
+        project_id = new_id("proj")
+        harness.publish(project_id, 1, [trigger])
+        # Trigger ids are stable across publishes (draft copies keep ids).
+        harness.publish(project_id, 2, [api_trigger(), trigger])
+
+        resolved = await harness.registry.resolve(project_id, trigger.id)
+
+        assert resolved is not None
+        assert (resolved.project_id, resolved.version) == (project_id, 2)
+        assert resolved.trigger.id == trigger.id
+
+    async def test_resolve_ignores_triggers_retired_by_newer_version(self) -> None:
+        harness = Harness()
+        trigger = api_trigger()
+        project_id = new_id("proj")
+        harness.publish(project_id, 1, [trigger])
+        harness.publish(project_id, 2)  # republished without the trigger
+
+        assert await harness.registry.resolve(project_id, trigger.id) is None
+
+    async def test_resolve_never_sees_drafts(self) -> None:
+        harness = Harness()
+        assert await harness.registry.resolve(new_id("proj"), new_id("trig")) is None
+
+    async def test_resolve_filters_by_type(self) -> None:
+        harness = Harness()
+        trigger = api_trigger()
+        project_id = new_id("proj")
+        harness.publish(project_id, 1, [trigger])
+
+        assert (
+            await harness.registry.resolve(
+                project_id, trigger.id, trigger_type=TriggerType.API
+            )
+            is not None
+        )
+        assert (
+            await harness.registry.resolve(
+                project_id, trigger.id, trigger_type=TriggerType.WEBHOOK
+            )
+            is None
+        )
+
+    async def test_resolution_is_scoped_by_project(self) -> None:
+        # The same trigger id published by two projects never crosses over:
+        # each project's URL reaches only its own trigger (D6).
+        harness = Harness()
+        tid = new_id("trig")
+        project_a, project_b = new_id("proj"), new_id("proj")
+        harness.publish(project_a, 1, [Trigger(id=tid, trigger_type=TriggerType.API)])
+        harness.publish(project_b, 1, [Trigger(id=tid, trigger_type=TriggerType.API)])
+
+        for project_id in (project_a, project_b):
+            resolved = await harness.registry.resolve(project_id, tid)
+            assert resolved is not None
+            assert resolved.project_id == project_id
+        assert await harness.registry.resolve(new_id("proj"), tid) is None
+
+    async def test_list_scheduled_only_enabled_cron_interval_latest(self) -> None:
+        harness = Harness()
+        cron = Trigger.create(TriggerType.CRON, {"cron": "0 * * * *"})
+        disabled = Trigger.create(TriggerType.INTERVAL, {"interval_seconds": 5})
+        disabled.enabled = False
+        manual = Trigger.create(TriggerType.MANUAL)
+        retired = Trigger.create(TriggerType.INTERVAL, {"interval_seconds": 5})
+        other = Trigger.create(TriggerType.INTERVAL, {"interval_seconds": 30})
+
+        project_a, project_b = new_id("proj"), new_id("proj")
+        harness.publish(project_a, 1, [retired])
+        harness.publish(project_a, 2, [cron, disabled, manual])
+        harness.publish(project_b, 1, [other])
+
+        scheduled = await harness.registry.list_scheduled()
+
+        ids = [r.trigger.id for r in scheduled]
+        assert ids == sorted([cron.id, other.id])
+
+        by_id = {r.trigger.id: r for r in scheduled}
+        assert (by_id[cron.id].project_id, by_id[cron.id].version) == (project_a, 2)
+        assert (by_id[other.id].project_id, by_id[other.id].version) == (project_b, 1)
+
+    async def test_list_scheduled_keeps_same_id_in_two_projects(self) -> None:
+        harness = Harness()
+        tid = new_id("trig")
+        config = {"interval_seconds": 30}
+        project_a, project_b = sorted([new_id("proj"), new_id("proj")])
+        for project_id in (project_b, project_a):
+            harness.publish(
+                project_id,
+                1,
+                [Trigger(id=tid, trigger_type=TriggerType.INTERVAL, config=config)],
+            )
+
+        scheduled = await harness.registry.list_scheduled()
+
+        assert [r.project_id for r in scheduled] == [project_a, project_b]

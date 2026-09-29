@@ -65,6 +65,19 @@ class ProjectVersionRepository(Protocol):
         self, project_id: str, *, offset: int = 0, limit: int = 100
     ) -> Sequence[ProjectVersion]: ...
 
+    async def list_latest(
+        self, *, project_id: str | None = None
+    ) -> Sequence[tuple[str, ProjectVersion]]:
+        """The highest published version of every project, or of one.
+
+        Triggers always resolve against the latest published version
+        (architecture §125): publishing retires the previous version's
+        triggers. Returns (project_id, version) pairs ordered by project_id,
+        so the result is deterministic. The pairs are needed because the
+        domain object itself carries no project_id.
+        """
+        ...
+
 
 class ExecutionRepository(Protocol):
     """Execution aggregate (execution row + its node executions).

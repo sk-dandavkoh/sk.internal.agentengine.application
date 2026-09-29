@@ -41,6 +41,9 @@ class ValidationCode(StrEnum):
     MISSING_DEPENDENCY = auto()
     INCOMPATIBLE_DEPENDENCY = auto()
     INVALID_DEPENDENCY = auto()
+    # Triggers (architecture §125): publish gates, not construction errors.
+    DUPLICATE_TRIGGER_ID = auto()
+    INVALID_TRIGGER_SCHEDULE = auto()
 
 
 @dataclass(frozen=True)
@@ -53,6 +56,7 @@ class ValidationIssue:
     node_id: str | None = None
     edge: Edge | None = None
     port: str | None = None
+    trigger_id: str | None = None
 
 
 @dataclass(frozen=True)

@@ -74,6 +74,7 @@ def issue_payload(issue: ValidationIssue) -> dict[str, object]:
             "target_node_id": edge.target_node_id,
             "target_port": edge.target_port,
         },
+        "trigger_id": issue.trigger_id,
     }
 
 

@@ -3748,11 +3748,13 @@ Published versions are immutable.
 
 # 125. Trigger Lifecycle
 
-Triggers are configured against Projects or Project Versions according to the trigger model.
+Triggers are configured on the Project Draft and published alongside it; the published Project Version carries an immutable copy with stable trigger ids.
 
-Trigger execution must resolve the intended immutable version.
+A trigger always resolves to the **latest published version** of its project: publishing a new version retires the previous version's triggers. A trigger must never ambiguously execute "whatever happens to be the current Draft" — drafts never fire.
 
-A trigger must never ambiguously execute "whatever happens to be the current Draft."
+Trigger ids are unique within a project, not globally; webhook and invoke URLs therefore carry the project id. Uniqueness and schedule rules (cron syntax, deterministic and able to fire; interval between 1 second and 1 year) are validation issues that block publishing — not construction errors — so drafts stored under older rules stay loadable and fixable.
+
+Scheduled (cron/interval) triggers have no catch-up of missed runs: after downtime the next boundary is computed forward from *now*.
 
 ----------
 
