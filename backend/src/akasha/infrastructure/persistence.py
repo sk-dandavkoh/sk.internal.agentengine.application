@@ -388,6 +388,20 @@ class SqlAlchemyExecutionRepository(ExecutionRepository):
             input=dict(row["input"]),
         )
 
+    async def list_queued(
+        self, *, created_before: datetime, limit: int
+    ) -> Sequence[str]:
+        rows = await self._session.execute(
+            select(m.executions.c.id)
+            .where(
+                m.executions.c.status == ExecutionStatus.QUEUED.value,
+                m.executions.c.created_at < created_before,
+            )
+            .order_by(m.executions.c.created_at, m.executions.c.id)
+            .limit(limit)
+        )
+        return list(rows.scalars())
+
     async def save(self, execution: Execution) -> None:
         e = execution
         values = {

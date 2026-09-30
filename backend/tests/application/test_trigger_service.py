@@ -7,6 +7,7 @@ tests (backend/AGENTS.md §52/§54).
 """
 
 from collections.abc import Sequence
+from datetime import datetime
 from types import TracebackType
 from typing import Any, cast
 
@@ -77,6 +78,11 @@ class FakeExecutions(ExecutionRepository):
 
     async def save(self, execution: Execution) -> None:
         self.items[execution.id] = execution
+
+    async def list_queued(
+        self, *, created_before: datetime, limit: int
+    ) -> Sequence[str]:
+        return []
 
 
 class FakeProjects(ProjectRepository):

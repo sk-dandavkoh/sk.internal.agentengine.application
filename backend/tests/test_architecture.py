@@ -27,6 +27,8 @@ RULES: dict[str, set[str]] = {
     "plugins": {"fastapi", "starlette", "uvicorn", "sqlalchemy", "redis"},
     # The CLI adapts services; persistence and HTTP stay out of it (§58).
     "cli": {"fastapi", "starlette", "sqlalchemy", "redis"},
+    # Workers see the queue contract, never its technology (§72).
+    "workers": {"fastapi", "starlette", "uvicorn", "sqlalchemy", "redis"},
 }
 
 # Provider libraries live behind ``akasha.providers`` only (§27, §78).
@@ -46,6 +48,7 @@ INTERNAL_RULES: dict[str, set[str]] = {
     # Plugins feed the node registry; they never touch HTTP, persistence or
     # the runtime (a plugin node is an ordinary node to both).
     "plugins": {"api", "application", "infrastructure", "runtime", "providers"},
+    "workers": {"api", "infrastructure"},
 }
 
 

@@ -23,6 +23,7 @@ from sqlalchemy import (
     MetaData,
     String,
     Table,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 
@@ -149,6 +150,13 @@ executions = Table(
     CheckConstraint(f"status IN ({_EXECUTION_STATUSES})", name="ck_executions_status"),
     CheckConstraint("revision >= 1", name="ck_executions_revision_positive"),
     Index("ix_executions_project_id", "project_id"),
+    # Queue recovery scans QUEUED executions; the partial index stays as
+    # small as the backlog however large the history grows.
+    Index(
+        "ix_executions_queued_created_at",
+        "created_at",
+        postgresql_where=text("status = 'queued'"),
+    ),
 )
 
 node_executions = Table(

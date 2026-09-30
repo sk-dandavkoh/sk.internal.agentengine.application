@@ -524,3 +524,38 @@ async def test_upgrade_from_0003_keeps_existing_executions_runnable(
             await conn.execution_options(isolation_level="AUTOCOMMIT")
             await conn.execute(text(f"DROP DATABASE IF EXISTS {scratch}"))
         await admin.dispose()
+
+
+async def test_list_queued_returns_old_queued_ids_oldest_first(
+    uow: UowFactory,
+) -> None:
+    """Queue recovery's scan (Phase 22): QUEUED only, older than the
+    cutoff, oldest first, bounded."""
+    project, version = await published(uow)
+
+    async def at(minutes: int, *, queued: bool = True) -> str:
+        execution = Execution.create(
+            project.id, version, now=T0 + timedelta(minutes=minutes)
+        )
+        if queued:
+            execution.enqueue()
+        return (await saved(uow, execution)).id
+
+    second = await at(2)
+    first = await at(1)
+    await at(0, queued=False)  # CREATED, never queued
+    await at(10)  # too recent
+    running = Execution.create(project.id, version, now=T0)
+    running.enqueue()
+    running.start(now=T0, node_versions={})
+    await saved(uow, running)
+
+    cutoff = T0 + timedelta(minutes=5)
+    async with uow() as ctx:
+        assert await ctx.executions.list_queued(created_before=cutoff, limit=10) == [
+            first,
+            second,
+        ]
+        assert await ctx.executions.list_queued(created_before=cutoff, limit=1) == [
+            first
+        ]

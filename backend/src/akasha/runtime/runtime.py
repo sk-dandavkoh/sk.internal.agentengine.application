@@ -20,8 +20,9 @@ Concurrency model (the reason this is race-free by construction):
   events become log lines and metrics (``observe_execution``), and node
   tasks inherit a log context carrying the execution/node correlation ids.
 
-Scope: no retries (Phase 23), no queue/worker/leases (Phase 22), no
-recovery of executions left RUNNING by a dead process (Phase 23). Control
+Scope: no retries (Phase 23), no recovery of executions left RUNNING by a
+dead process (Phase 23). Workers (``akasha.workers``) call ``run``; the
+queue never reaches in here. Control
 flow is generic (``ExecutionPlan.readiness``): the loop never inspects node
 types.
 """
@@ -140,7 +141,7 @@ _Running = dict[asyncio.Task[NodeOutcome], _Attempt]
 class ExecutionRuntime:
     """Executes queued executions of published versions to a terminal state.
 
-    Usable from tests, a CLI or (later) a worker; no HTTP dependency. One
+    Usable from tests, the CLI and workers; no HTTP dependency. One
     instance may run many executions concurrently on one event loop.
     """
 

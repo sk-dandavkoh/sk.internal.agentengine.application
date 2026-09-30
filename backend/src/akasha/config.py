@@ -35,8 +35,25 @@ class Settings(BaseSettings):
     # SEARCH_NOT_CONFIGURED. Operator-trusted, so it may be private.
     web_search_url: AnyHttpUrl | None = None
 
-    # Trigger system (Phase 10). Until workers exist (Phase 22) CRON/INTERVAL
-    # triggers are fired by one in-process scheduler task per API process.
+    # Workers + queue (Phase 22). Unset → no queue: executions created
+    # through the API stay QUEUED (nothing runs them). The URL may carry a
+    # password. Every installation sharing a Redis needs its own prefix.
+    redis_url: SecretStr | None = None
+    queue_prefix: str = Field(default="akasha", pattern=r"^[a-z0-9][a-z0-9_-]{0,31}$")
+    # Run a worker inside the API process; false when dedicated
+    # ``akasha worker`` processes take the jobs.
+    worker_enabled: bool = True
+    worker_concurrency: int = Field(default=4, ge=1, le=256)
+    worker_poll_seconds: float = Field(default=1.0, gt=0)
+    worker_heartbeat_seconds: float = Field(default=5.0, gt=0)
+    # On stop, runs get this long to finish before they are cancelled.
+    worker_shutdown_grace_seconds: float = Field(default=30.0, ge=0)
+    # How often lost jobs are recovered, and how long an execution may stay
+    # QUEUED before it is dispatched again.
+    queue_recovery_seconds: float = Field(default=30.0, gt=0)
+
+    # Trigger system (Phase 10). CRON/INTERVAL triggers are fired by one
+    # in-process scheduler task per API process.
     scheduler_enabled: bool = True
     scheduler_poll_seconds: float = Field(default=1.0, gt=0)
     # Inbound webhook body cap; the payload becomes the execution input.

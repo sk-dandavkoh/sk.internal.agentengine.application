@@ -13,9 +13,9 @@ access to the project or execution in the path.
 Trigger ids are unique only within a project, so every trigger URL carries
 the project id. All four endpoints end in ``TriggerService`` →
 ``ExecutionService`` (§32). Nothing here runs a graph; webhooks in particular
-never execute synchronously (§127). The execution is recorded as QUEUED.
-Running it is the worker's job (Phase 22); until then a caller must hand the
-id to ``ExecutionRuntime.run``.
+never execute synchronously (§127). The execution is recorded as QUEUED
+and dispatched to the workers (Phase 22): the response never waits for the
+run, and the run does not depend on the request.
 """
 
 import json

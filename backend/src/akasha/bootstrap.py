@@ -29,6 +29,7 @@ from akasha.config import Settings
 from akasha.domain.ai import LLMClient
 from akasha.infrastructure.database import Database, normalize_async_url
 from akasha.infrastructure.persistence import SqlAlchemyUnitOfWork
+from akasha.infrastructure.redis_queue import RedisExecutionQueue
 from akasha.nodes.builtins import create_builtin_registry
 from akasha.nodes.registry import NodeRegistry
 from akasha.observability.metrics import EngineMetrics
@@ -38,6 +39,7 @@ from akasha.runtime.runtime import ExecutionRuntime
 from akasha.runtime.scheduler import TriggerScheduler
 from akasha.security.crypto import SecretCipher
 from akasha.security.network import NetworkPolicy
+from akasha.workers import Worker, WorkerManager
 
 # A readiness check returns None when healthy, or a human-readable reason.
 ReadyCheck = Callable[[], Awaitable[str | None]]
@@ -61,9 +63,12 @@ class Container:
     projects: ProjectService | None = None
     packages: ProjectPackageService | None = None
     executions: ExecutionService | None = None
-    # Runs queued executions in this process (the CLI's ``project run``)
-    # until workers exist (Phase 22).
+    # The runtime workers hand jobs to; the CLI's ``project run`` uses it
+    # directly.
     runtime: ExecutionRuntime | None = None
+    # Needs the database and AKASHA_REDIS_URL (Phase 22).
+    queue: RedisExecutionQueue | None = None
+    workers: WorkerManager | None = None
     reports: ReportService | None = None
     triggers: TriggerService | None = None
     # Needs the database and AKASHA_CREDENTIAL_ENCRYPTION_KEY. The runtime
@@ -86,7 +91,10 @@ class Container:
     )
 
     async def start(self) -> None:
-        """Start owned background work (the in-process trigger scheduler)."""
+        """Start owned background work: the in-process trigger scheduler and,
+        unless dedicated worker processes take the jobs, a worker."""
+        if self.workers is not None and self.settings.worker_enabled:
+            await self.workers.start()
         if self.scheduler is not None and self._scheduler_task is None:
             self._scheduler_task = asyncio.create_task(
                 self.scheduler.run(), name="trigger-scheduler"
@@ -109,6 +117,11 @@ class Container:
             with contextlib.suppress(asyncio.CancelledError):
                 await task
             self._scheduler_task = None
+        # Before the database closes: stopping runs persist their state.
+        if self.workers is not None:
+            await self.workers.stop()
+        if self.queue is not None:
+            await self.queue.close()
         if self.database is not None:
             await self.database.dispose()
 
@@ -146,11 +159,40 @@ def create_container(settings: Settings) -> Container:
     packages = ProjectPackageService(
         uow, nodes.definitions, events, plugins=plugin_versions
     )
-    executions = ExecutionService(uow, events, metrics)
+    redis_url = settings.redis_url
+    queue = (
+        None
+        if redis_url is None
+        else RedisExecutionQueue.from_url(
+            redis_url.get_secret_value(), prefix=settings.queue_prefix
+        )
+    )
+    executions = ExecutionService(uow, events, metrics, queue=queue)
     credentials = None if cipher is None else CredentialService(uow, cipher)
     runtime = ExecutionRuntime(
         uow, nodes.catalog, events=events, metrics=metrics, credentials=credentials
     )
+    workers = (
+        None
+        if queue is None
+        else WorkerManager(
+            Worker(
+                queue,
+                runtime,
+                concurrency=settings.worker_concurrency,
+                poll_seconds=settings.worker_poll_seconds,
+                heartbeat_seconds=settings.worker_heartbeat_seconds,
+                shutdown_grace_seconds=settings.worker_shutdown_grace_seconds,
+            ),
+            queue,
+            executions,
+            metrics=metrics,
+            recovery_seconds=settings.queue_recovery_seconds,
+        )
+    )
+    ready_checks: dict[str, ReadyCheck] = {"database": database.check}
+    if queue is not None:
+        ready_checks["queue"] = queue.ping
     auth = AuthenticationService(
         uow, session_ttl=timedelta(seconds=settings.session_ttl_seconds)
     )
@@ -174,6 +216,8 @@ def create_container(settings: Settings) -> Container:
         packages=packages,
         executions=executions,
         runtime=runtime,
+        queue=queue,
+        workers=workers,
         reports=ReportService(uow),
         triggers=triggers,
         credentials=credentials,
@@ -183,7 +227,7 @@ def create_container(settings: Settings) -> Container:
         auth=auth,
         authorization=AuthorizationService(uow),
         users=UserService(uow, auth),
-        ready_checks={"database": database.check},
+        ready_checks=ready_checks,
     )
 
 

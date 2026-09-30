@@ -129,15 +129,19 @@ class TriggerService:
         *,
         input: Mapping[str, Any] | None = None,
         correlation_id: str | None = None,
+        dispatch: bool = True,
     ) -> Execution:
-        """Ad-hoc manual run (architecture §126): no configured Trigger."""
+        """Ad-hoc manual run (architecture §126): no configured Trigger.
+        ``dispatch=False``: the caller runs it (see ``create_execution``)."""
         context = TriggerContext(
             trigger_type=TriggerType.MANUAL,
             payload=input or {},
             source="manual",
             metadata={"correlation_id": correlation_id} if correlation_id else {},
         )
-        return await self._create(project_id, version, context, trigger_id=None)
+        return await self._create(
+            project_id, version, context, trigger_id=None, dispatch=dispatch
+        )
 
     async def _create(
         self,
@@ -146,6 +150,7 @@ class TriggerService:
         context: TriggerContext,
         *,
         trigger_id: str | None,
+        dispatch: bool = True,
     ) -> Execution:
         execution = await self._executions.create_execution(
             project_id,
@@ -158,6 +163,7 @@ class TriggerService:
                 # own correlation root so their logs still group.
                 correlation_id=context.metadata.get("correlation_id") or new_id("corr"),
             ),
+            dispatch=dispatch,
         )
         logger.info(
             "trigger_fired",

@@ -107,6 +107,12 @@ class ExecutionRepository(Protocol):
 
     async def get(self, execution_id: str) -> Execution | None: ...
     async def save(self, execution: Execution) -> None: ...
+    async def list_queued(
+        self, *, created_before: datetime, limit: int
+    ) -> Sequence[str]:
+        """Ids of QUEUED executions created before ``created_before``,
+        oldest first."""
+        ...
 
 
 class EventRepository(Protocol):

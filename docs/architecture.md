@@ -2591,9 +2591,10 @@ Implementation (Phase 21, `backend/src/akasha/cli.py`, stdlib `argparse`):
   `ExecutionService`, `NodeRegistry`, `PluginRegistry`,
   `akasha.sdk.testing.run_node`). `tests/test_architecture.py` forbids
   SQLAlchemy/FastAPI imports in it.
-- `project run` queues a manual execution and runs it in-process on the
-  container's `ExecutionRuntime` (the same registry, credentials, events
-  and metrics as the rest of the container) until workers exist (Phase 22).
+- `project run` creates a manual execution *without* dispatching it and
+  runs it in-process on the container's `ExecutionRuntime` (the same
+  registry, credentials, events and metrics as the rest of the container).
+  `akasha worker` runs a dedicated worker process (§72).
   Ctrl-C calls `ExecutionRuntime.cancel`: the run ends CANCELLED, not
   orphaned RUNNING.
 - `plugin remove` goes through `application.plugins.remove_plugin`: it is
@@ -2996,6 +2997,46 @@ cloud queue
 ```
 
 The runtime must not depend directly on Redis-specific APIs.
+
+Implementation (Phase 22): contract `akasha.application.queue`
+(`ExecutionQueue`, `Job`, `WorkerInfo`), Redis implementation
+`akasha.infrastructure.redis_queue`, `Worker`/`WorkerManager` in
+`akasha.workers`.
+
+- Truth vs. signal: the QUEUED execution row is durable; a `Job` (just the
+  execution id) is an ephemeral signal. `ExecutionService.create_execution`
+  commits, then enqueues. If Redis is down the request still succeeds
+  (logged `execution_dispatch_failed`); nothing is lost.
+- Queue recovery (`WorkerManager.recover`, every
+  `AKASHA_QUEUE_RECOVERY_SECONDS`): (1) jobs held by workers whose
+  registration expired go back to the queue, first in line; (2) executions
+  still QUEUED that long after creation are enqueued again (partial index
+  `ix_executions_queued_created_at`). Redis restarting empty is therefore
+  harmless.
+- Reliable queue: `BLMOVE` moves a job atomically from `pending` into the
+  worker's `held` list; `ack` removes it. The `jobs` hash is the duplicate
+  guard (one job per execution while queued or held), set and pushed in one
+  Lua script.
+- Delivery is at-least-once. Duplicates are harmless because the runtime
+  only runs QUEUED executions and saves are compare-and-swap: a second
+  delivery is refused (`job_skipped`) without running node code.
+- Heartbeat: every `AKASHA_WORKER_HEARTBEAT_SECONDS` a worker refreshes its
+  registration (host, pid, state `running`/`stopping`, concurrency, active
+  executions) with a TTL of three intervals.
+- Worker failure: an unexpected error from `ExecutionRuntime.run` is logged
+  (`job_failed`) and acknowledged. An execution that never started is still
+  QUEUED and is retried by recovery (2); one that started stays RUNNING.
+- Graceful stop (SIGTERM for `akasha worker`, API shutdown): no new jobs;
+  runs get `AKASHA_WORKER_SHUTDOWN_GRACE_SECONDS`, then are cancelled
+  through `ExecutionRuntime.cancel` and end CANCELLED; the worker
+  deregisters and hands back anything it still holds.
+- Crash: nothing is acknowledged. Held jobs are redelivered after the
+  registration expired; an execution the dead worker had started stays
+  RUNNING (§139) until stale-execution recovery (Phase 23), and its
+  redelivered job is skipped.
+- Placement: `AKASHA_WORKER_ENABLED=true` (default) runs one worker in each
+  API process; `false` plus `akasha worker` processes separates them.
+  Without `AKASHA_REDIS_URL` there is no queue.
 
 ----------
 
@@ -3950,7 +3991,10 @@ exposition at `GET /metrics`; since Phase 20 it needs the
   container's once the container constructs it (Phase 21/22).
 - Counters are per process. With workers (Phase 22) every process exposes
   its own and Prometheus aggregates.
-- Not yet emitted: `queue_depth` (no queue before Phase 22), retries (the
+- `akasha_queue_depth` (gauge, no labels, Phase 22) is sampled by each
+  worker manager's recovery pass, so it is as fresh as
+  `AKASHA_QUEUE_RECOVERY_SECONDS`.
+- Not yet emitted: retries (the
   runtime has no retries before Phase 23), `llm_tokens_total`/`llm_cost`
   (token usage and cost estimates are persisted in `core.llm` outputs and
   logged by `AIService`; the metrics need the runtime's `EngineMetrics` to

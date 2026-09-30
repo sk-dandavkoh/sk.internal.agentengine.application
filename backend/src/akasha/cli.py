@@ -194,13 +194,13 @@ async def project_publish(args: Args, c: Container) -> int:
 
 
 async def project_run(args: Args, c: Container) -> int:
-    """Queue a manual execution and run it here to a terminal state (no
-    workers exist yet, Phase 22). Ctrl-C cancels it cooperatively."""
+    """Create a manual execution and run it here to a terminal state,
+    without dispatching it to workers. Ctrl-C cancels it cooperatively."""
     version = args.version
     if version is None:
         version = (await _projects(c).get_project(args.project_id)).current_version
     execution = await _triggers(c).fire_manual(
-        args.project_id, version, input=args.input
+        args.project_id, version, input=args.input, dispatch=False
     )
     if not args.json:
         print(f"running {execution.id} (version {version})", file=sys.stderr)
@@ -311,6 +311,33 @@ async def execution_get(args: Args, c: Container) -> int:
 async def execution_cancel(args: Args, c: Container) -> int:
     await _runtime(c).cancel(args.execution_id, reason=args.reason)
     _show_execution(args, await _executions(c).get_execution(args.execution_id))
+    return EXIT_OK
+
+
+# -- workers --------------------------------------------------------------
+
+
+async def worker(args: Args, c: Container) -> int:
+    """Take jobs until SIGTERM/SIGINT, then stop gracefully (runs get
+    AKASHA_WORKER_SHUTDOWN_GRACE_SECONDS to finish)."""
+    _need(c.database, "AKASHA_DATABASE_URL")
+    manager = _need(c.workers, "AKASHA_REDIS_URL")
+    loop = asyncio.get_running_loop()
+    stop = asyncio.Event()
+    signals = (signal.SIGINT, signal.SIGTERM)
+    for sig in signals:
+        with contextlib.suppress(NotImplementedError, RuntimeError):
+            loop.add_signal_handler(sig, stop.set)
+    await manager.start()
+    if not args.json:
+        print(f"worker {manager.worker.worker_id} running", file=sys.stderr)
+    try:
+        await stop.wait()
+    finally:
+        for sig in signals:
+            with contextlib.suppress(NotImplementedError, RuntimeError):
+                loop.remove_signal_handler(sig)
+        await manager.stop()
     return EXIT_OK
 
 
@@ -600,6 +627,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("execution_id")
     p.add_argument("--reason", default="cancelled from the CLI")
 
+    command(groups, "worker", worker, "take queued executions until stopped")
     p = command(groups, "backup", backup, "write a backup of the installation")
     p.add_argument("-o", "--output", required=True, help="new file (mode 0600)")
     p = command(groups, "restore", restore, "restore a backup")

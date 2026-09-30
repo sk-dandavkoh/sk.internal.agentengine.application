@@ -31,6 +31,7 @@ from akasha.domain.graph import Edge, Graph, NodeInstance
 from akasha.domain.node import NodeDefinition, NodeInput, NodeMetadata, PortType
 from akasha.domain.project import Dependency, ProjectDraft
 from akasha.infrastructure.database import Database
+from akasha.infrastructure.redis_queue import RedisExecutionQueue
 from akasha.nodes.builtins import create_builtin_registry
 from akasha.security.crypto import SecretCipher
 from tests.integration.conftest import AuthKit, truncate_all
@@ -473,3 +474,39 @@ async def test_ctrl_c_cancels_the_run_cooperatively(
     assert stored.status == "cancelled"
     assert stored.cancellation is not None
     assert stored.cancellation.reason == "interrupted"
+
+
+async def test_worker_needs_redis(cli: Cli) -> None:
+    result = await cli("worker")
+    assert result.code == EXIT_FAILED
+    assert "AKASHA_REDIS_URL" in result.err
+
+
+async def test_worker_process_registers_and_stops_gracefully_on_sigterm(
+    redis_url: str,
+) -> None:
+    prefix = "cli-" + os.urandom(6).hex()
+    env = {**os.environ, "AKASHA_REDIS_URL": redis_url, "AKASHA_QUEUE_PREFIX": prefix}
+    process = await asyncio.create_subprocess_exec(
+        sys.executable,
+        "-m",
+        "akasha",
+        "worker",
+        stderr=asyncio.subprocess.PIPE,
+        env=env,
+    )
+    assert process.stderr is not None
+    # Printed once the worker is registered.
+    line = (await asyncio.wait_for(process.stderr.readline(), 30)).decode()
+    worker_id = line.split()[1]  # "worker wrk_… running"
+    queue = RedisExecutionQueue.from_url(redis_url, prefix=prefix)
+    try:
+        assert [w.worker_id for w in await queue.workers()] == [worker_id]
+
+        process.send_signal(signal.SIGTERM)
+        await asyncio.wait_for(process.communicate(), 30)
+
+        assert process.returncode == EXIT_OK
+        assert await queue.workers() == []
+    finally:
+        await queue.close()

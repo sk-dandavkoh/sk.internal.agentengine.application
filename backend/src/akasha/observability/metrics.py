@@ -64,6 +64,12 @@ class EngineMetrics:
             "Executions currently run by this process.",
             registry=registry,
         )
+        self.queue_depth = Gauge(
+            "akasha_queue_depth",
+            "Jobs waiting in the execution queue (sampled by the worker"
+            " manager's recovery pass).",
+            registry=registry,
+        )
         self.node_executions_finished = Counter(
             "akasha_node_executions_finished",
             "Node executions that reached a terminal state.",

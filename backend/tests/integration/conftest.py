@@ -15,6 +15,8 @@ from typing import Any
 import pytest
 from sqlalchemy import text
 from testcontainers.community.postgres import PostgresContainer
+from testcontainers.core.container import DockerContainer
+from testcontainers.core.wait_strategies import LogMessageWaitStrategy
 
 from akasha.application.auth import (
     AuthenticationService,
@@ -37,6 +39,7 @@ from akasha.security.passwords import PasswordHasher
 from tests.support import docker_available
 
 _POSTGRES_IMAGE = "postgres:17.2"
+_REDIS_IMAGE = "redis:8.2.1-alpine"
 
 UowFactory = Callable[[], AbstractAsyncContextManager[SqlAlchemyUnitOfWork]]
 
@@ -47,6 +50,21 @@ def pg_container() -> Iterator[PostgresContainer]:
         pytest.skip("Docker daemon not available for Testcontainers")
     with PostgresContainer(_POSTGRES_IMAGE) as container:
         yield container
+
+
+@pytest.fixture(scope="session")
+def redis_url() -> Iterator[str]:
+    """One Redis per session; tests isolate by key prefix, never by FLUSH."""
+    if not docker_available():
+        pytest.skip("Docker daemon not available for Testcontainers")
+    container = (
+        DockerContainer(_REDIS_IMAGE)
+        .with_exposed_ports(6379)
+        .waiting_for(LogMessageWaitStrategy("Ready to accept connections"))
+    )
+    with container:
+        host = container.get_container_host_ip()
+        yield f"redis://{host}:{container.get_exposed_port(6379)}/0"
 
 
 @pytest.fixture(scope="session")

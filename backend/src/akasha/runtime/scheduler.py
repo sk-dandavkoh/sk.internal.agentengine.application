@@ -1,7 +1,7 @@
 """In-process scheduler for CRON/INTERVAL triggers (roadmap Phase 10).
 
-Until the worker/queue architecture exists (Phase 22), this runs as one
-asyncio task owned by the ``Container``. It never runs a graph: a fire goes
+It runs as one asyncio task per API process, owned by the ``Container``.
+It never runs a graph: a fire goes
 through ``TriggerService`` and ends in the Execution Service, like every
 other mechanism (backend/AGENTS §32, architecture §128).
 

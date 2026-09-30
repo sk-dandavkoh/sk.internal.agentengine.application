@@ -39,6 +39,19 @@ Authentication settings:
 | `AKASHA_SESSION_TTL_SECONDS` | `43200` | session lifetime after login (absolute, 60 s – 30 days) |
 | `AKASHA_METRICS_TOKEN` | unset | bearer token Prometheus uses for `/metrics` (≥ 32 chars); unset → admin session only |
 
+Workers and queue (Phase 22):
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `AKASHA_REDIS_URL` | unset | Redis for the execution queue; unset → API-created executions stay QUEUED |
+| `AKASHA_QUEUE_PREFIX` | `akasha` | key prefix; one per installation sharing a Redis |
+| `AKASHA_WORKER_ENABLED` | `true` | run a worker inside the API process (`false` with dedicated `akasha worker` processes) |
+| `AKASHA_WORKER_CONCURRENCY` | `4` | executions one worker runs at once |
+| `AKASHA_WORKER_POLL_SECONDS` | `1.0` | dequeue block time (bounds how fast an idle worker stops) |
+| `AKASHA_WORKER_HEARTBEAT_SECONDS` | `5.0` | heartbeat interval; a worker is dead after 3 missed beats |
+| `AKASHA_WORKER_SHUTDOWN_GRACE_SECONDS` | `30.0` | on stop, runs get this long before they are cancelled |
+| `AKASHA_QUEUE_RECOVERY_SECONDS` | `30.0` | recovery pass interval, and how long an execution may stay QUEUED before re-dispatch |
+
 First run: `POST /api/v1/auth/setup` with `{"username", "password"}` creates
 the initial admin. It works only while no account exists, so complete it
 before exposing the engine to a network. Then `POST /api/v1/auth/login` and
@@ -73,11 +86,12 @@ for machine-readable output.
 | `project create NAME` / `project list` | create an empty project / list projects |
 | `project validate ID` | validate the draft (exit 1 if invalid) |
 | `project publish ID [--expected-revision N]` | publish the draft as the next version |
-| `project run ID [--version N] [--input JSON\|@file]` | run a published version in this process; Ctrl-C cancels |
+| `project run ID [--version N] [--input JSON\|@file]` | run a published version in this process (not dispatched to workers); Ctrl-C cancels |
 | `project import FILE` / `project export ID [--version N] -o FILE` | project packages |
 | `node list` / `node validate T` / `node test T [--config] [--inputs] [--execution-input]` | `T` = node type id or `file.py:Class` / `module:Class` |
 | `plugin list` / `plugin install PATH` / `plugin remove ID [--force]` | needs `AKASHA_PLUGINS_DIR`; remove is blocked while projects use the plugin |
 | `execution get ID` / `execution cancel ID [--reason]` | inspect / cancel |
+| `worker` | take queued executions until SIGTERM/SIGINT, then stop gracefully; needs `AKASHA_REDIS_URL` |
 | `backup -o FILE` | snapshot the installation (new file, mode 0600) |
 | `restore FILE [--replace]` | restore into an empty installation, or replace one |
 
@@ -125,6 +139,7 @@ src/akasha/
 ├── plugins/            plugin system (Phase 17)
 ├── security/           credentials/redaction/guards (Phase 13+)
 ├── observability/      structured JSON logging, metrics (Phase 12)
+├── workers.py          Worker + WorkerManager (Phase 22)
 └── cli.py              operator CLI (Phase 21)
 
 tests/                  pytest suite (incl. dependency-direction guard)
