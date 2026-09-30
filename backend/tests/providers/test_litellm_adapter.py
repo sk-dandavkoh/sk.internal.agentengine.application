@@ -3,6 +3,7 @@
 exercised through litellm itself, never a public provider."""
 
 import json
+import os
 from typing import Any
 
 import pytest
@@ -10,6 +11,7 @@ import pytest
 from akasha.domain.ai import (
     FinishReason,
     LLMRequest,
+    LLMResponse,
     Message,
     ProviderError,
     ProviderErrorKind,
@@ -18,7 +20,7 @@ from akasha.domain.ai import (
     ToolCall,
     ToolDefinition,
 )
-from akasha.providers.litellm_adapter import NO_API_KEY, LiteLLMAdapter
+from akasha.providers.litellm_adapter import NO_API_KEY, LiteLLMAdapter, _litellm
 from tests.support import CHAT_COMPLETION, LocalHttpServer
 
 KEY = "sk-local-test-key-0123456789abcdef"
@@ -33,8 +35,8 @@ def adapter(server: LocalHttpServer) -> LiteLLMAdapter:
     return LiteLLMAdapter("openai", api_base=f"{server.base_url}/v1")
 
 
-def simple(**kwargs: Any) -> LLMRequest:
-    return LLMRequest("openai", "gpt-test", (Message(Role.USER, "Hi"),), **kwargs)
+def simple(model: str = "gpt-test", **kwargs: Any) -> LLMRequest:
+    return LLMRequest("openai", model, (Message(Role.USER, "Hi"),), **kwargs)
 
 
 def sent(server: LocalHttpServer) -> dict[str, Any]:
@@ -90,6 +92,58 @@ async def test_optional_parameters_are_omitted(http_server: LocalHttpServer) -> 
     body = sent(http_server)
     assert (
         "temperature" not in body and "max_tokens" not in body and "tools" not in body
+    )
+    assert "response_format" not in body
+
+
+async def test_structured_output_mapping(http_server: LocalHttpServer) -> None:
+    schema = {"type": "object", "properties": {"score": {"type": "number"}}}
+    await adapter(http_server).complete(
+        simple(response_schema=schema), api_key=KEY, timeout_seconds=5
+    )
+    assert sent(http_server)["response_format"] == {
+        "type": "json_schema",
+        "json_schema": {"name": "response", "schema": schema},
+    }
+
+
+async def test_no_cost_estimate_behind_a_custom_endpoint(
+    http_server: LocalHttpServer,
+) -> None:
+    # A self-hosted "gpt-4o" is not priced like OpenAI's.
+    response = await adapter(http_server).complete(
+        simple(model="gpt-4o"), api_key=KEY, timeout_seconds=5
+    )
+    assert response.cost is None
+
+
+def test_cost_estimate_from_the_bundled_price_list() -> None:
+    # The bundled map only (no network): LITELLM_LOCAL_MODEL_COST_MAP.
+    priced = LiteLLMAdapter("openai")._estimate_cost(
+        _litellm(), simple(model="gpt-4o"), _usage(1000, 500)
+    )
+    assert priced is not None and priced.currency == "USD"
+    assert priced.amount > 0
+    unpriced = LiteLLMAdapter("openai")._estimate_cost(
+        _litellm(), simple(model="no-such-model"), _usage(1000, 500)
+    )
+    assert unpriced is None
+
+
+def test_litellm_is_imported_with_the_local_cost_map() -> None:
+    # Without it, the import fetches the price list from GitHub (F1).
+    _litellm()
+    assert os.environ["LITELLM_LOCAL_MODEL_COST_MAP"] == "True"
+
+
+def _usage(input_tokens: int, output_tokens: int) -> LLMResponse:
+    return LLMResponse(
+        provider="openai",
+        model="gpt-4o",
+        content="x",
+        tool_calls=(),
+        usage=TokenUsage(input_tokens, output_tokens),
+        finish_reason=FinishReason.STOP,
     )
 
 

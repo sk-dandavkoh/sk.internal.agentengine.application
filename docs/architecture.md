@@ -1465,6 +1465,36 @@ Prompt rendering must happen through a controlled expression/template system.
 
 Arbitrary Python execution is forbidden.
 
+Implementation (Phase 15, `akasha.nodes.llm`, node type `core.llm`):
+
+- Config: `provider`, `model`, `credential` (reference), `system_prompt`,
+  `user_prompt`, `temperature`, `max_tokens`, `output_schema`, `tools`,
+  `timeout_seconds`. The node reaches providers only through the domain
+  port `LLMClient` (the container's `AIService`, injected via
+  `create_builtin_registry(llm=...)`). Without one it fails with
+  `LLM_NOT_CONFIGURED`.
+- Templates: `{{ a.b.0 }}` is a dotted lookup into the `variables` input
+  (mapping keys and list indexes only). There are no filters, calls,
+  operators or attribute access. A malformed placeholder fails config
+  validation at publish. A missing variable fails the node with
+  `PROMPT_VARIABLE_MISSING` (VALIDATION) before any provider call. Strings
+  are inserted verbatim and other values as JSON. The rendered prompt is
+  capped at 400k characters (`PROMPT_TOO_LARGE`). This is the prompt
+  subset of §31, not the general Expression Engine.
+- Outputs: `text`, `structured` (reply parsed and checked against
+  `output_schema` with the engine's JSON-Schema subset,
+  `LLM_STRUCTURED_OUTPUT_INVALID` otherwise), `tool_calls` (returned, not
+  executed) and `metadata` (provider, model, request id, finish reason,
+  token usage, `cost`).
+- Cost (§29): `LiteLLMAdapter` estimates from litellm's bundled list
+  prices, only for routes without a custom `api_base`. The value is
+  exposed as `{"amount", "currency", "estimated": true}`, or `null` when
+  unknown.
+- Provider errors map to `NodeError` with the `PROVIDER_*` code kept:
+  rate limit and unavailable become TRANSIENT, timeout becomes TIMEOUT,
+  authentication and configuration become CONFIGURATION, everything else
+  PERMANENT.
+
 ----------
 
 # 31. Expression Engine
@@ -3669,7 +3699,9 @@ exposition at `GET /metrics`, unauthenticated until Phase 20 like
   its own and Prometheus aggregates.
 - Not yet emitted: `queue_depth` (no queue before Phase 22), retries (the
   runtime has no retries before Phase 23), `llm_tokens_total`/`llm_cost`
-  (Phases 14/15), `http_requests_total` (the `http_request` log line covers
+  (token usage and cost estimates are persisted in `core.llm` outputs and
+  logged by `AIService`; the metrics need the runtime's `EngineMetrics` to
+  reach the LLM path, Phases 21/22), `http_requests_total` (the `http_request` log line covers
   requests for now).
 
 ----------

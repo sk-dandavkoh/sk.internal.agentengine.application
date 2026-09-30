@@ -16,11 +16,13 @@ that never calls an LLM should not pay it at startup.
 import json
 import os
 from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import replace
 from functools import cache
 from types import ModuleType
 from typing import Any
 
 from akasha.domain.ai import (
+    CostEstimate,
     FinishReason,
     LLMRequest,
     LLMResponse,
@@ -77,7 +79,28 @@ class LiteLLMAdapter:
             )
         except OpenAIError as exc:
             raise _provider_error(litellm, exc, request.provider) from exc
-        return _normalize(raw, request.provider)
+        response = _normalize(raw, request.provider)
+        return replace(response, cost=self._estimate_cost(litellm, request, response))
+
+    def _estimate_cost(
+        self, litellm: ModuleType, request: LLMRequest, response: LLMResponse
+    ) -> CostEstimate | None:
+        # litellm's price list describes the route's own hosted API. Behind a
+        # custom api_base (Ollama, vLLM, a gateway) the same model name says
+        # nothing about price, so no estimate beats a wrong one.
+        if self._api_base is not None:
+            return None
+        try:
+            prompt, completion = litellm.cost_per_token(
+                model=f"{self._route}/{request.model}",
+                prompt_tokens=response.usage.input_tokens,
+                completion_tokens=response.usage.output_tokens,
+            )
+        # litellm signals an unpriced model with a bare Exception; an unknown
+        # price is not a failed completion.
+        except Exception:
+            return None
+        return CostEstimate(float(prompt) + float(completion))
 
     def request_kwargs(
         self, request: LLMRequest, api_key: str | None, timeout_seconds: float
@@ -97,6 +120,14 @@ class LiteLLMAdapter:
             kwargs["temperature"] = request.temperature
         if request.max_tokens is not None:
             kwargs["max_tokens"] = request.max_tokens
+        if request.response_schema is not None:
+            kwargs["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "response",
+                    "schema": dict(request.response_schema),
+                },
+            }
         if request.tools:
             kwargs["tools"] = [
                 {

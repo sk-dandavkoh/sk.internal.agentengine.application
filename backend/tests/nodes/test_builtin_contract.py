@@ -9,6 +9,7 @@ from akasha.domain.node import NodeDefinition, NodeError, check_node_contract
 from akasha.domain.primitives import SEMVER_RE
 from akasha.errors import NodeConfigurationError
 from akasha.nodes.builtins import create_builtin_registry
+from akasha.nodes.llm import LlmNode
 from akasha.nodes.registry import NodeAlreadyRegisteredError, NodeRegistration
 from tests.support import LocalHttpServer, RunNode
 
@@ -23,6 +24,7 @@ ROADMAP_NODES = {
     "core.http",
     "core.web_search",
     "core.smtp",
+    "core.llm",
 }
 REGISTRY = create_builtin_registry()
 BUILTINS = REGISTRY.list_nodes()
@@ -61,6 +63,7 @@ def test_capabilities_are_declared_truthfully() -> None:
     assert ids("supports_cancellation") == {
         "core.delay",
         "core.http",
+        "core.llm",
         "core.web_search",
     }
 
@@ -102,6 +105,13 @@ async def test_web_search_url_setting_reaches_the_node(
     node = create_node_registry(settings).get("core.web_search")()
     result = await run_node(node, inputs={"query": "q"})
     assert result.outputs == {"results": []}
+
+
+def test_container_wires_its_ai_service_into_core_llm() -> None:
+    container = create_container(Settings(environment="test"))
+    node = container.nodes.get("core.llm")()
+    assert isinstance(node, LlmNode)
+    assert node._llm is container.ai
 
 
 def test_invalid_web_search_url_fails_fast() -> None:

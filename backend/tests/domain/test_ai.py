@@ -43,6 +43,8 @@ def test_message_invariants() -> None:
         {"timeout_seconds": 0},
         # A raw key where a reference belongs is rejected, not forwarded.
         {"credential": "sk-live-abcdefghijklmnop"},
+        {"response_schema": {"type": "array"}},
+        {"response_schema": {}},
     ],
 )
 def test_request_rejects_invalid_values(overrides: dict[str, object]) -> None:

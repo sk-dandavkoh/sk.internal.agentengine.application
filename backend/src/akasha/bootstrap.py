@@ -17,6 +17,7 @@ from akasha.application.executions import ExecutionService
 from akasha.application.projects import ProjectService
 from akasha.application.triggers import TriggerRegistry, TriggerService
 from akasha.config import Settings
+from akasha.domain.ai import LLMClient
 from akasha.infrastructure.database import Database, normalize_async_url
 from akasha.infrastructure.persistence import SqlAlchemyUnitOfWork
 from akasha.nodes.builtins import create_builtin_registry
@@ -52,7 +53,8 @@ class Container:
     # must receive this same service (Phase 21/22 wiring) to resolve secrets.
     credentials: CredentialService | None = None
     trigger_registry: TriggerRegistry | None = None
-    # The LLM Node (Phase 15) calls providers through this service only.
+    # core.llm calls providers through this service only (it is the
+    # registry's LLMClient).
     ai: AIService | None = None
     scheduler: TriggerScheduler | None = None
     ready_checks: dict[str, ReadyCheck] = field(default_factory=dict)
@@ -97,11 +99,11 @@ def create_container(settings: Settings) -> Container:
     ``CONFIGURATION_ERROR``, and readiness has nothing to check. Tests inject
     their own container.
     """
-    nodes = create_node_registry(settings)
     # Built first: a malformed key fails startup even without a database.
     key = settings.credential_encryption_key
     cipher = None if key is None else SecretCipher.from_config(key.get_secret_value())
     ai = create_ai_service(settings)
+    nodes = create_node_registry(settings, llm=ai)
     if not settings.database_url:
         return Container(settings=settings, nodes=nodes, ai=ai)
     database = Database(normalize_async_url(settings.database_url))
@@ -141,9 +143,12 @@ def create_container(settings: Settings) -> Container:
     )
 
 
-def create_node_registry(settings: Settings) -> NodeRegistry:
+def create_node_registry(
+    settings: Settings, *, llm: LLMClient | None = None
+) -> NodeRegistry:
     """Built-in nodes configured from settings (plugins join in Phase 17)."""
     return create_builtin_registry(
+        llm=llm,
         network=NetworkPolicy(
             allow_private_networks=settings.network_allow_private,
             allowed_hosts=frozenset(settings.network_allowed_hosts),

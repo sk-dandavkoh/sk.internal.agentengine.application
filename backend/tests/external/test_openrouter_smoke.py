@@ -20,8 +20,11 @@ from akasha.domain.ai import (
     Role,
 )
 from akasha.domain.credentials import Secret
+from akasha.domain.node import NodeResult
+from akasha.nodes.llm import LlmNode
 from akasha.providers.litellm_adapter import LiteLLMAdapter
 from akasha.runtime.credentials import NodeCredentials
+from tests.support import make_context
 
 API_KEY = os.environ.get("AKASHA_SMOKE_OPENROUTER_API_KEY", "")
 MODEL = os.environ.get("AKASHA_SMOKE_OPENROUTER_MODEL", "qwen/qwen3.8-27b:free")
@@ -88,3 +91,73 @@ async def test_unknown_model_is_an_invalid_request() -> None:
         await ai.complete(request("akasha/no-such-model"), credentials=creds)
     assert exc.value.kind is ProviderErrorKind.INVALID_REQUEST
     assert API_KEY not in exc.value.message
+
+
+# -- core.llm end to end (Phase 15) ------------------------------------------------
+
+
+def node_config(**overrides: object) -> dict[str, object]:
+    return {
+        "provider": "openrouter",
+        "model": MODEL,
+        "credential": REF,
+        "user_prompt": "{{ question }}",
+        "max_tokens": 1024,
+        "temperature": 0,
+        **overrides,
+    }
+
+
+async def run_llm_node(config: dict[str, object], question: str) -> NodeResult:
+    # No api_base: litellm's own OpenRouter endpoint, so the bundled price
+    # list applies and a cost estimate is produced.
+    provider = LLMProvider(
+        "openrouter", LiteLLMAdapter("openrouter"), timeout_seconds=120
+    )
+    node = LlmNode(AIService([provider]))
+    node.definition.validate_config(config)
+    context = make_context(
+        node,
+        config=config,
+        inputs={"variables": {"question": question}},
+        credentials=NodeCredentials(EnvSource(API_KEY), config),
+    )
+    result = await node.execute(context)
+    node.definition.validate_outputs(result.outputs)
+    return result
+
+
+async def test_node_structured_output() -> None:
+    config = node_config(
+        system_prompt="Reply with JSON only.",
+        output_schema={
+            "type": "object",
+            "properties": {"capital": {"type": "string"}},
+            "required": ["capital"],
+        },
+    )
+    result = await run_llm_node(config, "What is the capital of France?")
+    assert isinstance(result.outputs["structured"]["capital"], str)
+    metadata = result.outputs["metadata"]
+    assert metadata["usage"]["input_tokens"] > 0
+    assert metadata["cost"] is None or metadata["cost"]["estimated"] is True
+
+
+async def test_node_tool_call() -> None:
+    config = node_config(
+        tools=[
+            {
+                "name": "get_weather",
+                "description": "Current weather for a city.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"city": {"type": "string"}},
+                    "required": ["city"],
+                },
+            }
+        ],
+    )
+    result = await run_llm_node(config, "Use the tool: weather in Paris?")
+    (call,) = result.outputs["tool_calls"]
+    assert call["name"] == "get_weather"
+    assert "city" in call["arguments"]

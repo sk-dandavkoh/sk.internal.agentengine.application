@@ -5,9 +5,11 @@ Stateless nodes register as classes; nodes with deployment dependencies
 composition root calls ``create_builtin_registry`` once at startup.
 """
 
+from akasha.domain.ai import LLMClient
 from akasha.nodes.control import IfNode, SwitchNode
 from akasha.nodes.core import DelayNode, InputNode, LogNode, MergeNode, OutputNode
 from akasha.nodes.http import DEFAULT_MAX_RESPONSE_BYTES, HttpNode, WebSearchNode
+from akasha.nodes.llm import LlmNode
 from akasha.nodes.registry import NodeRegistry
 from akasha.nodes.smtp import SmtpNode
 from akasha.security.network import NetworkPolicy
@@ -18,9 +20,11 @@ def create_builtin_registry(
     network: NetworkPolicy | None = None,
     web_search_url: str | None = None,
     http_max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
+    llm: LLMClient | None = None,
 ) -> NodeRegistry:
     """A registry with every ``core.*`` node. ``network`` governs the
-    user-configured destinations of core.http and core.smtp."""
+    user-configured destinations of core.http and core.smtp; ``llm`` serves
+    core.llm (without it, core.llm fails with LLM_NOT_CONFIGURED)."""
     policy = network or NetworkPolicy()
     registry = NodeRegistry()
     for node_cls in (
@@ -43,4 +47,5 @@ def create_builtin_registry(
         ),
     )
     registry.register(SmtpNode, lambda: SmtpNode(policy))
+    registry.register(LlmNode, lambda: LlmNode(llm))
     return registry

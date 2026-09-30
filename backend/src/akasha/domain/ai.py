@@ -76,6 +76,9 @@ class LLMRequest:
     credential: str | None = None  # "credential:<name>"
     # May shorten, never extend, the provider's configured timeout.
     timeout_seconds: float | None = None
+    # Structured output: a JSON Schema object the reply must satisfy. Sent to
+    # providers that support it; the caller still validates the reply.
+    response_schema: Mapping[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if not self.provider or not self.model:
@@ -92,6 +95,10 @@ class LLMRequest:
             raise DomainValidationError(
                 "credential must be a credential reference, not a secret value"
             )
+        if self.response_schema is not None and (
+            self.response_schema.get("type") != "object"
+        ):
+            raise DomainValidationError("response_schema must be a JSON Schema object")
 
 
 @dataclass(frozen=True)
@@ -102,6 +109,15 @@ class TokenUsage:
     @property
     def total_tokens(self) -> int:
         return self.input_tokens + self.output_tokens
+
+
+@dataclass(frozen=True)
+class CostEstimate:
+    """Cost from published list prices (architecture §29): an estimate,
+    never billing data — discounts, caching and free tiers are unknown."""
+
+    amount: float
+    currency: str = "USD"
 
 
 class FinishReason(StrEnum):
@@ -121,6 +137,7 @@ class LLMResponse:
     usage: TokenUsage
     finish_reason: FinishReason
     request_id: str | None = None  # provider's id, for support/tracing
+    cost: CostEstimate | None = None  # None: no pricing known for the model
 
 
 class ProviderErrorKind(StrEnum):
