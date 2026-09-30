@@ -90,6 +90,22 @@ class Recorded:
     body: bytes
 
 
+CHAT_COMPLETION: dict[str, object] = {
+    "id": "chatcmpl-123",
+    "object": "chat.completion",
+    "created": 1_700_000_000,
+    "model": "gpt-test-2026",
+    "choices": [
+        {
+            "index": 0,
+            "message": {"role": "assistant", "content": "Hello!"},
+            "finish_reason": "stop",
+        }
+    ],
+    "usage": {"prompt_tokens": 12, "completion_tokens": 3, "total_tokens": 15},
+}
+
+
 @dataclass
 class ServerState:
     requests: list[Recorded] = field(default_factory=list)
@@ -99,6 +115,10 @@ class ServerState:
     search_status: int = 200
     search_body: bytes = b'{"results": []}'
     search_hang: bool = False
+    # /v1/chat/completions (OpenAI-compatible) answers with this.
+    llm_status: int = 200
+    llm_body: object = field(default_factory=lambda: dict(CHAT_COMPLETION))
+    llm_hang: bool = False
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -177,6 +197,11 @@ class _Handler(BaseHTTPRequestHandler):
                 self._send(
                     self.state.search_status, self.state.search_body, "application/json"
                 )
+            case ["v1", "chat", "completions"]:
+                if self.state.llm_hang:
+                    self.state.hang_entered.set()
+                    self.state.release.wait(30)
+                self._json(self.state.llm_status, self.state.llm_body)
             case _:
                 self._send(404, b"not found", "text/plain")
 

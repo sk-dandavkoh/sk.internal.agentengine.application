@@ -45,6 +45,20 @@ class Settings(BaseSettings):
     # Never commit it; losing it makes stored credentials unrecoverable.
     credential_encryption_key: SecretStr | None = None
 
+    # AI providers (Phase 14). OpenAI and Anthropic are always configured and
+    # need a credential reference per request; Ollama only when its URL is
+    # set. The timeout is the ceiling a request may shorten, never extend.
+    llm_timeout_seconds: float = Field(default=60.0, gt=0)
+    ollama_base_url: AnyHttpUrl | None = None
+    # One generic OpenAI-compatible endpoint (vLLM, OpenRouter, LM Studio,
+    # ...), registered under ``openai_compatible_name`` when the URL is set.
+    # Keyless servers (a local vLLM) set requires_credential to false.
+    openai_compatible_base_url: AnyHttpUrl | None = None
+    openai_compatible_name: str = Field(
+        default="openai_compatible", pattern=r"^[a-z0-9][a-z0-9_-]{0,31}$"
+    )
+    openai_compatible_requires_credential: bool = True
+
 
 def load_settings() -> Settings:
     """Load and validate configuration. Raises ValidationError on bad config."""

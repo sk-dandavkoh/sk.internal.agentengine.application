@@ -25,6 +25,11 @@ RULES: dict[str, set[str]] = {
     "nodes": {"fastapi", "starlette", "uvicorn"},
 }
 
+# Provider libraries live behind ``akasha.providers`` only (§27, §78).
+PROVIDER_LIBRARIES = {"litellm", "openai", "anthropic"}
+for _layer in ("domain", "application", "runtime", "nodes"):
+    RULES[_layer] |= PROVIDER_LIBRARIES
+
 # akasha-internal layers each outer layer must not reach into
 INTERNAL_RULES: dict[str, set[str]] = {
     "domain": {"api", "application", "infrastructure", "runtime"},

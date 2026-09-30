@@ -10,6 +10,7 @@ import contextlib
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
+from akasha.application.ai import AIService, LLMProvider
 from akasha.application.credentials import CredentialService
 from akasha.application.events import EventPublisher
 from akasha.application.executions import ExecutionService
@@ -21,6 +22,7 @@ from akasha.infrastructure.persistence import SqlAlchemyUnitOfWork
 from akasha.nodes.builtins import create_builtin_registry
 from akasha.nodes.registry import NodeRegistry
 from akasha.observability.metrics import EngineMetrics
+from akasha.providers.litellm_adapter import LiteLLMAdapter
 from akasha.runtime.scheduler import TriggerScheduler
 from akasha.security.crypto import SecretCipher
 from akasha.security.network import NetworkPolicy
@@ -50,6 +52,8 @@ class Container:
     # must receive this same service (Phase 21/22 wiring) to resolve secrets.
     credentials: CredentialService | None = None
     trigger_registry: TriggerRegistry | None = None
+    # The LLM Node (Phase 15) calls providers through this service only.
+    ai: AIService | None = None
     scheduler: TriggerScheduler | None = None
     ready_checks: dict[str, ReadyCheck] = field(default_factory=dict)
     # The scheduler loop task; the container owns its lifecycle (§44/§122).
@@ -97,8 +101,9 @@ def create_container(settings: Settings) -> Container:
     # Built first: a malformed key fails startup even without a database.
     key = settings.credential_encryption_key
     cipher = None if key is None else SecretCipher.from_config(key.get_secret_value())
+    ai = create_ai_service(settings)
     if not settings.database_url:
-        return Container(settings=settings, nodes=nodes)
+        return Container(settings=settings, nodes=nodes, ai=ai)
     database = Database(normalize_async_url(settings.database_url))
 
     def uow() -> SqlAlchemyUnitOfWork:
@@ -130,6 +135,7 @@ def create_container(settings: Settings) -> Container:
         triggers=triggers,
         credentials=None if cipher is None else CredentialService(uow, cipher),
         trigger_registry=trigger_registry,
+        ai=ai,
         scheduler=scheduler,
         ready_checks={"database": database.check},
     )
@@ -147,3 +153,34 @@ def create_node_registry(settings: Settings) -> NodeRegistry:
         else str(settings.web_search_url),
         http_max_response_bytes=settings.http_max_response_bytes,
     )
+
+
+def create_ai_service(settings: Settings) -> AIService:
+    timeout = settings.llm_timeout_seconds
+    providers = [
+        LLMProvider("openai", LiteLLMAdapter("openai"), timeout_seconds=timeout),
+        LLMProvider("anthropic", LiteLLMAdapter("anthropic"), timeout_seconds=timeout),
+    ]
+    if settings.ollama_base_url is not None:
+        providers.append(
+            LLMProvider(
+                "ollama",
+                # ollama_chat (not ollama) speaks the chat API, incl. tools.
+                LiteLLMAdapter("ollama_chat", api_base=str(settings.ollama_base_url)),
+                requires_credential=False,
+                timeout_seconds=timeout,
+            )
+        )
+    if settings.openai_compatible_base_url is not None:
+        providers.append(
+            LLMProvider(
+                settings.openai_compatible_name,
+                LiteLLMAdapter(
+                    "openai", api_base=str(settings.openai_compatible_base_url)
+                ),
+                requires_credential=settings.openai_compatible_requires_credential,
+                timeout_seconds=timeout,
+            )
+        )
+    # A name clashing with a built-in provider fails startup (ConfigurationError).
+    return AIService(providers)
