@@ -5,6 +5,8 @@ Missing or invalid critical configuration fails fast at startup (see
 ``Settings.model_validate`` in the bootstrap path).
 """
 
+from pathlib import Path
+
 from pydantic import AnyHttpUrl, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -58,6 +60,11 @@ class Settings(BaseSettings):
         default="openai_compatible", pattern=r"^[a-z0-9][a-z0-9_-]{0,31}$"
     )
     openai_compatible_requires_credential: bool = True
+
+    # Plugin System (Phase 17): directory of installed plugin packages; it
+    # must exist. Unset → no plugins. Plugins are trusted code: only
+    # operators may write here.
+    plugins_dir: Path | None = None
 
 
 def load_settings() -> Settings:

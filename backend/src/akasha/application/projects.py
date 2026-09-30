@@ -13,6 +13,7 @@ service.
 import logging
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from types import MappingProxyType
 
 from akasha.application.events import EventPublisher
 from akasha.application.persistence import ConcurrentModificationError, UnitOfWork
@@ -117,7 +118,8 @@ class ProjectService:
 
     ``node_definitions`` is the node-type catalog drafts are validated
     against: ``NodeRegistry.definitions`` in production (a live view), any
-    mapping in tests.
+    mapping in tests. ``plugins`` (enabled plugin id → version) is
+    ``PluginRegistry.versions`` in production; empty means none installed.
     """
 
     def __init__(
@@ -125,9 +127,11 @@ class ProjectService:
         uow: UowFactory,
         node_definitions: Mapping[str, NodeDefinition],
         events: EventPublisher | None = None,
+        plugins: Mapping[str, str] = MappingProxyType({}),
     ) -> None:
         self._uow = uow
         self._definitions = node_definitions
+        self._plugins = plugins
         self._events = events or EventPublisher()
 
     async def create_project(self, name: str, *, description: str = "") -> Project:
@@ -187,7 +191,7 @@ class ProjectService:
 
     async def validate_project(self, project_id: str) -> ValidationResult:
         project = await self.get_project(project_id)
-        return project.draft.validate(self._definitions)
+        return project.draft.validate(self._definitions, self._plugins)
 
     async def publish_project(
         self, project_id: str, *, expected_revision: int | None = None
@@ -202,7 +206,7 @@ class ProjectService:
             project = await _load(uow, project_id)
             if expected_revision is not None:
                 _check_revision(project, expected_revision)
-            result = project.draft.validate(self._definitions)
+            result = project.draft.validate(self._definitions, self._plugins)
             if not result.ok:
                 raise ProjectValidationFailedError(result)
             version = project.publish_draft()

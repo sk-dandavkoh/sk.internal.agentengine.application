@@ -239,19 +239,65 @@ For logging, use pytest's `caplog`: the logger is
 
 ---
 
-## 9. Making a Node available
+## 9. Packaging a Node as a Plugin
 
-Until the Plugin System (roadmap Phase 17), the Engine's composition root
-registers a custom Node:
+A plugin is a directory that is also a Python package, with a manifest
+`akasha-plugin.json` at its root. The Engine installs it without any change
+to Engine code. Its nodes join the Node Registry like built-in nodes.
+Example: [`backend/examples/plugins/text_tools`](../backend/examples/plugins/text_tools/).
 
-```python
-registry.register(WordCount)                       # no-argument constructor
-registry.register(MyNode, lambda: MyNode(client))  # injected dependencies
+```text
+acme/
+├── akasha-plugin.json
+├── README.md
+├── __init__.py
+└── nodes.py          # class WordCount(Node): ...
 ```
 
-Packaging, installation, discovery and SDK-compatibility checks
-(`sdk_compatibility` in the plugin manifest, matched against
-`SDK_VERSION`) arrive with Phase 17.
+```json
+{
+  "manifest_version": 1,
+  "id": "acme",
+  "name": "Acme Text Nodes",
+  "version": "1.0.0",
+  "description": "Word counting.",
+  "engine": ">=0.1.0,<1.0.0",
+  "sdk": ">=1.0.0,<2.0.0",
+  "dependencies": [{"kind": "plugin", "id": "acme.base", "version": ">=1.0.0"}],
+  "components": {"nodes": [{"id": "acme.word_count", "entry_point": "nodes:WordCount"}]},
+  "documentation": "README.md"
+}
+```
+
+| Field | Rule |
+|---|---|
+| `id` | Lowercase, e.g. `acme` or `community.web_tools`. It is also the installed directory name. |
+| `version` | Semver of the plugin. |
+| `engine`, `sdk` | Version constraints (`*` or `>= <= > < ==` clauses joined by commas), matched against the Engine version and `SDK_VERSION`. |
+| `dependencies` | `kind` is `plugin` (default) or `node`, `id`, `version` constraint. A plugin dependency must be enabled first. |
+| `components.nodes` | 1–100 node types. Each `id` must start with `<plugin id>.`, so a plugin cannot shadow `core.*` or another plugin's nodes. `entry_point` is `module:Class` inside the package. |
+| `documentation` | Optional path of a file inside the package. |
+
+Unknown fields and component kinds are rejected. V1 plugins provide node
+types only. The manifest is validated before any plugin code is imported.
+
+Lifecycle (`akasha.plugins.registry.PluginRegistry`, directory
+`AKASHA_PLUGINS_DIR`):
+
+| Step | Behaviour |
+|---|---|
+| install | validate manifest → check compatibility → copy (regular files only, no symlinks) → import → register nodes. On any failure nothing is left behind. |
+| startup | discovers installed plugins, loads enabled ones after their dependencies; one that fails is marked `FAILED`, the Engine still starts. |
+| disable / enable | unregisters / re-registers the nodes; the state survives restarts. Blocked (`PLUGIN_IN_USE`) while an enabled plugin depends on it. |
+| remove | disables, then deletes the installed copy. Upgrade = remove + install. |
+
+A project may declare `Dependency(kind="plugin")`. Validate and publish then
+require an enabled plugin whose version satisfies the constraint.
+
+Plugin code is trusted code, like any custom Node (§ trust model above).
+
+Without a plugin, the Engine's composition root can still register a node
+directly: `registry.register(MyNode, lambda: MyNode(client))`.
 
 ## 10. Compatibility
 

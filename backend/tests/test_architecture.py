@@ -24,22 +24,26 @@ RULES: dict[str, set[str]] = {
     "runtime": {"fastapi", "starlette", "uvicorn"},
     "nodes": {"fastapi", "starlette", "uvicorn"},
     "sdk": {"fastapi", "starlette", "uvicorn", "sqlalchemy", "redis"},
+    "plugins": {"fastapi", "starlette", "uvicorn", "sqlalchemy", "redis"},
 }
 
 # Provider libraries live behind ``akasha.providers`` only (§27, §78).
 PROVIDER_LIBRARIES = {"litellm", "openai", "anthropic"}
-for _layer in ("domain", "application", "runtime", "nodes", "sdk"):
+for _layer in ("domain", "application", "runtime", "nodes", "sdk", "plugins"):
     RULES[_layer] |= PROVIDER_LIBRARIES
 
 # akasha-internal layers each outer layer must not reach into
 INTERNAL_RULES: dict[str, set[str]] = {
-    "domain": {"api", "application", "infrastructure", "runtime"},
+    "domain": {"api", "application", "infrastructure", "runtime", "plugins"},
     "api": {"infrastructure"},
     # Nodes see only the contract (+ security guards); never the engine.
-    "nodes": {"api", "application", "infrastructure", "runtime"},
+    "nodes": {"api", "application", "infrastructure", "runtime", "plugins"},
     # The SDK re-exports the contract; only its test harness borrows the
     # runtime's credential rule. Never HTTP or persistence.
     "sdk": {"api", "infrastructure", "providers"},
+    # Plugins feed the node registry; they never touch HTTP, persistence or
+    # the runtime (a plugin node is an ordinary node to both).
+    "plugins": {"api", "application", "infrastructure", "runtime", "providers"},
 }
 
 

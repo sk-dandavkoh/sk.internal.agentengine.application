@@ -9,6 +9,7 @@ import asyncio
 import contextlib
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from types import MappingProxyType
 
 from akasha.application.ai import AIService, LLMProvider
 from akasha.application.credentials import CredentialService
@@ -23,6 +24,7 @@ from akasha.infrastructure.persistence import SqlAlchemyUnitOfWork
 from akasha.nodes.builtins import create_builtin_registry
 from akasha.nodes.registry import NodeRegistry
 from akasha.observability.metrics import EngineMetrics
+from akasha.plugins.registry import PluginRegistry
 from akasha.providers.litellm_adapter import LiteLLMAdapter
 from akasha.runtime.scheduler import TriggerScheduler
 from akasha.security.crypto import SecretCipher
@@ -45,6 +47,8 @@ class Container:
     # Served at /metrics; the runtime must share it once the container
     # constructs one (Phase 21/22), like ``events``.
     metrics: EngineMetrics = field(default_factory=EngineMetrics)
+    # Installed plugins; their nodes live in ``nodes`` like any other.
+    plugins: PluginRegistry | None = None
     database: Database | None = None
     projects: ProjectService | None = None
     executions: ExecutionService | None = None
@@ -104,8 +108,12 @@ def create_container(settings: Settings) -> Container:
     cipher = None if key is None else SecretCipher.from_config(key.get_secret_value())
     ai = create_ai_service(settings)
     nodes = create_node_registry(settings, llm=ai)
+    plugins = None
+    if settings.plugins_dir is not None:
+        plugins = PluginRegistry(settings.plugins_dir, nodes)
+        plugins.load_installed()
     if not settings.database_url:
-        return Container(settings=settings, nodes=nodes, ai=ai)
+        return Container(settings=settings, nodes=nodes, plugins=plugins, ai=ai)
     database = Database(normalize_async_url(settings.database_url))
 
     def uow() -> SqlAlchemyUnitOfWork:
@@ -115,7 +123,12 @@ def create_container(settings: Settings) -> Container:
     # wiring), so publish-time and run-time validation agree.
     events = EventPublisher()
     metrics = EngineMetrics()
-    projects = ProjectService(uow, nodes.definitions, events)
+    projects = ProjectService(
+        uow,
+        nodes.definitions,
+        events,
+        plugins=MappingProxyType({}) if plugins is None else plugins.versions,
+    )
     executions = ExecutionService(uow, events, metrics)
     triggers = TriggerService(executions)
     trigger_registry = TriggerRegistry(uow)
@@ -129,6 +142,7 @@ def create_container(settings: Settings) -> Container:
     return Container(
         settings=settings,
         nodes=nodes,
+        plugins=plugins,
         events=events,
         metrics=metrics,
         database=database,
@@ -146,7 +160,7 @@ def create_container(settings: Settings) -> Container:
 def create_node_registry(
     settings: Settings, *, llm: LLMClient | None = None
 ) -> NodeRegistry:
-    """Built-in nodes configured from settings (plugins join in Phase 17)."""
+    """Built-in nodes configured from settings; plugins add theirs."""
     return create_builtin_registry(
         llm=llm,
         network=NetworkPolicy(

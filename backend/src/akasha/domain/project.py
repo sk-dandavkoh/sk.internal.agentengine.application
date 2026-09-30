@@ -61,35 +61,44 @@ class Dependency:
 
 
 def validate_dependencies(
-    dependencies: Iterable[Dependency], definitions: Mapping[str, NodeDefinition]
+    dependencies: Iterable[Dependency],
+    definitions: Mapping[str, NodeDefinition],
+    plugins: Mapping[str, str] | None = None,
 ) -> tuple[ValidationIssue, ...]:
-    """Check declared node dependencies against the available node types.
+    """Check declared dependencies against the available node types and,
+    when ``plugins`` (enabled plugin id → version) is given, plugins.
 
     A malformed constraint is a validation issue, not a construction error:
-    already persisted projects must stay loadable to be fixed. Plugin
-    dependencies are not checked here — plugins do not exist before the
-    Plugin System (Phase 17), which owns that check.
+    already persisted projects must stay loadable to be fixed. The runtime
+    passes no ``plugins``: a run needs node types, which a disabled
+    plugin's nodes no longer are; plugin dependencies gate validate/publish.
     """
     issues: list[ValidationIssue] = []
     for dep in dependencies:
-        if dep.kind != "node":
+        if dep.kind == "node":
+            label = "node type"
+            definition = definitions.get(dep.name)
+            available = None if definition is None else definition.version
+        elif plugins is not None:
+            label = "plugin"
+            available = plugins.get(dep.name)
+        else:
             continue
-        definition = definitions.get(dep.name)
-        if definition is None:
+        if available is None:
             issues.append(
                 ValidationIssue(
                     ValidationCode.MISSING_DEPENDENCY,
-                    f"required node type {dep.name!r} is not available",
+                    f"required {label} {dep.name!r} is not available",
                 )
             )
             continue
         try:
-            ok = version_satisfies(definition.version, dep.version_constraint)
+            ok = version_satisfies(available, dep.version_constraint)
         except DomainValidationError:
             issues.append(
                 ValidationIssue(
                     ValidationCode.INVALID_DEPENDENCY,
-                    f"malformed version constraint for node type {dep.name!r}",
+                    f"malformed version constraint for {label} {dep.name!r}",
                 )
             )
             continue
@@ -97,7 +106,7 @@ def validate_dependencies(
             issues.append(
                 ValidationIssue(
                     ValidationCode.INCOMPATIBLE_DEPENDENCY,
-                    f"node type {dep.name!r} {definition.version} does not satisfy "
+                    f"{label} {dep.name!r} {available} does not satisfy "
                     f"{dep.version_constraint!r}",
                 )
             )
@@ -141,9 +150,12 @@ def _validate(
     graph: Graph,
     dependencies: Iterable[Dependency],
     definitions: Mapping[str, NodeDefinition],
+    plugins: Mapping[str, str] | None = None,
 ) -> ValidationResult:
     issues = validate_graph(graph, definitions).issues
-    return ValidationResult(issues + validate_dependencies(dependencies, definitions))
+    return ValidationResult(
+        issues + validate_dependencies(dependencies, definitions, plugins)
+    )
 
 
 @dataclass
@@ -155,13 +167,18 @@ class ProjectDraft:
     dependencies: list[Dependency] = field(default_factory=list)
     description: str = ""
 
-    def validate(self, definitions: Mapping[str, NodeDefinition]) -> ValidationResult:
+    def validate(
+        self,
+        definitions: Mapping[str, NodeDefinition],
+        plugins: Mapping[str, str] | None = None,
+    ) -> ValidationResult:
         """Full graph, dependency and trigger validation without executing.
 
         Callers (ValidateProject / PublishProject, Phase 06) decide what to
         do with the issues; the draft itself never raises on user data here.
+        ``plugins`` (enabled id → version): see ``validate_dependencies``.
         """
-        result = _validate(self.graph, self.dependencies, definitions)
+        result = _validate(self.graph, self.dependencies, definitions, plugins)
         return ValidationResult(result.issues + validate_triggers(self.triggers))
 
     def publish(

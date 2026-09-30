@@ -8,6 +8,7 @@ import pytest
 
 from akasha.domain.credentials import CredentialReference
 from akasha.domain.plugin import PluginMetadata
+from akasha.domain.project import Dependency
 from akasha.domain.trigger import (
     MAX_INTERVAL_SECONDS,
     MAX_PAYLOAD_DEPTH,
@@ -219,7 +220,7 @@ class TestPluginMetadata:
         return PluginMetadata(**base)  # type: ignore[arg-type]
 
     def test_valid(self) -> None:
-        p = self._valid(dependencies=("community.core",))
+        p = self._valid(dependencies=(Dependency("plugin", "community.core"),))
         assert p.plugin_id == "community.web_tools"
 
     @pytest.mark.parametrize(

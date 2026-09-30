@@ -1,0 +1,14 @@
+{
+  "manifest_version": 1,
+  "id": "text_tools",
+  "name": "Text Tools",
+  "version": "1.0.0",
+  "description": "Small text transformations for workflows.",
+  "engine": ">=0.1.0,<1.0.0",
+  "sdk": ">=1.0.0,<2.0.0",
+  "dependencies": [],
+  "components": {
+    "nodes": [{"id": "text_tools.slugify", "entry_point": "nodes:SlugifyNode"}]
+  },
+  "documentation": "README.md"
+}

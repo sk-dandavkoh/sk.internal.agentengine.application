@@ -1667,8 +1667,8 @@ Implementation (Phase 16, `backend/src/akasha/sdk`, guide: `docs/sdk.md`):
   the engine's order and the runtime's credential access rule
   (`NodeCredentials`).
 - Not provided: artifacts (no artifact storage exists yet), `node
-  validate/package` commands (CLI Phase 21 / plugins Phase 17; `validate` is
-  `check_node_contract`), registration without engine code (Phase 17).
+  validate/package` commands (CLI Phase 21; `validate` is
+  `check_node_contract`). Registration without engine code: plugins (§36).
 - Example: `backend/examples/hmac_signer` (imports `akasha.sdk` only,
   enforced by `tests/test_sdk.py`).
 
@@ -1758,6 +1758,38 @@ Remove
 Plugins must be versioned.
 
 Plugin compatibility must be checked before activation.
+
+Implementation (Phase 17, `backend/src/akasha/plugins/`, guide in
+`docs/sdk.md` §9):
+
+- Package = directory + Python package + `akasha-plugin.json`
+  (`manifest.py`, strict Pydantic, 64 KiB cap). It is parsed into the
+  domain `PluginMetadata` (id, version, engine/SDK constraints,
+  dependencies, provided nodes, documentation) before any code is
+  imported. Plugin node ids must be namespaced `<plugin id>.<name>`.
+- `domain.plugin.compatibility_issues` checks engine version, `SDK_VERSION`
+  and dependencies with the project dependency rules
+  (`validate_dependencies`). Given the enabled plugins, those rules now
+  also check project `Dependency(kind="plugin")` at validate/publish. The
+  runtime omits plugins on purpose: a run needs node types, and a disabled
+  plugin's nodes are no longer registered.
+- `PluginRegistry` runs the lifecycle. It registers plugin nodes through
+  `NodeRegistry.register`, so publish and runtime use them like built-ins.
+  Installs are all-or-nothing (staging dir, rename, rollback of files and
+  nodes). Startup loads in dependency order, and marks broken, incompatible
+  or cyclic plugins `FAILED` without stopping the Engine. Enable/disable
+  state lives in `<plugins_dir>/state.json`, written atomically.
+- Trust boundary: `_load` is the only place plugin code runs, in-process
+  (trusted code, §65). A future isolated loader would register proxy
+  factories there; nothing else would change.
+- Not blocked: disabling or removing a plugin whose nodes Projects use.
+  Their validate/publish/run fail with structured `UNKNOWN_NODE_TYPE` /
+  `MISSING_DEPENDENCY` until it is back (§143 "safe blocking" needs a
+  query over published versions; left for import/export and CLI).
+- Changes apply to the current process. Other processes see them after a
+  restart (workers, Phase 22). No HTTP install endpoint exists: before
+  authentication (Phase 20) it would be remote code execution. The CLI
+  (Phase 21) drives the lifecycle.
 
 ----------
 
