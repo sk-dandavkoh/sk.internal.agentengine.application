@@ -96,6 +96,11 @@ class FakeProjects(ProjectRepository):
     ) -> Sequence[Project]:
         return []
 
+    async def using_plugin(
+        self, plugin_id: str, node_types: Sequence[str]
+    ) -> Sequence[str]:
+        return []
+
 
 class FakeEvents(EventRepository):
     def __init__(self) -> None:

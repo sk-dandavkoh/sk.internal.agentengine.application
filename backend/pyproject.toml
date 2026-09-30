@@ -20,7 +20,7 @@ dependencies = [
 ]
 
 [project.scripts]
-akasha = "akasha.main:main"
+akasha = "akasha.cli:main"
 
 [dependency-groups]
 dev = [
@@ -57,6 +57,8 @@ select = ["E", "F", "I", "UP", "B", "ASYNC", "S", "T20", "RUF"]
 # assert is the pytest idiom; tests hold throwaway test passwords/tokens.
 "tests/**" = ["S101", "S105", "S106"]
 "examples/**/test_*.py" = ["S101"]
+# The CLI's output is its interface: print is the point, not debug residue.
+"src/akasha/cli.py" = ["T201"]
 
 [tool.mypy]
 mypy_path = "src"

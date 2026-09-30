@@ -15,7 +15,7 @@ from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, TextIO
 
 from akasha.security.redaction import redact, redact_text
 
@@ -68,9 +68,12 @@ class TextFormatter(logging.Formatter):
         return redact_text(super().format(record))
 
 
-def configure_logging(level: str, *, structured: bool = True) -> None:
-    """Configure the root logger once at bootstrap."""
-    handler = logging.StreamHandler(sys.stdout)
+def configure_logging(
+    level: str, *, structured: bool = True, stream: TextIO | None = None
+) -> None:
+    """Configure the root logger once at bootstrap (``stream`` defaults to
+    stdout; the CLI keeps stdout for results and logs to stderr)."""
+    handler = logging.StreamHandler(stream or sys.stdout)
     if structured:
         handler.setFormatter(JsonFormatter())
     else:

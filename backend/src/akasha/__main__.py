@@ -1,5 +1,5 @@
 """Enables `python -m akasha`."""
 
-from akasha.main import main
+from akasha.cli import main
 
 raise SystemExit(main())

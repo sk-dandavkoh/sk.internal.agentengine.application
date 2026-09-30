@@ -200,6 +200,13 @@ class ProjectService:
             await uow.commit()
         _log("project_deleted", project)
 
+    async def projects_using_plugin(
+        self, plugin_id: str, node_types: Sequence[str]
+    ) -> Sequence[str]:
+        """Projects whose draft or published history needs the plugin."""
+        async with self._uow() as uow:
+            return await uow.projects.using_plugin(plugin_id, node_types)
+
     async def validate_project(self, project_id: str) -> ValidationResult:
         project = await self.get_project(project_id)
         return project.draft.validate(self._definitions, self._plugins)

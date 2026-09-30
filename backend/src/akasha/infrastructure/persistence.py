@@ -72,6 +72,26 @@ def _ensure_utc(dt: datetime) -> datetime:
     return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
 
 
+# Scans the JSONB documents in SQL: no project is loaded into memory.
+_USING_PLUGIN = text(
+    """
+    SELECT p.id FROM projects p
+    WHERE EXISTS (SELECT 1 FROM jsonb_array_elements(p.draft_graph->'nodes') n
+                  WHERE n->>'node_type' = ANY(:types))
+       OR EXISTS (SELECT 1 FROM jsonb_array_elements(p.draft_dependencies) d
+                  WHERE d->>'kind' = 'plugin' AND d->>'name' = :plugin)
+       OR EXISTS (
+            SELECT 1 FROM project_versions v
+            WHERE v.project_id = p.id
+              AND (EXISTS (SELECT 1 FROM jsonb_array_elements(v.graph->'nodes') n
+                           WHERE n->>'node_type' = ANY(:types))
+                   OR EXISTS (SELECT 1 FROM jsonb_array_elements(v.dependencies) d
+                              WHERE d->>'kind' = 'plugin' AND d->>'name' = :plugin)))
+    ORDER BY p.id
+    """
+)
+
+
 class SqlAlchemyProjectRepository(ProjectRepository):
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
@@ -161,6 +181,14 @@ class SqlAlchemyProjectRepository(ProjectRepository):
             .all()
         )
         return [self._to_domain(row) for row in rows]
+
+    async def using_plugin(
+        self, plugin_id: str, node_types: Sequence[str]
+    ) -> Sequence[str]:
+        result = await self._session.execute(
+            _USING_PLUGIN, {"plugin": plugin_id, "types": list(node_types)}
+        )
+        return list(result.scalars())
 
     @staticmethod
     def _to_domain(row: RowMapping) -> Project:

@@ -16,8 +16,8 @@ uv sync
 ## Run
 
 ```bash
-uv run akasha          # serves http://127.0.0.1:8000
-AKASHA_PORT=9000 uv run akasha
+uv run akasha serve    # serves http://127.0.0.1:8000
+AKASHA_PORT=9000 uv run akasha serve
 ```
 
 Configuration is loaded from `AKASHA_*` environment variables
@@ -60,6 +60,36 @@ those tests are skipped, not faked. Set `AKASHA_TESTS_REQUIRE_DOCKER=1` (CI)
 to make an unreachable daemon fail the run instead of skipping them. HTTP and web-search tests use an
 in-process loopback server; no test touches the public internet.
 
+## CLI
+
+`akasha` is also the operator CLI. It reads the same `AKASHA_*` variables as
+the server and calls the same application services. It acts with operator
+authority, with no login: whoever can run it already holds the database
+credentials. `akasha COMMAND --help` documents every option. Add `--json`
+for machine-readable output.
+
+| Command | Does |
+|---|---|
+| `project create NAME` / `project list` | create an empty project / list projects |
+| `project validate ID` | validate the draft (exit 1 if invalid) |
+| `project publish ID [--expected-revision N]` | publish the draft as the next version |
+| `project run ID [--version N] [--input JSON\|@file]` | run a published version in this process; Ctrl-C cancels |
+| `project import FILE` / `project export ID [--version N] -o FILE` | project packages |
+| `node list` / `node validate T` / `node test T [--config] [--inputs] [--execution-input]` | `T` = node type id or `file.py:Class` / `module:Class` |
+| `plugin list` / `plugin install PATH` / `plugin remove ID [--force]` | needs `AKASHA_PLUGINS_DIR`; remove is blocked while projects use the plugin |
+| `execution get ID` / `execution cancel ID [--reason]` | inspect / cancel |
+| `backup -o FILE` | snapshot the installation (new file, mode 0600) |
+| `restore FILE [--replace]` | restore into an empty installation, or replace one |
+
+A backup holds password hashes and encrypted credentials; store it like a
+database dump. It does **not** contain `AKASHA_CREDENTIAL_ENCRYPTION_KEY`
+(restore refuses unless the configured key decrypts the credentials) or
+plugin code (install the plugins before restoring). Restore migrates the
+target database and requires the backup's schema revision to match.
+
+Exit codes: `0` success, `1` failure (engine error, invalid project, run not
+completed), `2` usage error, `70` unexpected internal error.
+
 ## Project API (`/api/v1/projects`)
 
 | Method | Path | Use case |
@@ -94,7 +124,8 @@ src/akasha/
 ├── providers/          LLM provider adapters (Phase 14)
 ├── plugins/            plugin system (Phase 17)
 ├── security/           credentials/redaction/guards (Phase 13+)
-└── observability/      structured JSON logging, metrics (Phase 12)
+├── observability/      structured JSON logging, metrics (Phase 12)
+└── cli.py              operator CLI (Phase 21)
 
 tests/                  pytest suite (incl. dependency-direction guard)
 migrations/             Alembic migrations (introduced in Phase 05)

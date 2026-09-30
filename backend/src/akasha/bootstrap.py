@@ -34,6 +34,7 @@ from akasha.nodes.registry import NodeRegistry
 from akasha.observability.metrics import EngineMetrics
 from akasha.plugins.registry import PluginRegistry
 from akasha.providers.litellm_adapter import LiteLLMAdapter
+from akasha.runtime.runtime import ExecutionRuntime
 from akasha.runtime.scheduler import TriggerScheduler
 from akasha.security.crypto import SecretCipher
 from akasha.security.network import NetworkPolicy
@@ -52,8 +53,7 @@ class Container:
     # One in-process fan-out shared by every producer; consumers (WebSocket
     # gateway, metrics) subscribe here.
     events: EventPublisher = field(default_factory=EventPublisher)
-    # Served at /metrics; the runtime must share it once the container
-    # constructs one (Phase 21/22), like ``events``.
+    # Served at /metrics; shared with the runtime, like ``events``.
     metrics: EngineMetrics = field(default_factory=EngineMetrics)
     # Installed plugins; their nodes live in ``nodes`` like any other.
     plugins: PluginRegistry | None = None
@@ -61,10 +61,13 @@ class Container:
     projects: ProjectService | None = None
     packages: ProjectPackageService | None = None
     executions: ExecutionService | None = None
+    # Runs queued executions in this process (the CLI's ``project run``)
+    # until workers exist (Phase 22).
+    runtime: ExecutionRuntime | None = None
     reports: ReportService | None = None
     triggers: TriggerService | None = None
     # Needs the database and AKASHA_CREDENTIAL_ENCRYPTION_KEY. The runtime
-    # must receive this same service (Phase 21/22 wiring) to resolve secrets.
+    # resolves secrets through this same service.
     credentials: CredentialService | None = None
     trigger_registry: TriggerRegistry | None = None
     # core.llm calls providers through this service only (it is the
@@ -134,8 +137,8 @@ def create_container(settings: Settings) -> Container:
     def uow() -> SqlAlchemyUnitOfWork:
         return SqlAlchemyUnitOfWork(database)
 
-    # The same registry must later back the ExecutionRuntime (Phase 21/22
-    # wiring), so publish-time and run-time validation agree.
+    # The same registry backs the ExecutionRuntime, so publish-time and
+    # run-time validation agree.
     events = EventPublisher()
     metrics = EngineMetrics()
     plugin_versions = MappingProxyType({}) if plugins is None else plugins.versions
@@ -144,6 +147,10 @@ def create_container(settings: Settings) -> Container:
         uow, nodes.definitions, events, plugins=plugin_versions
     )
     executions = ExecutionService(uow, events, metrics)
+    credentials = None if cipher is None else CredentialService(uow, cipher)
+    runtime = ExecutionRuntime(
+        uow, nodes.catalog, events=events, metrics=metrics, credentials=credentials
+    )
     auth = AuthenticationService(
         uow, session_ttl=timedelta(seconds=settings.session_ttl_seconds)
     )
@@ -166,9 +173,10 @@ def create_container(settings: Settings) -> Container:
         projects=projects,
         packages=packages,
         executions=executions,
+        runtime=runtime,
         reports=ReportService(uow),
         triggers=triggers,
-        credentials=None if cipher is None else CredentialService(uow, cipher),
+        credentials=credentials,
         trigger_registry=trigger_registry,
         ai=ai,
         scheduler=scheduler,

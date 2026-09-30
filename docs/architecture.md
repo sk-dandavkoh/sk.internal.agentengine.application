@@ -1785,8 +1785,8 @@ Implementation (Phase 17, `backend/src/akasha/plugins/`, guide in
   factories there; nothing else would change.
 - Not blocked: disabling or removing a plugin whose nodes Projects use.
   Their validate/publish/run fail with structured `UNKNOWN_NODE_TYPE` /
-  `MISSING_DEPENDENCY` until it is back (§143 "safe blocking" needs a
-  query over published versions; left for import/export and CLI).
+  `MISSING_DEPENDENCY` until it is back. The operator path, `akasha
+  plugin remove`, blocks removal while projects need the plugin (§58).
 - Changes apply to the current process. Other processes see them after a
   restart (workers, Phase 22). No HTTP install endpoint exists: before
   authentication (Phase 20) it would be remote code execution. The CLI
@@ -2580,6 +2580,35 @@ agent-engine restore
 ```
 
 CLI commands must not duplicate core business logic.
+
+Implementation (Phase 21, `backend/src/akasha/cli.py`, stdlib `argparse`):
+
+- `akasha project create|list|validate|publish|run|import|export`,
+  `node list|validate|test`, `plugin list|install|remove`,
+  `execution get|cancel`, `backup`, `restore`, and `akasha serve` for the
+  HTTP server. Each command calls the service the API uses
+  (`ProjectService`, `ProjectPackageService`, `TriggerService.fire_manual`,
+  `ExecutionService`, `NodeRegistry`, `PluginRegistry`,
+  `akasha.sdk.testing.run_node`). `tests/test_architecture.py` forbids
+  SQLAlchemy/FastAPI imports in it.
+- `project run` queues a manual execution and runs it in-process on the
+  container's `ExecutionRuntime` (the same registry, credentials, events
+  and metrics as the rest of the container) until workers exist (Phase 22).
+  Ctrl-C calls `ExecutionRuntime.cancel`: the run ends CANCELLED, not
+  orphaned RUNNING.
+- `plugin remove` goes through `application.plugins.remove_plugin`: it is
+  blocked with `PLUGIN_IN_USE` while a project's draft or any published
+  version uses the plugin's node types or declares a dependency on it
+  (§143 safe blocking). `--force` is the explicit confirmation.
+- Trust model: the CLI runs on the host with the engine's `AKASHA_*`
+  configuration, so it acts with operator authority and has no login.
+  Projects it creates or imports have no owner (admin-only in the API).
+- Output: results to stdout (text, or `--json` using the API DTOs where
+  they exist), errors and logs to stderr, redacted. Exit codes: 0 ok,
+  1 failed, 2 usage, 70 internal error.
+- Not provided: draft editing, project deletion, execution listing,
+  plugin enable/disable, user and credential management (API only).
+  `node test` has no credentials: secrets never go on a command line.
 
 ----------
 
@@ -3817,6 +3846,15 @@ Secret encryption keys must be handled separately and securely.
 
 A database backup without the required encryption material may not be sufficient for full recovery.
 
+Implementation (Phase 21, `infrastructure/backup.py`, `akasha backup`):
+one gzip JSON document with a manifest (format version, engine version,
+Alembic schema revision, enabled plugins) and every row of every table,
+read in one REPEATABLE READ transaction. Credentials stay encrypted; the key
+is not included. Login sessions are left out. Plugin code, artifacts (none
+exist yet) and engine configuration (environment variables) are the
+operator's to keep. The file is created with mode 0600 and never
+overwritten. Limitation: it is built in memory.
+
 ----------
 
 # 111. Restore Architecture
@@ -3833,6 +3871,16 @@ credential encryption compatibility
 ```
 
 Restore must not silently overwrite an active installation without explicit confirmation.
+
+Implementation (Phase 21, `akasha restore FILE [--replace]`): validates the
+format and rows, the enabled plugins (same major version, at least the
+backed-up one) and that the configured key decrypts every credential. Then
+it migrates the target to head and requires the backup's schema revision
+to equal it. An older backup must be restored with the engine version that
+wrote it, then upgraded. All rows load in one transaction, event positions
+included. A non-empty installation is refused (`RESTORE_TARGET_NOT_EMPTY`)
+unless `--replace`, which truncates and reloads in that same transaction.
+Any failure leaves the installation unchanged.
 
 ----------
 

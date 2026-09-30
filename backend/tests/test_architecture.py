@@ -25,6 +25,8 @@ RULES: dict[str, set[str]] = {
     "nodes": {"fastapi", "starlette", "uvicorn"},
     "sdk": {"fastapi", "starlette", "uvicorn", "sqlalchemy", "redis"},
     "plugins": {"fastapi", "starlette", "uvicorn", "sqlalchemy", "redis"},
+    # The CLI adapts services; persistence and HTTP stay out of it (§58).
+    "cli": {"fastapi", "starlette", "sqlalchemy", "redis"},
 }
 
 # Provider libraries live behind ``akasha.providers`` only (§27, §78).
@@ -63,9 +65,9 @@ def test_dependency_direction() -> None:
     violations: list[str] = []
     for layer, forbidden in RULES.items():
         layer_dir = SRC / layer
-        if not layer_dir.exists():
-            continue
-        for py_file in layer_dir.rglob("*.py"):
+        module = SRC / f"{layer}.py"  # a single-module layer, e.g. cli.py
+        files = layer_dir.rglob("*.py") if layer_dir.exists() else [module]
+        for py_file in (f for f in files if f.exists()):
             imports = _imports(py_file)
             bad = {imp.split(".")[0] for imp in imports} & forbidden
             bad |= {

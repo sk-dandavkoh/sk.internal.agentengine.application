@@ -58,6 +58,14 @@ class ProjectRepository(Protocol):
         """All projects, or only those owned by ``owner_id``."""
         ...
 
+    async def using_plugin(
+        self, plugin_id: str, node_types: Sequence[str]
+    ) -> Sequence[str]:
+        """Ids (sorted) of projects whose draft or any published version uses
+        one of ``node_types`` or declares a dependency on plugin
+        ``plugin_id``."""
+        ...
+
 
 class ProjectVersionRepository(Protocol):
     """Append-only access to immutable published versions.
