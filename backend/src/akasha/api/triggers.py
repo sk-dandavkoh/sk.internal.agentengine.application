@@ -20,7 +20,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Body, Depends, Path, Request, status
 from pydantic import JsonValue
 
-from akasha.api.schemas import ErrorResponse
+from akasha.api.schemas import ErrorResponse, request_id
 from akasha.api.trigger_schemas import ExecutionDetail
 from akasha.application.executions import ExecutionService
 from akasha.application.triggers import (
@@ -73,7 +73,6 @@ _CONTEXT_HEADERS = frozenset({"content-type", "user-agent", "x-request-id"})
 def _context(
     request: Request, trigger_type: TriggerType, payload: dict[str, Any]
 ) -> TriggerContext:
-    correlation_id = request.headers.get("x-request-id")
     return TriggerContext(
         trigger_type=trigger_type,
         payload=payload,
@@ -83,7 +82,7 @@ def _context(
             if name.lower() in _CONTEXT_HEADERS
         },
         source=trigger_type.value,
-        metadata={"correlation_id": correlation_id} if correlation_id else {},
+        metadata={"correlation_id": request_id(request)},
     )
 
 
@@ -115,7 +114,7 @@ def create_triggers_router() -> APIRouter:
             project_id,
             version,
             input=body,
-            correlation_id=request.headers.get("x-request-id"),
+            correlation_id=request_id(request),
         )
         return ExecutionDetail.from_domain(execution)
 

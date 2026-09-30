@@ -19,6 +19,7 @@ from akasha.infrastructure.database import Database, normalize_async_url
 from akasha.infrastructure.persistence import SqlAlchemyUnitOfWork
 from akasha.nodes.builtins import create_builtin_registry
 from akasha.nodes.registry import NodeRegistry
+from akasha.observability.metrics import EngineMetrics
 from akasha.runtime.scheduler import TriggerScheduler
 from akasha.security.network import NetworkPolicy
 
@@ -36,6 +37,9 @@ class Container:
     # One in-process fan-out shared by every producer; consumers (WebSocket
     # gateway, metrics) subscribe here.
     events: EventPublisher = field(default_factory=EventPublisher)
+    # Served at /metrics; the runtime must share it once the container
+    # constructs one (Phase 21/22), like ``events``.
+    metrics: EngineMetrics = field(default_factory=EngineMetrics)
     database: Database | None = None
     projects: ProjectService | None = None
     executions: ExecutionService | None = None
@@ -95,8 +99,9 @@ def create_container(settings: Settings) -> Container:
     # The same registry must later back the ExecutionRuntime (Phase 21/22
     # wiring), so publish-time and run-time validation agree.
     events = EventPublisher()
+    metrics = EngineMetrics()
     projects = ProjectService(uow, nodes.definitions, events)
-    executions = ExecutionService(uow, events)
+    executions = ExecutionService(uow, events, metrics)
     triggers = TriggerService(executions)
     trigger_registry = TriggerRegistry(uow)
     scheduler = (
@@ -110,6 +115,7 @@ def create_container(settings: Settings) -> Container:
         settings=settings,
         nodes=nodes,
         events=events,
+        metrics=metrics,
         database=database,
         projects=projects,
         executions=executions,

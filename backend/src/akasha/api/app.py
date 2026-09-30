@@ -1,20 +1,22 @@
 """FastAPI application factory and lifecycle."""
 
 import logging
-from collections.abc import AsyncGenerator
+import time
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from akasha.api.routes import create_api_v1_router, create_operational_router
-from akasha.api.schemas import ErrorResponse, request_id
+from akasha.api.schemas import ErrorResponse, accept_request_id, request_id
 from akasha.bootstrap import Container, create_container
 from akasha.config import Settings, load_settings
 from akasha.errors import AkashaError
-from akasha.observability.logging import configure_logging
+from akasha.observability.logging import configure_logging, log_context
+from akasha.security.redaction import redact_mapping, redact_text
 
 logger = logging.getLogger("akasha")
 
@@ -43,8 +45,60 @@ def create_app(
     app.include_router(create_operational_router())
     app.include_router(create_api_v1_router())
 
+    register_request_observability(app)
     register_error_handlers(app)
     return app
+
+
+def register_request_observability(app: FastAPI) -> None:
+    @app.middleware("http")
+    async def observe_request(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
+        rid = accept_request_id(request.headers.get("x-request-id"))
+        request.state.request_id = rid
+        start = time.perf_counter()
+        status = 500  # unless a response says otherwise (unhandled error)
+        with log_context(request_id=rid):
+            try:
+                response = await call_next(request)
+                status = response.status_code
+            finally:
+                logger.info(
+                    "http_request",
+                    extra={
+                        "event": "http_request",
+                        "method": request.method,
+                        # Path only: query strings can carry tokens.
+                        "path": request.url.path,
+                        "status_code": status,
+                        "duration_ms": round((time.perf_counter() - start) * 1000),
+                    },
+                )
+        response.headers["X-Request-ID"] = rid
+        return response
+
+
+def _error(
+    request: Request,
+    status: int,
+    code: str,
+    message: str,
+    details: dict[str, object] | None = None,
+) -> JSONResponse:
+    """Every error body leaves through here, redacted: messages and details
+    can echo caller or node input."""
+    body = ErrorResponse(
+        code=code,
+        message=redact_text(message),
+        details=redact_mapping(details or {}),
+        request_id=request_id(request),
+    )
+    return JSONResponse(
+        status_code=status,
+        content=body.model_dump(),
+        headers={"X-Request-ID": body.request_id},
+    )
 
 
 _HTTP_CODES = {
@@ -61,37 +115,31 @@ def register_error_handlers(app: FastAPI) -> None:
     async def handle_http_error(
         request: Request, exc: StarletteHTTPException
     ) -> JSONResponse:
-        body = ErrorResponse(
-            code=_HTTP_CODES.get(exc.status_code, "HTTP_ERROR"),
-            message=str(exc.detail),
-            request_id=request_id(request),
+        return _error(
+            request,
+            exc.status_code,
+            _HTTP_CODES.get(exc.status_code, "HTTP_ERROR"),
+            str(exc.detail),
         )
-        return JSONResponse(status_code=exc.status_code, content=body.model_dump())
 
     @app.exception_handler(AkashaError)
     async def handle_akasha_error(request: Request, exc: AkashaError) -> JSONResponse:
-        body = ErrorResponse(
-            code=exc.code,
-            message=exc.message,
-            details=exc.details,
-            request_id=request_id(request),
-        )
-        return JSONResponse(status_code=exc.http_status, content=body.model_dump())
+        return _error(request, exc.http_status, exc.code, exc.message, exc.details)
 
     @app.exception_handler(RequestValidationError)
     async def handle_validation_error(
         request: Request, exc: RequestValidationError
     ) -> JSONResponse:
-        body = ErrorResponse(
-            code="VALIDATION_ERROR",
-            message="Request validation failed.",
-            details={
+        return _error(
+            request,
+            422,
+            "VALIDATION_ERROR",
+            "Request validation failed.",
+            {
                 ".".join(str(p) for p in e.get("loc", ())): e.get("msg", "")
                 for e in exc.errors()
             },
-            request_id=request_id(request),
         )
-        return JSONResponse(status_code=422, content=body.model_dump())
 
     @app.exception_handler(Exception)
     async def handle_unexpected_error(request: Request, exc: Exception) -> JSONResponse:
@@ -101,9 +149,4 @@ def register_error_handlers(app: FastAPI) -> None:
             extra={"event": "unhandled_error", "request_id": request_id(request)},
             exc_info=exc,
         )
-        body = ErrorResponse(
-            code="INTERNAL_ERROR",
-            message="An internal error occurred.",
-            request_id=request_id(request),
-        )
-        return JSONResponse(status_code=500, content=body.model_dump())
+        return _error(request, 500, "INTERNAL_ERROR", "An internal error occurred.")

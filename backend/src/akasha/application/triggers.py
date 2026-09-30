@@ -21,6 +21,7 @@ from typing import Any
 from akasha.application.executions import ExecutionService
 from akasha.application.projects import UowFactory
 from akasha.domain.execution import Execution, ExecutionMetadata
+from akasha.domain.primitives import new_id
 from akasha.domain.trigger import Trigger, TriggerContext, TriggerType
 from akasha.errors import AkashaError, DomainValidationError
 
@@ -153,7 +154,9 @@ class TriggerService:
             metadata=ExecutionMetadata(
                 trigger_type=context.trigger_type,
                 trigger_id=trigger_id,
-                correlation_id=context.metadata.get("correlation_id"),
+                # Scheduled runs have no inbound request: they get their
+                # own correlation root so their logs still group.
+                correlation_id=context.metadata.get("correlation_id") or new_id("corr"),
             ),
         )
         logger.info(

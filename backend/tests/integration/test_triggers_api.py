@@ -220,8 +220,13 @@ async def test_invoke_api_trigger(api: httpx.AsyncClient) -> None:
     response = await api.post(invoke_url(pid, trigger_id), json={"ticket": 7})
 
     assert response.status_code == 201, response.text
+    # No X-Request-ID sent: the minted request id is the correlation root.
     assert_execution(
-        response.json(), project_id=pid, trigger_type="api", trigger_id=trigger_id
+        response.json(),
+        project_id=pid,
+        trigger_type="api",
+        trigger_id=trigger_id,
+        correlation_id=response.headers["x-request-id"],
     )
 
 
@@ -232,8 +237,13 @@ async def test_invoke_manual_trigger_allowed(api: httpx.AsyncClient) -> None:
     response = await api.post(invoke_url(pid, trigger_id))
 
     assert response.status_code == 201, response.text
+    # No X-Request-ID sent: the minted request id is the correlation root.
     assert_execution(
-        response.json(), project_id=pid, trigger_type="manual", trigger_id=trigger_id
+        response.json(),
+        project_id=pid,
+        trigger_type="manual",
+        trigger_id=trigger_id,
+        correlation_id=response.headers["x-request-id"],
     )
 
 

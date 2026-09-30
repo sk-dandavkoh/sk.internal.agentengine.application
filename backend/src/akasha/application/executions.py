@@ -7,7 +7,6 @@ the caller hands the execution id to ``ExecutionRuntime.run``. Triggers
 (Phase 10) will converge on ``create_execution``.
 """
 
-import logging
 from collections.abc import Mapping
 from typing import Any
 
@@ -16,8 +15,8 @@ from akasha.application.persistence import UnitOfWork
 from akasha.application.projects import ProjectVersionNotFoundError, UowFactory
 from akasha.domain.execution import Execution, ExecutionMetadata, TimeoutPolicy
 from akasha.errors import AkashaError
-
-logger = logging.getLogger("akasha.application.executions")
+from akasha.observability.execution import observe_execution
+from akasha.observability.metrics import EngineMetrics
 
 
 class ExecutionNotFoundError(AkashaError):
@@ -45,9 +44,15 @@ async def save_execution(uow: UnitOfWork, execution: Execution) -> None:
 
 
 class ExecutionService:
-    def __init__(self, uow: UowFactory, events: EventPublisher | None = None) -> None:
+    def __init__(
+        self,
+        uow: UowFactory,
+        events: EventPublisher | None = None,
+        metrics: EngineMetrics | None = None,
+    ) -> None:
         self._uow = uow
         self._events = events or EventPublisher()
+        self._metrics = metrics or EngineMetrics()
 
     async def create_execution(
         self,
@@ -82,17 +87,9 @@ class ExecutionService:
             execution.enqueue()
             await save_execution(uow, execution)
             await uow.commit()
-        await self._events.publish(execution.pull_events())
-        logger.info(
-            "execution_created",
-            extra={
-                "event": "execution_created",
-                "execution_id": execution.id,
-                "project_id": project_id,
-                "project_version": version,
-                "correlation_id": execution.metadata.correlation_id,
-            },
-        )
+        events = execution.pull_events()
+        observe_execution(execution, events, self._metrics)
+        await self._events.publish(events)
         return execution
 
     async def get_execution(self, execution_id: str) -> Execution:

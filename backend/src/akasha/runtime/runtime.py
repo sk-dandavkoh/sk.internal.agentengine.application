@@ -16,6 +16,9 @@ Concurrency model (the reason this is race-free by construction):
 - Lifecycle events are recorded by the aggregate's transitions, stored in
   the same transaction as each save and published after its commit. A
   failing event subscriber cannot affect the run (``EventPublisher``).
+- Observability hangs off the same point: after each commit the saved
+  events become log lines and metrics (``observe_execution``), and node
+  tasks inherit a log context carrying the execution/node correlation ids.
 
 Scope: no retries (Phase 23), no queue/worker/leases (Phase 22), no
 recovery of executions left RUNNING by a dead process (Phase 23). Control
@@ -43,6 +46,9 @@ from akasha.domain.execution import (
 from akasha.domain.node import NodeErrorKind, NodeExecutionContext, NodeResult
 from akasha.domain.primitives import utcnow
 from akasha.errors import AkashaError, ConfigurationError, InvalidStateTransitionError
+from akasha.observability.execution import observe_execution
+from akasha.observability.logging import log_context
+from akasha.observability.metrics import EngineMetrics
 from akasha.runtime.executor import NodeOutcome, execute_node
 from akasha.runtime.plan import (
     ExecutionGraphInvalidError,
@@ -50,8 +56,6 @@ from akasha.runtime.plan import (
     NodeCatalog,
     load_plan,
 )
-
-logger = logging.getLogger("akasha.runtime")
 
 Clock = Callable[[], datetime]
 
@@ -64,11 +68,15 @@ class ExecutionAlreadyRunningError(AkashaError):
 class StateManager:
     """Loads and persists the execution aggregate; one short transaction per
     call. Never held open across node execution (backend/AGENTS.md §16).
-    Publishes the saved transitions' events once the save committed."""
+    Observes and publishes the saved transitions' events once the save
+    committed."""
 
-    def __init__(self, uow: UowFactory, events: EventPublisher) -> None:
+    def __init__(
+        self, uow: UowFactory, events: EventPublisher, metrics: EngineMetrics
+    ) -> None:
         self._uow = uow
         self._events = events
+        self._metrics = metrics
 
     async def load(self, execution_id: str) -> Execution:
         async with self._uow() as uow:
@@ -78,7 +86,9 @@ class StateManager:
         async with self._uow() as uow:
             await save_execution(uow, execution)
             await uow.commit()
-        await self._events.publish(execution.pull_events())
+        events = execution.pull_events()
+        observe_execution(execution, events, self._metrics)
+        await self._events.publish(events)
 
 
 @dataclass
@@ -128,10 +138,12 @@ class ExecutionRuntime:
         max_concurrency: int = 8,
         clock: Clock = utcnow,
         events: EventPublisher | None = None,
+        metrics: EngineMetrics | None = None,
     ) -> None:
         if max_concurrency < 1:
             raise ConfigurationError("max_concurrency must be >= 1")
-        self._state = StateManager(uow, events or EventPublisher())
+        self._metrics = metrics or EngineMetrics()
+        self._state = StateManager(uow, events or EventPublisher(), self._metrics)
         self._catalog = catalog
         self._max_concurrency = max_concurrency
         self._clock = clock
@@ -151,9 +163,12 @@ class ExecutionRuntime:
                 details={"execution_id": execution_id},
             )
         request = self._active[execution_id] = _CancelRequest()
+        self._metrics.active_executions.inc()
         try:
-            return await self._run(execution_id, request)
+            with log_context(execution_id=execution_id):
+                return await self._run(execution_id, request)
         finally:
+            self._metrics.active_executions.dec()
             del self._active[execution_id]
 
     async def cancel(self, execution_id: str, *, reason: str = "") -> None:
@@ -175,7 +190,6 @@ class ExecutionRuntime:
         execution = await self._state.load(execution_id)
         execution.cancel(reason=reason, now=self._clock())
         await self._state.save(execution)
-        _log("execution_cancelled", execution)
 
     # -- internals ----------------------------------------------------------
 
@@ -195,7 +209,6 @@ class ExecutionRuntime:
         if request.event.is_set():  # cancelled before it started
             execution.cancel(reason=request.reason, now=self._clock())
             await self._state.save(execution)
-            _log("execution_cancelled", execution)
             return execution
         try:
             plan = load_plan(execution.project_version, self._catalog)
@@ -211,14 +224,12 @@ class ExecutionRuntime:
                 now=self._clock(),
             )
             await self._state.save(execution)
-            _log("execution_failed", execution, error_code=exc.code)
             return execution
 
         execution.start(now=self._clock(), node_versions=plan.node_versions)
         for node_id in plan.roots:
             execution.mark_node_ready(node_id)
         await self._state.save(execution)
-        _log("execution_started", execution)
         await self._schedule(execution, plan, request)
         return execution
 
@@ -257,7 +268,7 @@ class ExecutionRuntime:
                     for completed_id in completed:
                         self._advance(execution, plan, completed_id)
             execution.complete(now=self._clock())
-            await self._finish(execution, "execution_completed")
+            await self._state.save(execution)
         finally:
             # Whatever ended the loop (including a persistence error or the
             # run being cancelled), no node task may outlive it.
@@ -283,13 +294,13 @@ class ExecutionRuntime:
         now = self._clock()
         if verdict == "cancel":
             execution.cancel(now=now)
-            await self._finish(execution, "execution_cancelled")
+            await self._state.save(execution)
         elif verdict == "time_out":
             execution.time_out(now=now)
-            await self._finish(execution, "execution_timed_out")
+            await self._state.save(execution)
         elif failure is not None:
             execution.fail(failure, now=now)
-            await self._finish(execution, "execution_failed")
+            await self._state.save(execution)
 
     async def _launch(
         self,
@@ -336,15 +347,24 @@ class ExecutionRuntime:
                 # A copy for the same reason as ``config``.
                 execution_input=deepcopy(execution.input),
             )
-            task = asyncio.create_task(
-                execute_node(
-                    plan.implementations[node_id],
-                    context,
-                    limit=execution.timeout_policy.node_timeout,
+            # The task copies the context it is created in: every log line
+            # of the node's code (and libraries it calls) carries these ids.
+            with log_context(
+                execution_id=execution.id,
+                project_id=execution.project_id,
+                correlation_id=execution.metadata.correlation_id,
+                node_id=node_id,
+                node_execution_id=ne.id,
+                node_type=instance.node_type,
+            ):
+                task = asyncio.create_task(
+                    execute_node(
+                        plan.implementations[node_id],
+                        context,
+                        limit=execution.timeout_policy.node_timeout,
+                    )
                 )
-            )
             running[task] = node_id
-            _log("node_started", execution, node_id=node_id)
         return True
 
     def _advance(self, execution: Execution, plan: ExecutionPlan, done: str) -> None:
@@ -361,7 +381,6 @@ class ExecutionRuntime:
                     execution.mark_node_ready(node_id)
                 elif decision is NodeExecutionStatus.SKIPPED:
                     execution.skip_node(node_id, now=self._clock())
-                    _log("node_skipped", execution, node_id=node_id)
                     queue.append(node_id)
 
     def _record(
@@ -383,17 +402,9 @@ class ExecutionRuntime:
             if isinstance(outcome, NodeResult):
                 execution.complete_node(node_id, outputs=outcome.outputs, now=now)
                 completed.append(node_id)
-                _log("node_completed", execution, node_id=node_id)
             else:
                 execution.fail_node(node_id, outcome, now=now)
                 first_failure = first_failure or outcome
-                _log(
-                    "node_failed",
-                    execution,
-                    node_id=node_id,
-                    error_code=outcome.code,
-                    error_kind=outcome.kind.value,
-                )
         return completed, first_failure
 
     async def _stop(self, execution: Execution, running: _Running) -> None:
@@ -412,29 +423,3 @@ class ExecutionRuntime:
         await asyncio.wait(running)
         self._record(execution, running, [t for t in running if not t.cancelled()])
         running.clear()
-
-    async def _finish(self, execution: Execution, event: str) -> None:
-        await self._state.save(execution)
-        error = execution.error
-        _log(
-            event,
-            execution,
-            **({} if error is None else {"error_code": error.code}),
-        )
-
-
-def _log(event: str, execution: Execution, **extra: object) -> None:
-    # Ids, states and error codes only — never inputs, outputs or config
-    # values, which may carry sensitive business data (AGENTS §76/§77).
-    logger.info(
-        event,
-        extra={
-            "event": event,
-            "execution_id": execution.id,
-            "project_id": execution.project_id,
-            "project_version": execution.project_version.version,
-            "correlation_id": execution.metadata.correlation_id,
-            "status": execution.status.value,
-            **extra,
-        },
-    )

@@ -4,12 +4,17 @@ Never raises for node behaviour — every way a node can go wrong becomes a
 structured ``ExecutionError`` the runtime records. Only ``CancelledError``
 (the runtime stopping the node) propagates, so cancellation is never
 mistaken for a node failure.
+
+Error messages and details are node-authored text that is persisted,
+returned by the API and logged, so they are redacted here, once, on the way
+in (``akasha.security.redaction``).
 """
 
 import asyncio
 import logging
 import traceback
 from collections.abc import Mapping
+from dataclasses import replace
 from datetime import timedelta
 
 from akasha.domain.execution import ExecutionError
@@ -21,6 +26,7 @@ from akasha.domain.node import (
     NodeResult,
 )
 from akasha.errors import NodeValidationError
+from akasha.security.redaction import redact_mapping, redact_text
 
 logger = logging.getLogger("akasha.runtime.executor")
 
@@ -34,6 +40,22 @@ def _invalid(code: str, message: str, node_id: str) -> ExecutionError:
 
 
 async def execute_node(
+    node_cls: NodeFactory,
+    context: NodeExecutionContext,
+    *,
+    limit: timedelta | None,
+) -> NodeOutcome:
+    outcome = await _execute(node_cls, context, limit=limit)
+    if isinstance(outcome, ExecutionError):
+        return replace(
+            outcome,
+            message=redact_text(outcome.message),
+            details={k: str(v) for k, v in redact_mapping(outcome.details).items()},
+        )
+    return outcome
+
+
+async def _execute(
     node_cls: NodeFactory,
     context: NodeExecutionContext,
     *,
@@ -64,9 +86,9 @@ async def execute_node(
         )
     except Exception as exc:
         # Trusted but possibly buggy node code must not take the runtime
-        # down. The exception *message* may carry secrets (redaction is
-        # Phase 13), so only the type is persisted/logged; the frame list
-        # keeps it diagnosable server-side.
+        # down. The exception *message* is arbitrary text that pattern
+        # redaction cannot vouch for, so only the type is persisted/logged;
+        # the frame list keeps it diagnosable server-side.
         logger.error(
             "node_unexpected_error",
             extra={

@@ -27,8 +27,35 @@ from akasha.domain.node import (
     NodeResult,
 )
 from akasha.domain.primitives import new_id
+from akasha.observability.logging import JsonFormatter
 
 RunNode = Callable[..., Coroutine[Any, Any, NodeResult]]
+
+
+class _JsonLines(logging.Handler):
+    def __init__(self) -> None:
+        super().__init__(logging.DEBUG)
+        self.setFormatter(JsonFormatter())
+        self.lines: list[dict[str, Any]] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.lines.append(json.loads(self.format(record)))
+
+
+@contextmanager
+def capture_json_logs() -> Iterator[list[dict[str, Any]]]:
+    """Every log line, as the production JSON formatter renders it (context
+    and redaction included), parsed back into dicts."""
+    handler = _JsonLines()
+    root = logging.getLogger()
+    level = root.level
+    root.addHandler(handler)
+    root.setLevel(logging.DEBUG)
+    try:
+        yield handler.lines
+    finally:
+        root.removeHandler(handler)
+        root.setLevel(level)
 
 
 def make_context(

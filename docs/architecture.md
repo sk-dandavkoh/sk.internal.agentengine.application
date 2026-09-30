@@ -2167,6 +2167,36 @@ Provider Request
 
 to be correlated.
 
+Implementation (Phase 12):
+
+- Log format: one JSON object per line (`akasha.observability.logging`):
+  `timestamp` (ISO 8601 UTC, ms), `level`, `logger`, `message`, then the
+  bound context, then the record's own fields (most specific wins).
+- Context propagation: `log_context(**fields)` binds fields in a
+  `ContextVar`. asyncio tasks copy their creation context, so fields bound
+  before `create_task` reach every line the task emits, including node code
+  and libraries it calls.
+  - HTTP: a middleware accepts `X-Request-ID` if it is 1-128 printable
+    characters (else mints a UUID), binds `request_id`, echoes the header,
+    puts it in every error body and logs one `http_request` line (method,
+    path without query string, status, `duration_ms`).
+  - Triggers: the request id becomes the execution's `correlation_id`.
+    Scheduler-fired executions get a fresh `corr_…` id.
+  - Runtime: `execution_id` for the run; each node task gets
+    `execution_id`, `project_id`, `correlation_id`, `node_id`,
+    `node_execution_id`, `node_type`.
+- Execution observer (`observe_execution`): called right after each
+  execution save commits, with the events that save persisted. It emits one
+  log line per event (logger `akasha.execution`, `event` = event type) with
+  ids, the event payload, `duration_ms` (terminal node/execution events),
+  `queue_wait_ms` (`execution.started`) and, for failures, `error_code`,
+  `error_kind`, `error_message`, `error_node_id`. Failures log at WARNING.
+  Durations come from domain timestamps, so the injected clock controls
+  them. The runtime has no other lifecycle logging.
+- `project_version_id` from the list above is not a log field: versions are
+  identified by `(project_id, project_version)` everywhere (Phase 11 §6).
+  `trace_id`/`span_id` are not implemented (no tracing backend yet).
+
 ----------
 
 # 53. Execution Persistence
@@ -3482,6 +3512,25 @@ debug output
 
 Known credential values must never be logged.
 
+Implementation (Phase 12, `akasha.security.redaction`):
+
+- One module decides what looks secret. Values under sensitive mapping keys
+  (`password`, `api_key`, `Authorization`, `access_token`, …; not
+  `*_id`/`*_type`/`*_count`) are replaced whole by `[REDACTED]`.
+  Credential-shaped text is masked: URL userinfo, `Bearer`/`Basic` values,
+  `key=value` with a sensitive key, `sk-…`, GitHub/Slack tokens, AWS key
+  ids, JWTs.
+- Applied at three choke points, not at call sites:
+  1. the log formatters (every field, the message, exception text);
+  2. the API error body (`message`, `details`) for every error handler;
+  3. `execute_node`: node error messages/details are redacted before they
+     are persisted, published or logged.
+- Events stay secret-free by construction (closed scalar payloads, §18).
+- Metric labels never carry ids, codes or text (§113).
+- Limit: this catches *credential-shaped* secrets. A secret without a
+  recognisable shape (e.g. a bare password in prose) is only masked once
+  the credential store (Phase 13) redacts known values.
+
 ----------
 
 # 110. Backup Architecture
@@ -3561,6 +3610,35 @@ errors_total
 ```
 
 Metric names are implementation details and may evolve.
+
+Implementation (Phase 12, `akasha.observability.metrics`, Prometheus
+exposition at `GET /metrics`, unauthenticated until Phase 20 like
+`/health`):
+
+| Metric | Type | Labels |
+|---|---|---|
+| `akasha_executions_created_total` | counter | `trigger_type` |
+| `akasha_executions_started_total` | counter | — |
+| `akasha_executions_finished_total` | counter | `status` |
+| `akasha_execution_duration_seconds` | histogram | `status` |
+| `akasha_execution_queue_wait_seconds` | histogram | — |
+| `akasha_active_executions` | gauge | — (per runtime process) |
+| `akasha_node_executions_finished_total` | counter | `node_type`, `status` |
+| `akasha_node_execution_duration_seconds` | histogram | `node_type`, `status` |
+| `akasha_node_execution_errors_total` | counter | `node_type`, `error_kind` |
+
+- Label values are bounded enums or the installed node types. Error codes
+  are not labels (node/plugin-defined, open-ended).
+- Each `EngineMetrics` owns its registry (no process-global state). The
+  container's instance backs `/metrics` and `ExecutionService`. The runtime
+  takes one via `ExecutionRuntime(metrics=...)` and must share the
+  container's once the container constructs it (Phase 21/22).
+- Counters are per process. With workers (Phase 22) every process exposes
+  its own and Prometheus aggregates.
+- Not yet emitted: `queue_depth` (no queue before Phase 22), retries (the
+  runtime has no retries before Phase 23), `llm_tokens_total`/`llm_cost`
+  (Phases 14/15), `http_requests_total` (the `http_request` log line covers
+  requests for now).
 
 ----------
 

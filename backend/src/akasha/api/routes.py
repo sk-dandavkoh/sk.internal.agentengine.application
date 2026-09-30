@@ -3,12 +3,13 @@
 from typing import Any
 
 from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
 from akasha import __version__
 from akasha.api.projects import create_projects_router
 from akasha.api.triggers import create_triggers_router
+from akasha.observability.metrics import CONTENT_TYPE
 
 
 class HealthResponse(BaseModel):
@@ -22,7 +23,7 @@ class ReadyResponse(BaseModel):
 
 
 def create_operational_router() -> APIRouter:
-    """/health and /ready at the root (not under /api/v1)."""
+    """/health, /ready and /metrics at the root (not under /api/v1)."""
     router = APIRouter()
 
     @router.get("/health")
@@ -37,6 +38,13 @@ def create_operational_router() -> APIRouter:
             content = ReadyResponse(status="not_ready", failures=failures).model_dump()
             return JSONResponse(status_code=503, content=content)
         return ReadyResponse(status="ready", failures={})
+
+    @router.get("/metrics", include_in_schema=False)
+    async def metrics(request: Request) -> Response:
+        # Prometheus scrape target. Unauthenticated like /health until
+        # Phase 20; it carries counts and timings only, no ids or payloads.
+        content = request.app.state.container.metrics.render()
+        return Response(content=content, media_type=CONTENT_TYPE)
 
     return router
 
