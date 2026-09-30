@@ -39,6 +39,11 @@ class EventType(StrEnum):
     NODE_CANCELLED = "node.cancelled"
     NODE_EMITTED = "node.emitted"  # a node's own declared event (SDK)
     PROJECT_PUBLISHED = "project.published"
+    # Audit (architecture §67): packages carry project content across
+    # installations. ``project_version`` is the exported version (None for
+    # a draft export); an import creates a new, unpublished project.
+    PROJECT_EXPORTED = "project.exported"
+    PROJECT_IMPORTED = "project.imported"
 
 
 _ERROR = frozenset({"error_code", "error_kind"})
@@ -61,6 +66,8 @@ PAYLOAD_KEYS: Final[Mapping[EventType, frozenset[str]]] = {
     # ``name`` is one of the node definition's declared event names.
     EventType.NODE_EMITTED: frozenset({"name", "attempt"}),
     EventType.PROJECT_PUBLISHED: frozenset(),
+    EventType.PROJECT_EXPORTED: frozenset(),
+    EventType.PROJECT_IMPORTED: frozenset(),
 }
 
 type PayloadValue = str | int | None

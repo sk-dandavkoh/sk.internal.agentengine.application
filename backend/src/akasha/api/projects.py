@@ -9,10 +9,20 @@ the service stays HTTP-free and gains a principal argument then.
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Path, Query, Request, Response, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Path,
+    Query,
+    Request,
+    Response,
+    status,
+)
 
 from akasha.api.project_schemas import (
     CreateProjectRequest,
+    ImportProjectResponse,
     ProjectDetail,
     ProjectPage,
     ProjectVersionDetail,
@@ -22,6 +32,12 @@ from akasha.api.project_schemas import (
     ValidationResponse,
 )
 from akasha.api.schemas import ErrorResponse
+from akasha.application.packages import ProjectPackageService
+from akasha.application.project_package import (
+    MAX_PACKAGE_BYTES,
+    MEDIA_TYPE,
+    ProjectPackageTooLargeError,
+)
 from akasha.application.projects import MAX_PAGE_SIZE, ProjectService
 from akasha.errors import ConfigurationError
 
@@ -33,7 +49,34 @@ def _service(request: Request) -> ProjectService:
     return service
 
 
+def _packages(request: Request) -> ProjectPackageService:
+    service: ProjectPackageService | None = request.app.state.container.packages
+    if service is None:
+        raise ConfigurationError("Project persistence is not configured.")
+    return service
+
+
+async def _package_body(request: Request) -> bytes:
+    """The raw request body, read with a cap: an oversized upload is
+    rejected while streaming, before it is buffered whole."""
+    media_type = request.headers.get("content-type", "").split(";")[0].strip()
+    if media_type != MEDIA_TYPE:
+        raise HTTPException(
+            status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            f"A project package must be sent as {MEDIA_TYPE}.",
+        )
+    body = bytearray()
+    async for chunk in request.stream():
+        body += chunk
+        if len(body) > MAX_PACKAGE_BYTES:
+            raise ProjectPackageTooLargeError(
+                f"A project package must not exceed {MAX_PACKAGE_BYTES} bytes."
+            )
+    return bytes(body)
+
+
 Service = Annotated[ProjectService, Depends(_service)]
+Packages = Annotated[ProjectPackageService, Depends(_packages)]
 Offset = Annotated[int, Query(ge=0)]
 Limit = Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)]
 VersionNumber = Annotated[int, Path(ge=1)]
@@ -43,7 +86,7 @@ def create_projects_router() -> APIRouter:
     # Declared so the OpenAPI contract (and generated clients) show the real
     # error body instead of FastAPI's default validation schema.
     errors: dict[int | str, dict[str, Any]] = {
-        code: {"model": ErrorResponse} for code in (404, 409, 422, 500)
+        code: {"model": ErrorResponse} for code in (404, 409, 413, 415, 422, 500)
     }
     router = APIRouter(prefix="/projects", tags=["projects"], responses=errors)
 
@@ -51,6 +94,23 @@ def create_projects_router() -> APIRouter:
     async def create_project(body: CreateProjectRequest, svc: Service) -> ProjectDetail:
         project = await svc.create_project(body.name, description=body.description)
         return ProjectDetail.from_domain(project)
+
+    @router.post(
+        "/import",
+        status_code=status.HTTP_201_CREATED,
+        openapi_extra={
+            "requestBody": {
+                "required": True,
+                "content": {
+                    MEDIA_TYPE: {"schema": {"type": "string", "format": "binary"}}
+                },
+            }
+        },
+    )
+    async def import_project(
+        svc: Packages, body: Annotated[bytes, Depends(_package_body)]
+    ) -> ImportProjectResponse:
+        return ImportProjectResponse.from_domain(await svc.import_project(body))
 
     @router.get("")
     async def list_projects(
@@ -92,6 +152,30 @@ def create_projects_router() -> APIRouter:
         expected = body.expected_revision if body else None
         version = await svc.publish_project(project_id, expected_revision=expected)
         return ProjectVersionDetail.from_domain(version)
+
+    @router.get(
+        "/{project_id}/export",
+        response_class=Response,
+        responses={200: {"content": {MEDIA_TYPE: {}}}},
+    )
+    async def export_project(
+        project_id: str,
+        svc: Packages,
+        version: Annotated[int | None, Query(ge=1)] = None,
+    ) -> Response:
+        """The project package of published ``version``, or of the draft."""
+        data = await svc.export_project(project_id, version=version)
+        suffix = "draft" if version is None else f"v{version}"
+        return Response(
+            content=data,
+            media_type=MEDIA_TYPE,
+            # The id, not the name: user text never reaches a header.
+            headers={
+                "Content-Disposition": (
+                    f'attachment; filename="{project_id}-{suffix}.akasha.zip"'
+                )
+            },
+        )
 
     @router.get("/{project_id}/versions")
     async def list_versions(

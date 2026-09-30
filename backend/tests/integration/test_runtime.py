@@ -1292,3 +1292,115 @@ async def test_configured_retry_policy_is_refused_not_ignored(h: Harness) -> Non
     with pytest.raises(ConfigurationError):
         await h.runtime(catalog).run(execution.id)
     assert (await h.load(execution.id)).status is _E.QUEUED
+
+
+async def test_nul_in_node_output_or_error_never_crashes_the_run(h: Harness) -> None:
+    """PostgreSQL cannot store NUL characters. They used to abort the run
+    with a database error, leaving the execution unfinished. Outputs are
+    now stored as the usual unpersisted stub (the in-memory value still
+    propagates), and messages have NUL replaced."""
+
+    async def nul_out(ctx: NodeExecutionContext) -> Mapping[str, Any]:
+        return {"out": "a\0b"}
+
+    async def nul_error(ctx: NodeExecutionContext) -> Mapping[str, Any]:
+        raise NodeError("bad\0message", kind=NodeErrorKind.PERMANENT)
+
+    catalog = base_catalog(Probe())
+    catalog["test.nul_out"] = node_type("test.nul_out", nul_out, inputs=text_in())
+    catalog["test.nul_error"] = node_type("test.nul_error", nul_error, inputs=text_in())
+
+    graph, ids = build(
+        {
+            "A": ("test.emit", {"value": "a"}),
+            "B": ("test.nul_out", {}),
+            "C": ("test.append", {"suffix": "!"}),
+        },
+        ["A.out>B.text", "B.out>C.text"],
+    )
+    queued = await h.queue(catalog, graph)
+    await h.runtime(catalog).run(queued.id)
+    done = await h.load(queued.id)
+    assert done.status is ExecutionStatus.COMPLETED
+    # C ran on B's in-memory value; its output holds the NUL too.
+    for label in ("B", "C"):
+        assert done.node(ids[label]).status is NodeExecutionStatus.COMPLETED
+        assert done.node(ids[label]).outputs == {
+            "$unpersisted": "value not representable as JSON"
+        }
+
+    graph, ids = build(
+        {"A": ("test.emit", {"value": "a"}), "B": ("test.nul_error", {})},
+        ["A.out>B.text"],
+    )
+    queued = await h.queue(catalog, graph)
+    await h.runtime(catalog).run(queued.id)
+    done = await h.load(queued.id)
+    assert done.status is ExecutionStatus.FAILED
+    error = done.node(ids["B"]).error
+    assert error is not None and error.message == "bad�message"
+
+
+@pytest.mark.parametrize(
+    ("error", "code", "message", "kind"),
+    [
+        (
+            lambda: NodeError("", kind=NodeErrorKind.PERMANENT),
+            "NODE_EXECUTION_ERROR",
+            "node failed without a message",
+            NodeErrorKind.PERMANENT,
+        ),
+        (
+            lambda: NodeError("x", kind=NodeErrorKind.TRANSIENT, code="bad-code"),
+            "NODE_EXECUTION_ERROR",
+            "x",
+            NodeErrorKind.TRANSIENT,
+        ),
+        (
+            lambda: NodeError("x", kind="nonsense"),  # type: ignore[arg-type]  # the point
+            "NODE_EXECUTION_ERROR",
+            "x",
+            NodeErrorKind.PERMANENT,
+        ),
+    ],
+    ids=["blank-message", "malformed-code", "unknown-kind"],
+)
+async def test_malformed_node_errors_are_recorded_not_fatal(
+    h: Harness, error: Any, code: str, message: str, kind: NodeErrorKind
+) -> None:
+    """A (plugin) node's NodeError is untrusted input: one that violates
+    the ExecutionError rules used to abort the whole run."""
+
+    async def raise_it(ctx: NodeExecutionContext) -> Mapping[str, Any]:
+        raise error()
+
+    catalog = base_catalog(Probe())
+    catalog["test.bad"] = node_type("test.bad", raise_it, inputs=text_in())
+    graph, ids = build(
+        {"A": ("test.emit", {"value": "a"}), "B": ("test.bad", {})}, ["A.out>B.text"]
+    )
+    queued = await h.queue(catalog, graph)
+    await h.runtime(catalog).run(queued.id)
+    done = await h.load(queued.id)
+    assert done.status is ExecutionStatus.FAILED
+    recorded = done.node(ids["B"]).error
+    assert recorded is not None
+    assert (recorded.code, recorded.message, recorded.kind) == (code, message, kind)
+
+
+async def test_lone_surrogate_in_node_output_is_stored_as_a_stub(h: Harness) -> None:
+    async def surrogate(ctx: NodeExecutionContext) -> Mapping[str, Any]:
+        return {"out": "half a pair: \ud800"}
+
+    catalog = base_catalog(Probe())
+    catalog["test.sur"] = node_type("test.sur", surrogate, inputs=text_in())
+    graph, ids = build(
+        {"A": ("test.emit", {"value": "a"}), "B": ("test.sur", {})}, ["A.out>B.text"]
+    )
+    queued = await h.queue(catalog, graph)
+    await h.runtime(catalog).run(queued.id)
+    done = await h.load(queued.id)
+    assert done.status is ExecutionStatus.COMPLETED
+    assert done.node(ids["B"]).outputs == {
+        "$unpersisted": "value not representable as JSON"
+    }

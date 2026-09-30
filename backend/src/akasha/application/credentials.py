@@ -12,6 +12,7 @@ Boundaries:
 """
 
 import logging
+from dataclasses import replace
 
 from akasha.application.persistence import UnitOfWork
 from akasha.application.projects import Page, UowFactory, check_page, to_page
@@ -95,7 +96,8 @@ class CredentialService:
         async with self._uow() as uow:
             credential = await _load(uow, name)
             if description is not None:
-                credential.description = description
+                # replace() re-runs the domain validation of the new value.
+                credential = replace(credential, description=description)
             credential.touch()
             ciphertext = None if value is None else self._encrypt(name, value)
             if not await uow.credentials.update(credential, ciphertext):

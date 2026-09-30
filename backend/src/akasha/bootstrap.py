@@ -15,6 +15,7 @@ from akasha.application.ai import AIService, LLMProvider
 from akasha.application.credentials import CredentialService
 from akasha.application.events import EventPublisher
 from akasha.application.executions import ExecutionService
+from akasha.application.packages import ProjectPackageService
 from akasha.application.projects import ProjectService
 from akasha.application.triggers import TriggerRegistry, TriggerService
 from akasha.config import Settings
@@ -51,6 +52,7 @@ class Container:
     plugins: PluginRegistry | None = None
     database: Database | None = None
     projects: ProjectService | None = None
+    packages: ProjectPackageService | None = None
     executions: ExecutionService | None = None
     triggers: TriggerService | None = None
     # Needs the database and AKASHA_CREDENTIAL_ENCRYPTION_KEY. The runtime
@@ -123,11 +125,10 @@ def create_container(settings: Settings) -> Container:
     # wiring), so publish-time and run-time validation agree.
     events = EventPublisher()
     metrics = EngineMetrics()
-    projects = ProjectService(
-        uow,
-        nodes.definitions,
-        events,
-        plugins=MappingProxyType({}) if plugins is None else plugins.versions,
+    plugin_versions = MappingProxyType({}) if plugins is None else plugins.versions
+    projects = ProjectService(uow, nodes.definitions, events, plugins=plugin_versions)
+    packages = ProjectPackageService(
+        uow, nodes.definitions, events, plugins=plugin_versions
     )
     executions = ExecutionService(uow, events, metrics)
     triggers = TriggerService(executions)
@@ -147,6 +148,7 @@ def create_container(settings: Settings) -> Container:
         metrics=metrics,
         database=database,
         projects=projects,
+        packages=packages,
         executions=executions,
         triggers=triggers,
         credentials=None if cipher is None else CredentialService(uow, cipher),

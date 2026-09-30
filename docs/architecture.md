@@ -1090,7 +1090,8 @@ Implementation (Phase 11):
 - The `Execution` aggregate records its own lifecycle events inside the
   transition methods (`pending_events` / `pull_events`); no caller can
   change state without the event. `project.published` is recorded by
-  `ProjectService.publish_project`.
+  `ProjectService.publish_project`; `project.exported` and
+  `project.imported` (audit, Phase 18) by `ProjectPackageService`.
 - Persistence: `EventRepository` (`events` table, append-only, idempotent
   on `event_id`). Events are appended in the *same transaction* as the
   state change they describe: never state without events, never events
@@ -2366,8 +2367,9 @@ Implementation (Phase 08, migration `0003_executions`):
 - `node_executions`: one row per node of the pinned graph (unique
   `(execution_id, node_id)`, `CASCADE` from the execution) with status,
   attempt, failures (JSONB), outputs (JSONB) and timestamps.
-- Outputs are stored as JSON; values JSON cannot represent (bytes, NaN) are
-  stored as a `{"$unpersisted": ...}` stub. Size limits (Phase 24) and
+- Outputs are stored as JSON; values PostgreSQL cannot store (bytes, NaN,
+  NUL characters, unpaired surrogates) are stored as a
+  `{"$unpersisted": ...}` stub. Size limits (Phase 24) and
   redaction (Phase 13) are not applied yet. Inputs are not stored; they are
   derivable from upstream outputs and the pinned graph.
 - Loading takes a share lock on the execution row, so the execution and
@@ -2380,6 +2382,20 @@ Phase 09 additions (migration `0004_execution_input`):
   once at creation. Rows from before 0004 read as `{}`.
 - `metadata.node_versions`: node type → version resolved by the runtime at
   start (reproducibility, AGENTS §73). Absent in older rows (read as `{}`).
+
+Storable values (added in Phase 18): PostgreSQL cannot store NaN/Infinity
+in JSONB, NUL characters, or unpaired UTF-16 surrogates in either JSONB or
+text. JSON parsing accepts all of them. `domain.primitives.is_storable` is
+the one rule, applied where each kind of data is written:
+
+- User data is rejected with 422 `DOMAIN_VALIDATION_ERROR`: project
+  create/PUT (`Project.replace_draft` names the locations), credential
+  descriptions, execution input and package import.
+- Node data is recorded, never fatal: node outputs become the stub, and
+  error messages have the characters replaced (`storable_text`).
+- `ExecutionError.from_node_error` also falls back to generic values for a
+  node error with a blank message, a malformed code or an unknown kind. A
+  (plugin) node therefore cannot abort a run with a malformed error.
 
 ----------
 
@@ -2473,6 +2489,44 @@ The manifest should contain information such as:
 ```
 
 The exact schema may evolve.
+
+Implementation (Phase 18; the format guide is `docs/project-format.md`):
+
+- The package is a ZIP archive holding `manifest.json`, `project.json` and the
+  project files under `docs/`, `prompts/`, `resources/` and `assets/`. There
+  is no `nodes/` directory: node configuration (prompt templates included) is
+  part of the graph in `project.json`. Plugin code is never packaged;
+  plugins are installed separately (§36).
+- The manifest carries `format_version`, `project_schema_version`,
+  `engine_version`, `engine_compatibility`, `source_project_version` and
+  `requires`. `requires` lists the node types used, with their versions at
+  export, and the credential names referenced. The manifest also holds an
+  inventory with a SHA-256 for every entry.
+- Compatibility checks:
+  - the exporter writes `engine_compatibility: ">=MAJOR.MINOR.0"` of its
+    own release line, and the importer checks it against its own version;
+  - node types are checked with SemVer (same major, at least the exported
+    version);
+  - plugin needs are declared project dependencies. The previous example's
+    `project_version` and `dependencies` became `source_project_version`
+    and `requires`.
+- **Project files** are a new part of the project: `ProjectDraft.files`,
+  path → bytes, snapshotted into `ProjectVersion.files`. They are stored as
+  `{path: base64}` JSONB (migration `0007_project_files`) and capped at 100
+  files, 1 MiB each and 4 MiB in total. Nothing in the runtime reads them
+  yet. The draft API keeps them unchanged; only import sets them.
+- `application/project_package.py` holds the format: strict Pydantic
+  schemas plus `read_package` / `write_package`. Reading is the trust
+  boundary, and nothing is extracted to disk. `application/packages.py`
+  holds the use cases (`ProjectPackageService`):
+  - export is deterministic, and it refuses (never strips) secret material;
+  - import is all-or-nothing and creates a new, unpublished project;
+  - import rejects unsupported versions and unmet requirements;
+  - import reports other graph issues and the credentials that are missing.
+- API: `GET /api/v1/projects/{id}/export[?version=N]` and
+  `POST /api/v1/projects/import` (an `application/zip` body, max 16 MiB,
+  capped while streaming). Both live on the projects router, so the Phase 20
+  router-level authentication covers them.
 
 ----------
 

@@ -5,18 +5,21 @@
   public internet (AGENTS §30/§124).
 """
 
+import functools
 import json
 import logging
+import os
 import threading
 import time
 from collections.abc import Callable, Coroutine, Iterator, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import astuple, dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
+import pytest
 from testcontainers.core.container import DockerContainer
 from testcontainers.core.docker_client import DockerClient
 
@@ -27,6 +30,7 @@ from akasha.domain.node import (
     NodeResult,
 )
 from akasha.domain.primitives import new_id
+from akasha.domain.project import ProjectDraft
 from akasha.observability.logging import JsonFormatter
 
 RunNode = Callable[..., Coroutine[Any, Any, NodeResult]]
@@ -236,18 +240,37 @@ def serve_http() -> Iterator[LocalHttpServer]:
         thread.join(timeout=5)
 
 
+# ponytail: one generous attempt; a daemon still asleep after 30 s is
+# treated as absent (or fails the run under AKASHA_TESTS_REQUIRE_DOCKER).
+_DOCKER_PING_TIMEOUT_S = 30
+
+
+@functools.cache
 def docker_available() -> bool:
     """A missing daemon must skip, not hang (backend/AGENTS.md §117: keep the
     real integration test, report the infrastructure limitation).
 
     Asks the daemon itself through the same client Testcontainers uses, so
     unix sockets, Windows named pipes and DOCKER_HOST all behave alike.
+
+    Decided once per session: with a 2 s probe per caller, a daemon waking
+    up (Docker Desktop's resource saver) skipped some suites and ran others
+    in the same run. An absent daemon still fails fast (connection refused).
+
+    ``AKASHA_TESTS_REQUIRE_DOCKER=1`` (set it in CI) fails instead of
+    skipping, so a run without its integration suites cannot pass unnoticed.
     """
     try:
-        DockerClient(timeout=2).client.ping()
-    except Exception:
+        DockerClient(timeout=_DOCKER_PING_TIMEOUT_S).client.ping()
+    except Exception as exc:
         # Any failure to reach the daemon (missing client config, refused
-        # connection, timeout) means exactly one thing here: skip.
+        # connection, timeout) means exactly one thing here: no Docker.
+        if os.environ.get("AKASHA_TESTS_REQUIRE_DOCKER") == "1":
+            pytest.fail(
+                "AKASHA_TESTS_REQUIRE_DOCKER=1 but the Docker daemon is"
+                f" unreachable: {type(exc).__name__}",
+                pytrace=False,
+            )
         return False
     return True
 
@@ -303,3 +326,23 @@ def run_mailpit(*, auth: bool = True) -> Iterator[Mailpit]:
                 raise TimeoutError("Mailpit did not become ready")
             time.sleep(0.2)
         yield Mailpit(host, int(container.get_exposed_port(1025)), api_url)
+
+
+def project_semantics(name: str, draft: ProjectDraft) -> dict[str, Any]:
+    """Everything that makes a project *this* project, ids included; what
+    an installation assigns (project id, revision, timestamps) is not."""
+    return {
+        "name": name,
+        "description": draft.description,
+        "nodes": sorted(
+            (n.id, n.node_type, json.dumps(n.config, sort_keys=True), n.label)
+            for n in draft.graph.nodes.values()
+        ),
+        "edges": sorted(astuple(e) for e in draft.graph.edges),
+        "triggers": [
+            (t.id, t.trigger_type, json.dumps(t.config, sort_keys=True), t.enabled)
+            for t in draft.triggers
+        ],
+        "dependencies": list(draft.dependencies),
+        "files": dict(draft.files),
+    }

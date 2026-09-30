@@ -44,7 +44,8 @@ uv run pytest
 `tests/integration/` and the SMTP node tests need a running Docker daemon
 (Testcontainers starts throwaway `postgres:17.2` and `axllent/mailpit:v1.21.8`;
 unix socket, Windows named pipe and `DOCKER_HOST` all work). Without Docker
-those tests are skipped, not faked. HTTP and web-search tests use an
+those tests are skipped, not faked. Set `AKASHA_TESTS_REQUIRE_DOCKER=1` (CI)
+to make an unreachable daemon fail the run instead of skipping them. HTTP and web-search tests use an
 in-process loopback server; no test touches the public internet.
 
 ## Project API (`/api/v1/projects`)

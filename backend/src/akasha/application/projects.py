@@ -12,7 +12,7 @@ service.
 
 import logging
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 
 from akasha.application.events import EventPublisher
@@ -144,7 +144,7 @@ class ProjectService:
 
     async def get_project(self, project_id: str) -> Project:
         async with self._uow() as uow:
-            return await _load(uow, project_id)
+            return await load_project(uow, project_id)
 
     async def list_projects(self, *, offset: int = 0, limit: int = 50) -> Page[Project]:
         check_page(offset, limit)
@@ -161,11 +161,15 @@ class ProjectService:
         draft: ProjectDraft,
     ) -> Project:
         """Replace name and draft. Accepts semantically invalid drafts — a
-        draft may be work in progress; only publish demands validity."""
+        draft may be work in progress; only publish demands validity.
+
+        Project files are kept, whatever ``draft.files`` holds: the draft
+        API does not carry them, and only imports set them (Phase 18).
+        """
         async with self._uow() as uow:
-            project = await _load(uow, project_id)
+            project = await load_project(uow, project_id)
             _check_revision(project, expected_revision)
-            project.replace_draft(draft, name=name)
+            project.replace_draft(replace(draft, files=project.draft.files), name=name)
             await uow.projects.save(project)
             await uow.commit()
         _log("project_draft_updated", project)
@@ -173,7 +177,7 @@ class ProjectService:
 
     async def delete_project(self, project_id: str) -> None:
         async with self._uow() as uow:
-            project = await _load(uow, project_id)
+            project = await load_project(uow, project_id)
             if project.current_version > 0:
                 raise ProjectHasVersionsError(
                     "A project with published versions cannot be deleted.",
@@ -203,7 +207,7 @@ class ProjectService:
         either both commit or neither does.
         """
         async with self._uow() as uow:
-            project = await _load(uow, project_id)
+            project = await load_project(uow, project_id)
             if expected_revision is not None:
                 _check_revision(project, expected_revision)
             result = project.draft.validate(self._definitions, self._plugins)
@@ -239,12 +243,12 @@ class ProjectService:
     ) -> Page[ProjectVersion]:
         check_page(offset, limit)
         async with self._uow() as uow:
-            await _load(uow, project_id)
+            await load_project(uow, project_id)
             rows = await uow.versions.list(project_id, offset=offset, limit=limit + 1)
         return to_page(rows, offset, limit)
 
 
-async def _load(uow: UnitOfWork, project_id: str) -> Project:
+async def load_project(uow: UnitOfWork, project_id: str) -> Project:
     project = await uow.projects.get(project_id)
     if project is None:
         raise ProjectNotFoundError(

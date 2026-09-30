@@ -58,9 +58,8 @@ async def database(db_url: str) -> AsyncIterator[Database]:
         await db.dispose()
 
 
-@pytest.fixture
-async def clean_db(database: Database) -> None:
-    """Guaranteed-empty tables per test; no inter-test state leakage (§54)."""
+async def truncate_all(database: Database) -> None:
+    """Empty every table: a fresh installation on the migrated schema."""
     async with database.engine.begin() as conn:
         for table in (
             "events",
@@ -71,6 +70,12 @@ async def clean_db(database: Database) -> None:
             "credentials",
         ):
             await conn.execute(text(f"TRUNCATE {table} CASCADE"))
+
+
+@pytest.fixture
+async def clean_db(database: Database) -> None:
+    """Guaranteed-empty tables per test; no inter-test state leakage (§54)."""
+    await truncate_all(database)
 
 
 @pytest.fixture

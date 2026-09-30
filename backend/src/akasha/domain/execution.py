@@ -27,7 +27,6 @@ Rehydrating an execution records nothing. Not evented: enqueue (folded into
 path drives the last four yet (Phase 23).
 """
 
-import json
 import re
 from collections.abc import Mapping
 from copy import deepcopy
@@ -40,7 +39,14 @@ from typing import Any, Final
 from akasha import __version__
 from akasha.domain.event import Event, EventType, PayloadValue
 from akasha.domain.node import RETRYABLE_ERROR_KINDS, NodeError, NodeErrorKind
-from akasha.domain.primitives import Entity, new_id, utcnow, validate_id
+from akasha.domain.primitives import (
+    Entity,
+    is_storable,
+    new_id,
+    storable_text,
+    utcnow,
+    validate_id,
+)
 from akasha.domain.project import ProjectVersion
 from akasha.domain.trigger import TriggerType
 from akasha.errors import DomainValidationError, InvalidStateTransitionError
@@ -151,17 +157,6 @@ def _apply[S: StrEnum](
 _CODE_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
 
 
-def _is_json(value: Any) -> bool:
-    """JSON-serializable without NaN/Infinity or NUL characters — the values
-    PostgreSQL JSONB cannot store. (The substring test also rejects the
-    literal six-character text ``\\u0000``; an accepted false positive.)"""
-    try:
-        text = json.dumps(value, allow_nan=False)
-    except (TypeError, ValueError):
-        return False
-    return "\\u0000" not in text
-
-
 @dataclass(frozen=True)
 class ExecutionError:
     """Persisted, structured failure record (not an exception).
@@ -185,8 +180,15 @@ class ExecutionError:
         object.__setattr__(self, "kind", NodeErrorKind(self.kind))
         if self.node_id is not None:
             validate_id(self.node_id)
-        # Defensive copy: callers must not mutate a recorded error.
-        object.__setattr__(self, "details", dict(self.details))
+        # Unstorable characters are replaced, not rejected: messages and
+        # details are for humans, and a failing node must still be able to
+        # record its failure. The dict is also a defensive copy.
+        object.__setattr__(self, "message", storable_text(self.message))
+        object.__setattr__(
+            self,
+            "details",
+            {storable_text(k): storable_text(v) for k, v in self.details.items()},
+        )
 
     @property
     def retryable(self) -> bool:
@@ -194,12 +196,22 @@ class ExecutionError:
 
     @classmethod
     def from_node_error(cls, error: NodeError, *, node_id: str) -> "ExecutionError":
+        """A node's error is untrusted input (plugins included): whatever
+        breaks the ExecutionError rules falls back to the generic values,
+        so the failure is recorded instead of aborting the run."""
+        try:
+            kind = NodeErrorKind(error.kind)
+        except ValueError:
+            kind = NodeErrorKind.PERMANENT
+        code = error.code if _CODE_RE.match(str(error.code)) else NodeError.code
         return cls(
-            code=error.code,
-            message=error.message,
-            kind=error.kind,
+            code=code,
+            message=error.message
+            if error.message.strip()
+            else "node failed without a message",
+            kind=kind,
             node_id=node_id,
-            details={k: str(v) for k, v in error.details.items()},
+            details={str(k): str(v) for k, v in error.details.items()},
         )
 
     @classmethod
@@ -472,7 +484,7 @@ class Execution(Entity):
         self.status = ExecutionStatus(self.status)
         if self.revision < 0:
             raise DomainValidationError("revision must be >= 0")
-        if not isinstance(self.input, dict) or not _is_json(self.input):
+        if not isinstance(self.input, dict) or not is_storable(self.input):
             raise DomainValidationError("execution input must be a JSON object")
         graph_nodes = self.project_version.graph.nodes
         for key, ne in self.node_executions.items():

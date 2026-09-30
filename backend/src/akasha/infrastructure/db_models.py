@@ -41,6 +41,8 @@ projects = Table(
     Column("draft_graph", JSONB_VARIANT, nullable=False),
     Column("draft_triggers", JSONB_VARIANT, nullable=False),
     Column("draft_dependencies", JSONB_VARIANT, nullable=False),
+    # {path: base64 content}; see domain.project.validate_project_files.
+    Column("draft_files", JSONB_VARIANT, nullable=False, server_default="{}"),
     # Optimistic-concurrency token; every successful write increments it.
     Column("revision", Integer, nullable=False, server_default="1"),
     Column("current_version", Integer, nullable=False, server_default="0"),
@@ -69,6 +71,7 @@ project_versions = Table(
     Column("dependencies", JSONB_VARIANT, nullable=False),
     Column("description", String, nullable=False, server_default=""),
     Column("published_at", DateTime(timezone=True), nullable=False),
+    Column("files", JSONB_VARIANT, nullable=False, server_default="{}"),
     Index("uq_project_versions_project_version", "project_id", "version", unique=True),
     Index("ix_project_versions_project_id", "project_id"),
 )

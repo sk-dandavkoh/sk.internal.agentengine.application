@@ -3,6 +3,7 @@
 Pure stdlib on purpose — the domain layer stays infrastructure-free.
 """
 
+import json
 import operator
 import re
 import uuid
@@ -88,10 +89,43 @@ def validate_id(value: str) -> str:
 
 
 def validate_name(value: str) -> str:
-    """Non-blank human-readable name."""
+    """Non-blank human-readable name that can be stored."""
     if not value.strip():
         raise DomainValidationError("name must not be blank")
+    return validate_text(value, "name")
+
+
+def validate_text(value: str, label: str) -> str:
+    """Free text that can be stored (names, descriptions)."""
+    if not is_storable(value):
+        raise DomainValidationError(
+            f"{label} must not contain NUL characters or unpaired surrogates"
+        )
     return value
+
+
+def is_storable(value: object) -> bool:
+    """JSON-serializable without NaN/Infinity, NUL characters or unpaired
+    UTF-16 surrogates: the values PostgreSQL JSONB and text columns cannot
+    hold. Every write gate for user or node data checks this, so bad input
+    is a validation error, not a database error. (The substring test also
+    rejects the literal six-character text ``\\u0000``; an accepted false
+    positive.)"""
+    try:
+        text = json.dumps(value, allow_nan=False, ensure_ascii=False)
+        text.encode("utf-8")  # a lone surrogate has no UTF-8 encoding
+    except (TypeError, ValueError, RecursionError):  # UnicodeError included
+        return False
+    return "\\u0000" not in text  # json escapes NUL even without ensure_ascii
+
+
+def storable_text(text: str) -> str:
+    """``text`` with NUL and unpaired surrogates replaced by U+FFFD: for
+    human-readable messages that must be recorded rather than rejected."""
+    return _UNSTORABLE_CHARS.sub("\ufffd", text)
+
+
+_UNSTORABLE_CHARS = re.compile("[\x00\ud800-\udfff]")
 
 
 @dataclass(eq=False)

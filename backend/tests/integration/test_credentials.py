@@ -572,3 +572,21 @@ async def test_smtp_authenticates_with_a_stored_credential(
     assert execution.status is ExecutionStatus.COMPLETED, execution.error
     assert [m["Subject"] for m in auth_mailpit.messages()] == ["hi"]
     assert password not in await dump_database(database)
+
+
+async def test_nul_in_a_description_is_a_validation_error_not_a_500(
+    api: httpx.AsyncClient,
+) -> None:
+    create = await api.post(
+        URL, json={"name": "crm", "kind": "api_key", "value": "v", "description": "a\0"}
+    )
+    assert (create.status_code, create.json()["code"]) == (
+        422,
+        "DOMAIN_VALIDATION_ERROR",
+    )
+    assert (
+        await api.post(URL, json={"name": "crm", "kind": "api_key", "value": "v"})
+    ).status_code == 201
+    patch = await api.patch(f"{URL}/crm", json={"description": "b\0"})
+    assert (patch.status_code, patch.json()["code"]) == (422, "DOMAIN_VALIDATION_ERROR")
+    assert (await api.get(f"{URL}/crm")).json()["description"] == ""

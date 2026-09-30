@@ -9,6 +9,7 @@ published versions. No mocks for persistence behavior (backend/AGENTS.md
 import asyncio
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -34,7 +35,7 @@ UowFactory = Callable[[], AbstractAsyncContextManager[SqlAlchemyUnitOfWork]]
 pytestmark = pytest.mark.usefixtures("clean_db")
 
 _BACKENDS_DIR = Path(__file__).resolve().parents[2]
-_HEAD = "0006_credentials"
+_HEAD = "0007_project_files"
 
 
 def _alembic_command(verb: str, db_url: str, target: str) -> None:
@@ -512,6 +513,75 @@ async def test_0002_upgrade_backfills_existing_projects(db_url: str) -> None:
                 await ctx.projects.save(old)
                 await ctx.commit()
             assert old.revision == 2
+        finally:
+            await db.dispose()
+    finally:
+        async with admin.engine.connect() as conn:
+            await conn.execution_options(isolation_level="AUTOCOMMIT")
+            await conn.execute(text(f"DROP DATABASE IF EXISTS {scratch}"))
+        await admin.dispose()
+
+
+async def test_0007_upgrade_gives_existing_projects_and_versions_no_files(
+    db_url: str,
+) -> None:
+    """Rows written under 0006 load after 0007 with empty files, and the
+    upgraded row can store files and publish a version carrying them."""
+    admin = Database(normalize_async_url(db_url))
+    scratch = "akasha_migration_0007"
+    try:
+        async with admin.engine.connect() as conn:
+            await conn.execution_options(isolation_level="AUTOCOMMIT")
+            await conn.execute(text(f"DROP DATABASE IF EXISTS {scratch}"))
+            await conn.execute(text(f"CREATE DATABASE {scratch}"))
+        scratch_url = f"{db_url.rpartition('/')[0]}/{scratch}"
+        await asyncio.to_thread(
+            _alembic_command, "upgrade", scratch_url, "0006_credentials"
+        )
+        pid = new_id("proj")
+        db = Database(normalize_async_url(scratch_url))
+        try:
+            async with db.engine.begin() as conn:
+                await conn.execute(
+                    text(
+                        "INSERT INTO projects (id, name, status, draft_graph,"
+                        " draft_triggers, draft_dependencies, current_version,"
+                        " created_at, updated_at) VALUES (:id, 'p', 'published',"
+                        " '{\"nodes\": [], \"edges\": []}', '[]', '[]', 1,"
+                        " now(), now())"
+                    ),
+                    {"id": pid},
+                )
+                await conn.execute(
+                    text(
+                        "INSERT INTO project_versions (id, project_id, version,"
+                        " schema_version, graph, triggers, dependencies,"
+                        " published_at) VALUES (:id, :pid, 1, 1,"
+                        " '{\"nodes\": [], \"edges\": []}', '[]', '[]', now())"
+                    ),
+                    {"id": new_id("pver"), "pid": pid},
+                )
+            await asyncio.to_thread(_alembic_command, "upgrade", scratch_url, "head")
+
+            async with SqlAlchemyUnitOfWork(db) as ctx:
+                project = await ctx.projects.get(pid)
+                old_version = await ctx.versions.get(pid, 1)
+            assert project is not None and old_version is not None
+            assert project.draft.files == {} and old_version.files == {}
+
+            project.replace_draft(
+                replace(project.draft, files={"docs/a.md": b"after upgrade"}),
+                name="p",
+            )
+            snapshot = project.publish_draft()
+            async with SqlAlchemyUnitOfWork(db) as ctx:
+                await ctx.projects.save(project)
+                await ctx.versions.save(pid, snapshot)
+                await ctx.commit()
+            async with SqlAlchemyUnitOfWork(db) as ctx:
+                stored = await ctx.versions.get(pid, 2)
+            assert stored is not None
+            assert stored.files == {"docs/a.md": b"after upgrade"}
         finally:
             await db.dispose()
     finally:

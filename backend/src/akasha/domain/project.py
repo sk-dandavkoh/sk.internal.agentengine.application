@@ -6,6 +6,7 @@ ProjectVersion; afterwards no draft mutation can reach the version
 monotonically increasing and unique per project.
 """
 
+import re
 from collections.abc import Iterable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -24,16 +25,37 @@ from akasha.domain.node import NodeDefinition
 from akasha.domain.primitives import (
     Entity,
     Timestamps,
+    is_storable,
     new_id,
     utcnow,
     validate_id,
     validate_name,
+    validate_text,
     version_satisfies,
 )
 from akasha.domain.trigger import Trigger, schedule_problem
 from akasha.errors import DomainValidationError
+from akasha.security.redaction import redact_text
 
-_SCHEMA_VERSION = 1  # project structure schema; bumped when the format changes
+# Project structure schema; bumped when the format changes. Project packages
+# (Phase 18) carry it, so an importer can reject structures it cannot read.
+PROJECT_SCHEMA_VERSION = 1
+
+# Project files: documentation, prompt templates, resources and assets that
+# belong to a project and travel with it in project packages. Stored inline
+# with the draft and snapshotted into every version.
+# ponytail: inline JSONB storage, hence the small caps; move file content to
+# artifact storage if projects need larger or more files.
+PROJECT_FILE_ROOTS = ("docs", "prompts", "resources", "assets")
+MAX_PROJECT_FILES = 100
+MAX_PROJECT_FILE_BYTES = 1024 * 1024
+MAX_PROJECT_FILES_TOTAL_BYTES = 4 * 1024 * 1024
+# "<root>/<segment>[/<segment>...]": every segment starts with a letter or
+# digit, so "." / ".." / hidden files and absolute or backslash paths can
+# never be expressed.
+_FILE_PATH_RE = re.compile(
+    rf"^(?:{'|'.join(PROJECT_FILE_ROOTS)})(?:/[A-Za-z0-9][A-Za-z0-9._-]{{0,99}}){{1,8}}$"
+)
 
 
 class ProjectStatus(StrEnum):
@@ -113,6 +135,98 @@ def validate_dependencies(
     return tuple(issues)
 
 
+def is_project_file_path(path: str) -> bool:
+    return _FILE_PATH_RE.match(path) is not None
+
+
+def validate_project_files(files: Mapping[str, bytes]) -> None:
+    """Paths and size limits of project files (construction rule: files
+    arrive only through imports, which reject whole packages)."""
+    if len(files) > MAX_PROJECT_FILES:
+        raise DomainValidationError(
+            f"a project holds at most {MAX_PROJECT_FILES} files"
+        )
+    total = 0
+    for path, content in files.items():
+        if not isinstance(path, str) or not is_project_file_path(path):
+            raise DomainValidationError(
+                "invalid project file path",
+                details={"path": str(path)[:300]},
+            )
+        if not isinstance(content, bytes):
+            raise DomainValidationError(
+                "project file content must be bytes", details={"path": path}
+            )
+        if len(content) > MAX_PROJECT_FILE_BYTES:
+            raise DomainValidationError(
+                f"project file exceeds {MAX_PROJECT_FILE_BYTES} bytes",
+                details={"path": path},
+            )
+        total += len(content)
+    if total > MAX_PROJECT_FILES_TOTAL_BYTES:
+        raise DomainValidationError(
+            f"project files exceed {MAX_PROJECT_FILES_TOTAL_BYTES} bytes in total"
+        )
+
+
+def plaintext_secret_locations(
+    graph: Graph, triggers: Iterable[Trigger], files: Mapping[str, bytes]
+) -> list[str]:
+    """Where (never what) secret material sits in project content.
+
+    Configs follow ``plaintext_secret_paths``. Text files must not contain
+    credential-shaped strings; binary files cannot be inspected and are the
+    author's responsibility.
+    """
+    leaks = [
+        f"nodes.{node_id}.config{path}"
+        for node_id in sorted(graph.nodes)
+        for path in plaintext_secret_paths(graph.nodes[node_id].config)
+    ] + [
+        f"triggers.{trigger.id}.config{path}"
+        for trigger in triggers
+        for path in plaintext_secret_paths(trigger.config)
+    ]
+    for path in sorted(files):
+        try:
+            text = files[path].decode("utf-8")
+        except UnicodeDecodeError:
+            continue
+        if redact_text(text) != text:
+            leaks.append(f"files.{path}")
+    return leaks
+
+
+def unstorable_locations(draft: "ProjectDraft") -> list[str]:
+    """Where draft content holds values PostgreSQL cannot store (NaN,
+    Infinity, NUL characters, unpaired surrogates; see ``is_storable``).
+    Locations only."""
+    found = [] if is_storable(draft.description) else ["description"]
+    found += [
+        f"nodes.{node_id}"
+        for node_id in sorted(draft.graph.nodes)
+        if not is_storable(
+            [
+                draft.graph.nodes[node_id].node_type,
+                draft.graph.nodes[node_id].label,
+                draft.graph.nodes[node_id].config,
+            ]
+        )
+    ]
+    found += [
+        f"edges[{i}]"
+        for i, e in enumerate(draft.graph.edges)
+        if not is_storable([e.source_port, e.target_port])
+    ]
+    found += [f"triggers.{t.id}" for t in draft.triggers if not is_storable(t.config)]
+    found += [
+        f"dependencies[{i}]"
+        for i, d in enumerate(draft.dependencies)
+        if not is_storable([d.name, d.version_constraint])
+    ]
+    return found
+
+
 def validate_triggers(triggers: Iterable[Trigger]) -> tuple[ValidationIssue, ...]:
     """Trigger rules that publishing requires.
 
@@ -166,6 +280,8 @@ class ProjectDraft:
     triggers: list[Trigger] = field(default_factory=list)
     dependencies: list[Dependency] = field(default_factory=list)
     description: str = ""
+    # path → content; see ``validate_project_files``.
+    files: dict[str, bytes] = field(default_factory=dict)
 
     def validate(
         self,
@@ -193,11 +309,12 @@ class ProjectDraft:
         return ProjectVersion(
             id=new_id("pver"),
             version=version,
-            schema_version=_SCHEMA_VERSION,
+            schema_version=PROJECT_SCHEMA_VERSION,
             graph=deepcopy(self.graph),
             triggers=tuple(deepcopy(t) for t in self.triggers),
             dependencies=tuple(self.dependencies),
             description=self.description,
+            files=dict(self.files),  # bytes are immutable; the dict is not
             published_at=published_at or utcnow(),
         )
 
@@ -214,6 +331,7 @@ class ProjectVersion:
     dependencies: tuple[Dependency, ...] = ()
     description: str = ""
     published_at: datetime = field(default_factory=utcnow)
+    files: Mapping[str, bytes] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         validate_id(self.id)
@@ -261,6 +379,7 @@ class Project(Entity):
 
     @classmethod
     def create(cls, name: str, *, description: str = "") -> "Project":
+        validate_text(description, "description")
         return cls(
             id=new_id("proj"), name=name, draft=ProjectDraft(description=description)
         )
@@ -269,22 +388,21 @@ class Project(Entity):
         """Replace the editable state wholesale (autosave semantics).
 
         Never touches published versions or the version counter. Rejects
-        secret values in node/trigger config (only credential references
-        may be stored); the error names locations, never values.
+        secret values in node/trigger config and text files (only credential
+        references may be stored); the error names locations, never values.
         """
         validate_name(name)
-        leaks = [
-            f"nodes.{node_id}.config{path}"
-            for node_id in sorted(draft.graph.nodes)
-            for path in plaintext_secret_paths(draft.graph.nodes[node_id].config)
-        ] + [
-            f"triggers.{trigger.id}.config{path}"
-            for trigger in draft.triggers
-            for path in plaintext_secret_paths(trigger.config)
-        ]
+        if unstorable := unstorable_locations(draft):
+            raise DomainValidationError(
+                "Project content must not contain NaN, Infinity or NUL characters,"
+                " or unpaired surrogates.",
+                details={"paths": unstorable},
+            )
+        validate_project_files(draft.files)
+        leaks = plaintext_secret_locations(draft.graph, draft.triggers, draft.files)
         if leaks:
             raise PlaintextSecretError(
-                "Project configuration must reference credentials"
+                "Project configuration and files must reference credentials"
                 " (credential:<name>) instead of containing secret values.",
                 details={"paths": leaks},
             )

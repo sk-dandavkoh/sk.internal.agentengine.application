@@ -5,6 +5,7 @@ App → router → ProjectService → Unit of Work → PostgreSQL; nothing mocke
 session event loop the database engine is bound to.
 """
 
+import json
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -448,3 +449,73 @@ async def test_openapi_documents_project_endpoints(api: httpx.AsyncClient) -> No
     for status in ("404", "409", "422", "500"):
         schema = responses[status]["content"]["application/json"]["schema"]
         assert schema == {"$ref": "#/components/schemas/ErrorResponse"}
+
+
+# JSON the HTTP layer accepts but PostgreSQL cannot store: each used to reach
+# the database and surface as a 500.
+@pytest.mark.parametrize(
+    ("raw", "path_prefix"),
+    [
+        ('{"prefix": NaN}', "nodes."),
+        ('{"prefix": Infinity}', "nodes."),
+        ('{"prefix": -Infinity}', "nodes."),
+        ('{"prefix": 1e999}', "nodes."),
+        ('{"prefix": "a\\u0000b"}', "nodes."),
+        ('{"pre\\u0000fix": ">"}', "nodes."),
+        ('{"prefix": "\\ud800"}', "nodes."),
+    ],
+)
+async def test_put_rejects_unstorable_config_values(
+    api: httpx.AsyncClient, raw: str, path_prefix: str
+) -> None:
+    project = await create(api)
+    body = json.dumps(
+        {"expected_revision": project["revision"], "name": "x", "draft": valid_draft()}
+    ).replace('{"prefix": ">"}', raw)
+    response = await api.put(
+        f"/api/v1/projects/{project['id']}",
+        content=body,
+        headers={"content-type": "application/json"},
+    )
+    error = assert_error(response, 422, "DOMAIN_VALIDATION_ERROR")
+    assert [p[: len(path_prefix)] for p in error["details"]["paths"]] == [path_prefix]
+    unchanged = (await api.get(f"/api/v1/projects/{project['id']}")).json()
+    assert unchanged["revision"] == project["revision"]
+
+
+@pytest.mark.parametrize(
+    "field", ["name", "description", "label", "port", "trigger", "dependency"]
+)
+async def test_put_rejects_nul_anywhere_in_the_project(
+    api: httpx.AsyncClient, field: str
+) -> None:
+    project = await create(api)
+    draft = valid_draft()
+    body: dict[str, Any] = {
+        "expected_revision": project["revision"],
+        "name": "x",
+        "draft": draft,
+    }
+    match field:
+        case "name" | "description":
+            body[field] = "a\0b"
+        case "label":
+            draft["graph"]["nodes"][0]["label"] = "a\0b"
+        case "port":
+            draft["graph"]["edges"][0]["source_port"] = "te\0xt"
+        case "trigger":
+            draft["triggers"][0]["config"] = {"k": "a\0b"}
+        case "dependency":
+            draft["dependencies"][0]["version_constraint"] = ">=1.0.0\0"
+    response = await api.put(f"/api/v1/projects/{project['id']}", json=body)
+    error = assert_error(response, 422, "DOMAIN_VALIDATION_ERROR")
+    assert "NUL" in error["message"]
+
+
+async def test_create_rejects_nul_in_name_and_description(
+    api: httpx.AsyncClient,
+) -> None:
+    for body in ({"name": "a\0b"}, {"name": "a", "description": "a\0b"}):
+        response = await api.post("/api/v1/projects", json=body)
+        assert_error(response, 422, "DOMAIN_VALIDATION_ERROR")
+    assert (await api.get("/api/v1/projects")).json()["items"] == []

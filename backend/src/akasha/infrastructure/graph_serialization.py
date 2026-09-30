@@ -8,6 +8,8 @@ Structure mirrors the domain model exactly; semantic validation belongs to
 — persisting garbage must be harder than persisting a valid graph.
 """
 
+import base64
+from collections.abc import Mapping
 from typing import Any
 
 from akasha.domain.graph import Edge, Graph, NodeInstance
@@ -86,3 +88,15 @@ def deserialize_dependency(data: dict[str, Any]) -> Dependency:
         name=data["name"],
         version_constraint=data.get("version_constraint", "*"),
     )
+
+
+def serialize_files(files: Mapping[str, bytes]) -> dict[str, str]:
+    return {
+        path: base64.b64encode(files[path]).decode("ascii") for path in sorted(files)
+    }
+
+
+def deserialize_files(data: Mapping[str, str]) -> dict[str, bytes]:
+    return {
+        path: base64.b64decode(content, validate=True) for path, content in data.items()
+    }

@@ -9,12 +9,14 @@ enforced by the domain constructors and surface as 422
 ``/validate``.
 """
 
+from collections.abc import Mapping
 from dataclasses import asdict
 from datetime import datetime
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, StringConstraints
 
+from akasha.application.packages import ImportResult
 from akasha.application.projects import Page, issue_payload
 from akasha.domain.graph import Edge, Graph, NodeInstance
 from akasha.domain.graph_validation import ValidationCode, ValidationResult
@@ -131,6 +133,17 @@ def _dependencies(
     return [DependencyBody.model_validate(asdict(d)) for d in deps]
 
 
+class ProjectFileOut(BaseModel):
+    """A project file's metadata; content travels in project packages only."""
+
+    path: str
+    size: int
+
+
+def _files(files: Mapping[str, bytes]) -> list[ProjectFileOut]:
+    return [ProjectFileOut(path=p, size=len(files[p])) for p in sorted(files)]
+
+
 class CreateProjectRequest(_Request):
     name: Name
     description: Description = ""
@@ -181,6 +194,7 @@ class ProjectSummary(BaseModel):
 
 class ProjectDetail(ProjectSummary):
     draft: DraftBody
+    files: list[ProjectFileOut]
 
     @classmethod
     def from_domain(cls, p: Project) -> "ProjectDetail":
@@ -191,6 +205,7 @@ class ProjectDetail(ProjectSummary):
                 triggers=_triggers(p.draft.triggers),
                 dependencies=_dependencies(p.draft.dependencies),
             ),
+            files=_files(p.draft.files),
         )
 
 
@@ -216,6 +231,7 @@ class ProjectVersionDetail(ProjectVersionSummary):
     graph: GraphBody
     triggers: list[TriggerBody]
     dependencies: list[DependencyBody]
+    files: list[ProjectFileOut]
 
     @classmethod
     def from_domain(cls, v: ProjectVersion) -> "ProjectVersionDetail":
@@ -224,6 +240,7 @@ class ProjectVersionDetail(ProjectVersionSummary):
             graph=_graph_body(v.graph),
             triggers=_triggers(v.triggers),
             dependencies=_dependencies(v.dependencies),
+            files=_files(v.files),
         )
 
 
@@ -278,4 +295,21 @@ class ProjectVersionPage(BaseModel):
         return cls(
             items=[ProjectVersionSummary.from_domain(v) for v in page.items],
             page=PageInfo(offset=page.offset, limit=page.limit, has_more=page.has_more),
+        )
+
+
+class ImportProjectResponse(BaseModel):
+    """The new project (an unpublished draft), its validation result and the
+    referenced credentials this installation does not have yet."""
+
+    project: ProjectDetail
+    validation: ValidationResponse
+    missing_credentials: list[str]
+
+    @classmethod
+    def from_domain(cls, result: ImportResult) -> "ImportProjectResponse":
+        return cls(
+            project=ProjectDetail.from_domain(result.project),
+            validation=ValidationResponse.from_domain(result.validation),
+            missing_credentials=list(result.missing_credentials),
         )

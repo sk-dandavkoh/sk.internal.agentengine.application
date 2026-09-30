@@ -40,7 +40,7 @@ from akasha.domain.execution import (
     TimeoutPolicy,
 )
 from akasha.domain.node import NodeErrorKind
-from akasha.domain.primitives import Timestamps
+from akasha.domain.primitives import Timestamps, is_storable
 from akasha.domain.project import (
     Project,
     ProjectDraft,
@@ -53,9 +53,11 @@ from akasha.infrastructure import db_models as m
 from akasha.infrastructure.database import Database
 from akasha.infrastructure.graph_serialization import (
     deserialize_dependency,
+    deserialize_files,
     deserialize_graph,
     deserialize_trigger,
     serialize_dependency,
+    serialize_files,
     serialize_graph,
     serialize_trigger,
 )
@@ -94,6 +96,7 @@ class SqlAlchemyProjectRepository(ProjectRepository):
             "draft_dependencies": [
                 serialize_dependency(d) for d in project.draft.dependencies
             ],
+            "draft_files": serialize_files(project.draft.files),
             "current_version": project.current_version,
             "revision": project.revision + 1,
             "created_at": project.timestamps.created_at,
@@ -159,6 +162,7 @@ class SqlAlchemyProjectRepository(ProjectRepository):
             triggers=[deserialize_trigger(t) for t in r["draft_triggers"]],
             dependencies=[deserialize_dependency(d) for d in r["draft_dependencies"]],
             description=r["description"],
+            files=deserialize_files(r["draft_files"]),
         )
         return Project(
             id=r["id"],
@@ -210,6 +214,7 @@ class SqlAlchemyProjectVersionRepository(ProjectVersionRepository):
                 dependencies=[serialize_dependency(d) for d in version.dependencies],
                 description=version.description,
                 published_at=version.published_at,
+                files=serialize_files(version.files),
             )
         )
 
@@ -273,6 +278,7 @@ class SqlAlchemyProjectVersionRepository(ProjectVersionRepository):
             dependencies=tuple(deserialize_dependency(d) for d in r["dependencies"]),
             description=r["description"],
             published_at=_ensure_utc(r["published_at"]),
+            files=deserialize_files(r["files"]),
         )
 
 
@@ -493,16 +499,19 @@ def _persistable(outputs: dict[str, Any] | None) -> dict[str, Any] | None:
     if outputs is None:
         return None
     try:
-        doc: dict[str, Any] = json.loads(
-            json.dumps(
-                outputs,
-                allow_nan=False,  # JSONB rejects NaN/Infinity
-                default=lambda v: {"$unpersisted": type(v).__name__},
-            )
+        text = json.dumps(
+            outputs,
+            allow_nan=False,  # JSONB rejects NaN/Infinity
+            default=lambda v: {"$unpersisted": type(v).__name__},
         )
     except (TypeError, ValueError):  # e.g. NaN, circular data, tuple keys
-        return {"$unpersisted": "value not representable as JSON"}
-    return doc
+        return dict(_UNPERSISTED)
+    doc: dict[str, Any] = json.loads(text)
+    # NUL characters and lone surrogates: JSON can hold them, JSONB cannot.
+    return doc if is_storable(doc) else dict(_UNPERSISTED)
+
+
+_UNPERSISTED = {"$unpersisted": "value not representable as JSON"}
 
 
 def _node_row(execution_id: str, ne: NodeExecution) -> dict[str, Any]:

@@ -17,7 +17,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import NoReturn
 
-from akasha.domain.primitives import Timestamps, utcnow
+from akasha.domain.primitives import Timestamps, utcnow, validate_text
 from akasha.errors import AkashaError, DomainValidationError
 from akasha.security.redaction import MASK, is_sensitive_key, redact_text
 
@@ -118,6 +118,7 @@ class Credential:
     def __post_init__(self) -> None:
         validate_credential_name(self.name)
         self.kind = CredentialKind(self.kind)
+        validate_text(self.description, "description")
 
     @property
     def reference(self) -> str:
