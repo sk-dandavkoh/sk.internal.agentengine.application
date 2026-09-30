@@ -1,14 +1,22 @@
 """Error-handling foundation: structured responses, stable codes, no traces."""
 
+from datetime import UTC, datetime
+
 from fastapi import APIRouter
 from fastapi.testclient import TestClient
 
 from akasha.api.app import create_app
+from akasha.api.auth import current_identity
 from akasha.application.persistence import UnitOfWork
 from akasha.application.projects import ProjectService
 from akasha.bootstrap import Container
 from akasha.config import Settings
+from akasha.domain.identity import Identity, Role, User, UserSession
 from akasha.errors import AkashaError
+
+_NOW = datetime(2026, 1, 1, tzinfo=UTC)
+_USER = User.create("admin", role=Role.ADMIN)
+ADMIN = Identity(_USER, UserSession("hash", _USER.id, _NOW, _NOW))
 
 
 def _app_with_broken_route() -> TestClient:
@@ -74,7 +82,9 @@ def test_request_validation_error_is_structured(settings: Settings) -> None:
     container = Container(
         settings=settings, projects=ProjectService(no_persistence, {})
     )
-    with TestClient(create_app(settings=settings, container=container)) as client:
+    app = create_app(settings=settings, container=container)
+    app.dependency_overrides[current_identity] = lambda: ADMIN
+    with TestClient(app) as client:
         response = client.post(
             "/api/v1/projects", json={"name": ""}, headers={"x-request-id": "req_42"}
         )
@@ -88,6 +98,8 @@ def test_request_validation_error_is_structured(settings: Settings) -> None:
 def test_project_api_without_persistence_is_a_configuration_error(
     client: TestClient,
 ) -> None:
+    """Without the database there is no authentication either: the API
+    fails closed with CONFIGURATION_ERROR, never open."""
     response = client.get("/api/v1/projects")
     assert response.status_code == 500
     assert response.json()["code"] == "CONFIGURATION_ERROR"

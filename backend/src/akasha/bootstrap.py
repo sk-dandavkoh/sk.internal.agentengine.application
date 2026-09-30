@@ -9,9 +9,15 @@ import asyncio
 import contextlib
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import timedelta
 from types import MappingProxyType
 
 from akasha.application.ai import AIService, LLMProvider
+from akasha.application.auth import (
+    AuthenticationService,
+    AuthorizationService,
+    UserService,
+)
 from akasha.application.credentials import CredentialService
 from akasha.application.events import EventPublisher
 from akasha.application.executions import ExecutionService
@@ -65,6 +71,11 @@ class Container:
     # registry's LLMClient).
     ai: AIService | None = None
     scheduler: TriggerScheduler | None = None
+    # Authentication (Phase 20). Without them every protected route answers
+    # CONFIGURATION_ERROR: the API fails closed, never open.
+    auth: AuthenticationService | None = None
+    authorization: AuthorizationService | None = None
+    users: UserService | None = None
     ready_checks: dict[str, ReadyCheck] = field(default_factory=dict)
     # The scheduler loop task; the container owns its lifecycle (§44/§122).
     _scheduler_task: asyncio.Task[None] | None = field(
@@ -133,6 +144,9 @@ def create_container(settings: Settings) -> Container:
         uow, nodes.definitions, events, plugins=plugin_versions
     )
     executions = ExecutionService(uow, events, metrics)
+    auth = AuthenticationService(
+        uow, session_ttl=timedelta(seconds=settings.session_ttl_seconds)
+    )
     triggers = TriggerService(executions)
     trigger_registry = TriggerRegistry(uow)
     scheduler = (
@@ -158,6 +172,9 @@ def create_container(settings: Settings) -> Container:
         trigger_registry=trigger_registry,
         ai=ai,
         scheduler=scheduler,
+        auth=auth,
+        authorization=AuthorizationService(uow),
+        users=UserService(uow, auth),
         ready_checks={"database": database.check},
     )
 

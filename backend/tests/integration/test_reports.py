@@ -32,6 +32,7 @@ from akasha.domain.project import Project
 from akasha.domain.trigger import TriggerType
 from akasha.infrastructure.database import Database
 from akasha.infrastructure.persistence import SqlAlchemyUnitOfWork
+from tests.integration.conftest import AuthKit
 
 UowFactory = Callable[[], AbstractAsyncContextManager[SqlAlchemyUnitOfWork]]
 
@@ -392,13 +393,21 @@ async def test_unknown_execution(reports: ReportService) -> None:
 
 @pytest.fixture
 async def api(
-    database: Database, reports: ReportService
+    database: Database, reports: ReportService, auth_kit: AuthKit
 ) -> AsyncIterator[httpx.AsyncClient]:
     settings = Settings(environment="test", log_level="CRITICAL")
-    container = Container(settings=settings, database=database, reports=reports)
+    container = Container(
+        settings=settings,
+        database=database,
+        reports=reports,
+        **auth_kit.container_fields(),
+    )
     app = create_app(settings=settings, container=container)
     transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+    headers = await auth_kit.admin_headers()
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://test", headers=headers
+    ) as c:
         yield c
 
 

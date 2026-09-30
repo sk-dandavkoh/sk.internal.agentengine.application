@@ -6,6 +6,10 @@
 - POST /webhooks/{project_id}/{trigger_id} : external webhook call (§127)
 - GET  /executions/{execution_id} : observe the created execution
 
+Webhooks are the one public route (their own router): external systems
+call them without a user session. Everything else needs a session with
+access to the project or execution in the path.
+
 Trigger ids are unique only within a project, so every trigger URL carries
 the project id. All four endpoints end in ``TriggerService`` →
 ``ExecutionService`` (§32). Nothing here runs a graph; webhooks in particular
@@ -138,6 +142,27 @@ def create_triggers_router() -> APIRouter:
         context = _context(request, resolved.trigger.trigger_type, dict(body or {}))
         return ExecutionDetail.from_domain(await svc.fire(resolved, context))
 
+    @router.get("/executions/{execution_id}")
+    async def get_execution(
+        execution_id: str, executions: Executions
+    ) -> ExecutionDetail:
+        return ExecutionDetail.from_domain(await executions.get_execution(execution_id))
+
+    return router
+
+
+def create_webhooks_router() -> APIRouter:
+    """Public: webhook callers are external systems, not users.
+
+    ponytail: anyone who knows a project id and webhook trigger id can fire
+    it, the same as before accounts existed. Per-trigger webhook secrets
+    belong to security hardening (Phase 25).
+    """
+    errors: dict[int | str, dict[str, Any]] = {
+        code: {"model": ErrorResponse} for code in (404, 409, 413, 422, 500)
+    }
+    router = APIRouter(tags=["triggers"], responses=errors)
+
     @router.post(
         "/webhooks/{project_id}/{trigger_id}", status_code=status.HTTP_202_ACCEPTED
     )
@@ -172,11 +197,5 @@ def create_triggers_router() -> APIRouter:
             raise DomainValidationError("webhook payload must be a JSON object")
         context = _context(request, TriggerType.WEBHOOK, payload)
         return ExecutionDetail.from_domain(await svc.fire(resolved, context))
-
-    @router.get("/executions/{execution_id}")
-    async def get_execution(
-        execution_id: str, executions: Executions
-    ) -> ExecutionDetail:
-        return ExecutionDetail.from_domain(await executions.get_execution(execution_id))
 
     return router

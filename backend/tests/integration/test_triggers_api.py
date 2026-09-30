@@ -31,7 +31,7 @@ from akasha.infrastructure.persistence import SqlAlchemyUnitOfWork
 from akasha.runtime.plan import NodeCatalog
 from akasha.runtime.runtime import ExecutionRuntime
 from akasha.runtime.scheduler import TriggerScheduler
-from tests.integration.conftest import SINK, SOURCE
+from tests.integration.conftest import SINK, SOURCE, make_auth_kit
 
 pytestmark = pytest.mark.usefixtures("clean_db")
 
@@ -67,6 +67,7 @@ async def trigger_client(
     **setting_overrides: Any,
 ) -> AsyncIterator[httpx.AsyncClient]:
     settings = Settings(environment="test", log_level="CRITICAL", **setting_overrides)
+    auth_kit = make_auth_kit(database)
     container = Container(
         settings=settings,
         database=database,
@@ -74,10 +75,15 @@ async def trigger_client(
         executions=ExecutionService(lambda: uow_of(database)),
         triggers=TriggerService(ExecutionService(lambda: uow_of(database))),
         trigger_registry=TriggerRegistry(lambda: uow_of(database)),
+        **auth_kit.container_fields(),
     )
     app = create_app(settings=settings, container=container)
     transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+    async with httpx.AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        headers=await auth_kit.admin_headers(),
+    ) as client:
         yield client
 
 
@@ -251,14 +257,13 @@ async def test_invoke_unknown_or_foreign_type_is_404(api: httpx.AsyncClient) -> 
     trigger_id = new_id("trig")
     pid, _, _ = await publish_with(api, [{"id": trigger_id, "trigger_type": "webhook"}])
 
-    # Unknown ids, unknown projects and a WEBHOOK trigger alike: the invoke
-    # endpoint must not reveal which mechanisms an id answers to (§49).
-    for url in (
-        invoke_url(pid, UNKNOWN_ID),
-        invoke_url(UNKNOWN_PROJECT, trigger_id),
-        invoke_url(pid, trigger_id),
-    ):
+    # Unknown ids and a WEBHOOK trigger alike: the invoke endpoint must not
+    # reveal which mechanisms an id answers to (§49). An unknown project is
+    # stopped earlier, by the project access check.
+    for url in (invoke_url(pid, UNKNOWN_ID), invoke_url(pid, trigger_id)):
         assert_error(await api.post(url), 404, "TRIGGER_NOT_FOUND")
+    response = await api.post(invoke_url(UNKNOWN_PROJECT, trigger_id))
+    assert_error(response, 404, "PROJECT_NOT_FOUND")
 
 
 # -- webhook invocation (§127) -----------------------------------------------

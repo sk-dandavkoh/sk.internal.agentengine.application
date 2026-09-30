@@ -2603,6 +2603,36 @@ Application Service
 
 Authentication must be separated from authorization.
 
+Implementation (Phase 20, `domain/identity.py`, `application/auth.py`,
+`api/auth.py`, migration `0008_auth`):
+
+- Local users (`users`), username 3-64 chars of `a-z0-9._-`. Passwords are
+  12-256 characters, no composition rules (NIST SP 800-63B), hashed with
+  scrypt from the stdlib (N=2^14, r=8, p=5; every hash stores its own
+  parameters). Hashing runs off the event loop.
+- Sessions are opaque 256-bit tokens sent as `Authorization: Bearer`.
+  Only their SHA-256 is stored (`sessions`). Sessions expire
+  `AKASHA_SESSION_TTL_SECONDS` after login (absolute, no sliding renewal).
+  Logout, a password change (other sessions), an admin password reset and
+  disabling a user revoke them. No cookies, so there is no CSRF surface.
+- First run: `POST /auth/setup` creates the first admin only while the user
+  table is empty (serialized by a table lock). Afterwards admins create
+  accounts (`/users`). The last active admin cannot be disabled (row locks
+  on the active admins), so the installation cannot lock itself out.
+- Login errors do not reveal whether the username exists: the message is
+  the same, and an unknown username still costs one hash verification. Per
+  username, 5 failed attempts in 15 minutes lock logins (429 +
+  `Retry-After`). An attempt is counted before the password check, so
+  parallel guesses cannot outrun the limit. The counter is in-process for
+  now (see Phase 22).
+- Error codes: `AUTHENTICATION_REQUIRED` (401, missing/expired/revoked
+  token, with `WWW-Authenticate: Bearer`), `INVALID_CREDENTIALS` (401),
+  `LOGIN_THROTTLED` (429), `PERMISSION_DENIED` (403).
+- Audit: `setup_completed`, `login_succeeded`, `login_failed`, `logout`,
+  `password_changed`, `user_created`, `user_updated` are structured log
+  events carrying ids only. The access log carries the caller's `user_id`.
+  Persisted audit records (§61) are not implemented yet.
+
 ----------
 
 # 60. Authorization
@@ -2612,6 +2642,36 @@ Version 1 does not require complex enterprise RBAC.
 However, domain resources should have ownership/context information sufficient for future authorization.
 
 Avoid hard-coding assumptions that every installation has exactly one unrestricted user.
+
+Implementation (Phase 20):
+
+- Two roles. `admin` manages the installation: users, credentials, every
+  project, `/metrics`. `member` works on the projects they own.
+- `projects.owner_id` is set at creation and at import, to the caller, and
+  never changes. Executions, versions, triggers, exports and reports are
+  reachable exactly when their project is. Projects without an owner
+  (created before 0008, or later by operator tooling) are admin-only, so
+  the upgrade never widens access.
+- Enforcement is default-deny at the router. Every `/api/v1` route needs a
+  session, except `POST /auth/setup`, `POST /auth/login` and the webhook
+  route. A path parameter named `project_id` or `execution_id` triggers the
+  access check (`authorize_path`), so a new route under those names is
+  covered automatically. The credentials and users routers additionally
+  require an admin. A test walks the OpenAPI document and asserts every
+  non-public route answers 401 without a session.
+- A resource the caller may not reach answers 404 (`PROJECT_NOT_FOUND` /
+  `EXECUTION_NOT_FOUND`), never 403, so ids cannot be probed for existence.
+  403 is reserved for role checks.
+- Credentials are installation-scoped and admin-managed. Any member's
+  project may reference any credential by name (`credential:<name>`),
+  because the runtime resolves by name. A member can therefore *use* a
+  credential through a node without ever reading it through the API.
+  Per-credential grants need owner-aware resolution in the runtime; that is
+  future work.
+- Public by design: `/health`, `/ready`, the OpenAPI docs and webhooks.
+  Webhooks are fired by external systems; they are protected only by
+  knowing the project and trigger ids until per-trigger webhook secrets
+  exist (Phase 25).
 
 ----------
 
@@ -3818,8 +3878,8 @@ errors_total
 Metric names are implementation details and may evolve.
 
 Implementation (Phase 12, `akasha.observability.metrics`, Prometheus
-exposition at `GET /metrics`, unauthenticated until Phase 20 like
-`/health`):
+exposition at `GET /metrics`; since Phase 20 it needs the
+`AKASHA_METRICS_TOKEN` bearer token or an admin session, see §60):
 
 | Metric | Type | Labels |
 |---|---|---|

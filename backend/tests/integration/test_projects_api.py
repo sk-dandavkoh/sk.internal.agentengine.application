@@ -20,6 +20,7 @@ from akasha.domain.node import NodeDefinition
 from akasha.domain.primitives import new_id
 from akasha.infrastructure.database import Database
 from akasha.infrastructure.persistence import SqlAlchemyUnitOfWork
+from tests.integration.conftest import AuthKit, make_auth_kit
 
 pytestmark = pytest.mark.usefixtures("clean_db")
 
@@ -29,15 +30,22 @@ UNKNOWN = "proj_" + "0" * 32
 
 @pytest.fixture
 async def api(
-    database: Database, project_service: ProjectService
+    database: Database, project_service: ProjectService, auth_kit: AuthKit
 ) -> AsyncIterator[httpx.AsyncClient]:
     settings = Settings(environment="test", log_level="CRITICAL")
     container = Container(
-        settings=settings, database=database, projects=project_service
+        settings=settings,
+        database=database,
+        projects=project_service,
+        **auth_kit.container_fields(),
     )
     app = create_app(settings=settings, container=container)
     transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+    async with httpx.AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        headers=await auth_kit.admin_headers(),
+    ) as client:
         yield client
 
 
@@ -217,10 +225,8 @@ async def test_unknown_project_is_structured_404_with_request_id(
         response = await api.get(
             f"/api/v1/projects/{UNKNOWN}{path}", headers={"x-request-id": "req_7"}
         )
-        code = (
-            "PROJECT_VERSION_NOT_FOUND" if path.endswith("/1") else "PROJECT_NOT_FOUND"
-        )
-        body = assert_error(response, 404, code)
+        # The project access check answers before any version lookup.
+        body = assert_error(response, 404, "PROJECT_NOT_FOUND")
         assert body["request_id"] == "req_7"
     for method, path in (("POST", "/validate"), ("POST", "/publish"), ("DELETE", "")):
         response = await api.request(method, f"/api/v1/projects/{UNKNOWN}{path}")
@@ -416,13 +422,19 @@ async def test_infrastructure_failure_is_opaque_500(
     container = Container(
         settings=settings,
         projects=ProjectService(lambda: SqlAlchemyUnitOfWork(broken), node_definitions),
+        # The session lookup hits the dead database first: an outage must
+        # be a 500, never a 401 that logs every user out.
+        **make_auth_kit(broken).container_fields(),
     )
     transport = httpx.ASGITransport(
         app=create_app(settings=settings, container=container),
         raise_app_exceptions=False,
     )
+    headers = {"Authorization": "Bearer some-token"}
     try:
-        async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://t", headers=headers
+        ) as c:
             response = await c.get("/api/v1/projects")
     finally:
         await broken.dispose()

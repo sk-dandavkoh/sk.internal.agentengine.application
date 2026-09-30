@@ -32,6 +32,18 @@ Built-in node settings:
 | `AKASHA_HTTP_MAX_RESPONSE_BYTES` | `5242880` | response cap for core.http/core.web_search |
 | `AKASHA_WEB_SEARCH_URL` | unset | SearXNG base URL for core.web_search |
 
+Authentication settings:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `AKASHA_SESSION_TTL_SECONDS` | `43200` | session lifetime after login (absolute, 60 s – 30 days) |
+| `AKASHA_METRICS_TOKEN` | unset | bearer token Prometheus uses for `/metrics` (≥ 32 chars); unset → admin session only |
+
+First run: `POST /api/v1/auth/setup` with `{"username", "password"}` creates
+the initial admin. It works only while no account exists, so complete it
+before exposing the engine to a network. Then `POST /api/v1/auth/login` and
+send `Authorization: Bearer <token>` on every request.
+
 ## Quality gates
 
 ```bash

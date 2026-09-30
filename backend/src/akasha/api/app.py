@@ -73,6 +73,7 @@ def register_request_observability(app: FastAPI) -> None:
                         "path": request.url.path,
                         "status_code": status,
                         "duration_ms": round((time.perf_counter() - start) * 1000),
+                        "user_id": getattr(request.state, "user_id", None),
                     },
                 )
         response.headers["X-Request-ID"] = rid
@@ -85,6 +86,7 @@ def _error(
     code: str,
     message: str,
     details: dict[str, object] | None = None,
+    headers: dict[str, str] | None = None,
 ) -> JSONResponse:
     """Every error body leaves through here, redacted: messages and details
     can echo caller or node input."""
@@ -97,7 +99,7 @@ def _error(
     return JSONResponse(
         status_code=status,
         content=body.model_dump(),
-        headers={"X-Request-ID": body.request_id},
+        headers={**(headers or {}), "X-Request-ID": body.request_id},
     )
 
 
@@ -125,7 +127,14 @@ def register_error_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(AkashaError)
     async def handle_akasha_error(request: Request, exc: AkashaError) -> JSONResponse:
-        return _error(request, exc.http_status, exc.code, exc.message, exc.details)
+        headers = {}
+        if exc.http_status == 401:
+            headers["WWW-Authenticate"] = "Bearer"  # RFC 6750
+        if "retry_after_seconds" in exc.details:
+            headers["Retry-After"] = str(exc.details["retry_after_seconds"])
+        return _error(
+            request, exc.http_status, exc.code, exc.message, exc.details, headers
+        )
 
     @app.exception_handler(RequestValidationError)
     async def handle_validation_error(

@@ -10,6 +10,7 @@ semantic validation happens in the domain, not in SQL.
 from sqlalchemy import (
     JSON,
     BigInteger,
+    Boolean,
     CheckConstraint,
     Column,
     DateTime,
@@ -31,6 +32,36 @@ JSONB_VARIANT = (
 
 metadata = MetaData()
 
+# Authentication (Phase 20). Users are never deleted while they own
+# projects (RESTRICT); disabling is the revocation path.
+users = Table(
+    "users",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("username", String, nullable=False, unique=True),
+    Column("password_hash", String, nullable=False),
+    Column("role", String, nullable=False),
+    Column("disabled", Boolean, nullable=False, server_default="false"),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+    CheckConstraint("role IN ('admin','member')", name="ck_users_role"),
+)
+
+# Only the SHA-256 of a session token is stored: a database leak does not
+# hand out live sessions.
+sessions = Table(
+    "sessions",
+    metadata,
+    Column("token_hash", String, primary_key=True),
+    Column(
+        "user_id", String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    ),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("expires_at", DateTime(timezone=True), nullable=False),
+    Index("ix_sessions_user_id", "user_id"),
+    Index("ix_sessions_expires_at", "expires_at"),
+)
+
 projects = Table(
     "projects",
     metadata,
@@ -48,6 +79,11 @@ projects = Table(
     Column("current_version", Integer, nullable=False, server_default="0"),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("updated_at", DateTime(timezone=True), nullable=False),
+    # NULL = admin-only (projects from before accounts existed).
+    Column(
+        "owner_id", String, ForeignKey("users.id", ondelete="RESTRICT"), nullable=True
+    ),
+    Index("ix_projects_owner_id", "owner_id"),
     CheckConstraint("revision >= 1", name="ck_projects_revision_positive"),
     CheckConstraint(
         "current_version >= 0", name="ck_projects_current_version_non_negative"

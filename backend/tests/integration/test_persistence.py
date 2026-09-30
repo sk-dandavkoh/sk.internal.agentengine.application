@@ -35,7 +35,7 @@ UowFactory = Callable[[], AbstractAsyncContextManager[SqlAlchemyUnitOfWork]]
 pytestmark = pytest.mark.usefixtures("clean_db")
 
 _BACKENDS_DIR = Path(__file__).resolve().parents[2]
-_HEAD = "0007_project_files"
+_HEAD = "0008_auth"
 
 
 def _alembic_command(verb: str, db_url: str, target: str) -> None:
@@ -422,6 +422,8 @@ async def test_migrations_upgrade_downgrade_upgrade_on_empty_database(
                 "node_executions",
                 "events",
                 "credentials",
+                "users",
+                "sessions",
             } <= tables
             assert rev == _HEAD
 
@@ -442,6 +444,8 @@ async def test_migrations_upgrade_downgrade_upgrade_on_empty_database(
             assert "node_executions" not in tables
             assert "events" not in tables
             assert "credentials" not in tables
+            assert "users" not in tables
+            assert "sessions" not in tables
 
             await asyncio.to_thread(_alembic_command, "upgrade", scratch_url, "head")
             async with verify.engine.connect() as conn:
@@ -582,6 +586,54 @@ async def test_0007_upgrade_gives_existing_projects_and_versions_no_files(
                 stored = await ctx.versions.get(pid, 2)
             assert stored is not None
             assert stored.files == {"docs/a.md": b"after upgrade"}
+        finally:
+            await db.dispose()
+    finally:
+        async with admin.engine.connect() as conn:
+            await conn.execution_options(isolation_level="AUTOCOMMIT")
+            await conn.execute(text(f"DROP DATABASE IF EXISTS {scratch}"))
+        await admin.dispose()
+
+
+async def test_0008_upgrade_leaves_existing_projects_ownerless(db_url: str) -> None:
+    """Projects written under 0007 load after 0008 with no owner (admin-only,
+    so upgrading never widens access); owners must be real users."""
+    admin = Database(normalize_async_url(db_url))
+    scratch = "akasha_migration_0008"
+    try:
+        async with admin.engine.connect() as conn:
+            await conn.execution_options(isolation_level="AUTOCOMMIT")
+            await conn.execute(text(f"DROP DATABASE IF EXISTS {scratch}"))
+            await conn.execute(text(f"CREATE DATABASE {scratch}"))
+        scratch_url = f"{db_url.rpartition('/')[0]}/{scratch}"
+        await asyncio.to_thread(
+            _alembic_command, "upgrade", scratch_url, "0007_project_files"
+        )
+        pid = new_id("proj")
+        db = Database(normalize_async_url(scratch_url))
+        try:
+            async with db.engine.begin() as conn:
+                await conn.execute(
+                    text(
+                        "INSERT INTO projects (id, name, status, draft_graph,"
+                        " draft_triggers, draft_dependencies, created_at,"
+                        " updated_at) VALUES (:id, 'p', 'draft',"
+                        " '{\"nodes\": [], \"edges\": []}', '[]', '[]',"
+                        " now(), now())"
+                    ),
+                    {"id": pid},
+                )
+            await asyncio.to_thread(_alembic_command, "upgrade", scratch_url, "head")
+
+            async with SqlAlchemyUnitOfWork(db) as ctx:
+                project = await ctx.projects.get(pid)
+            assert project is not None and project.owner_id is None
+
+            orphan = Project.create("orphan", owner_id=new_id("user"))
+            with pytest.raises(IntegrityError):
+                async with SqlAlchemyUnitOfWork(db) as ctx:
+                    await ctx.projects.save(orphan)
+                    await ctx.commit()
         finally:
             await db.dispose()
     finally:

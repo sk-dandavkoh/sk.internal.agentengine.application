@@ -12,7 +12,8 @@ from datetime import UTC, datetime, timedelta
 from types import TracebackType
 from typing import Any, cast
 
-from sqlalchemy import Insert, Update, delete, func, select
+from sqlalchemy import Insert, Update, delete, func, select, text
+from sqlalchemy.dialects.postgresql import Insert as PgInsert
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import CursorResult, RowMapping
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,7 +25,9 @@ from akasha.application.persistence import (
     ExecutionRepository,
     ProjectRepository,
     ProjectVersionRepository,
+    SessionRepository,
     UnitOfWork,
+    UserRepository,
 )
 from akasha.domain.credentials import Credential, CredentialKind
 from akasha.domain.event import Event, EventType
@@ -39,6 +42,7 @@ from akasha.domain.execution import (
     RetryPolicy,
     TimeoutPolicy,
 )
+from akasha.domain.identity import Role, User, UserSession
 from akasha.domain.node import NodeErrorKind
 from akasha.domain.primitives import Timestamps, is_storable
 from akasha.domain.project import (
@@ -108,7 +112,7 @@ class SqlAlchemyProjectRepository(ProjectRepository):
         if project.revision == 0:
             stmt: Insert | Update = (
                 pg_insert(m.projects)
-                .values(id=project.id, **values)
+                .values(id=project.id, owner_id=project.owner_id, **values)
                 .on_conflict_do_nothing(index_elements=[m.projects.c.id])
             )
         else:
@@ -139,12 +143,16 @@ class SqlAlchemyProjectRepository(ProjectRepository):
         )
         return result.rowcount > 0
 
-    async def list(self, *, offset: int = 0, limit: int = 100) -> Sequence[Project]:
+    async def list(
+        self, *, offset: int = 0, limit: int = 100, owner_id: str | None = None
+    ) -> Sequence[Project]:
+        query = select(m.projects)
+        if owner_id is not None:
+            query = query.where(m.projects.c.owner_id == owner_id)
         rows = (
             (
                 await self._session.execute(
-                    select(m.projects)
-                    .order_by(m.projects.c.created_at, m.projects.c.id)
+                    query.order_by(m.projects.c.created_at, m.projects.c.id)
                     .offset(offset)
                     .limit(limit)
                 )
@@ -175,6 +183,7 @@ class SqlAlchemyProjectRepository(ProjectRepository):
                 created_at=_ensure_utc(r["created_at"]),
                 updated_at=_ensure_utc(r["updated_at"]),
             ),
+            owner_id=r["owner_id"],
         )
 
 
@@ -715,6 +724,184 @@ class SqlAlchemyCredentialRepository(CredentialRepository):
         )
 
 
+def _user(row: RowMapping) -> User:
+    return User(
+        id=row["id"],
+        username=row["username"],
+        role=Role(row["role"]),
+        disabled=row["disabled"],
+        timestamps=Timestamps(
+            created_at=_ensure_utc(row["created_at"]),
+            updated_at=_ensure_utc(row["updated_at"]),
+        ),
+    )
+
+
+class SqlAlchemyUserRepository(UserRepository):
+    # Every column but the hash: only get_with_password reads it.
+    _PUBLIC = tuple(c for c in m.users.c if c.name != "password_hash")
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def get(self, user_id: str) -> User | None:
+        row = (
+            (
+                await self._session.execute(
+                    select(*self._PUBLIC).where(m.users.c.id == user_id)
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        return None if row is None else _user(row)
+
+    async def get_with_password(self, username: str) -> tuple[User, str] | None:
+        row = (
+            (
+                await self._session.execute(
+                    select(m.users).where(m.users.c.username == username)
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        return None if row is None else (_user(row), row["password_hash"])
+
+    def _insert(self, user: User, password_hash: str) -> PgInsert:
+        return pg_insert(m.users).values(
+            id=user.id,
+            username=user.username,
+            password_hash=password_hash,
+            role=user.role.value,
+            disabled=user.disabled,
+            created_at=user.timestamps.created_at,
+            updated_at=user.timestamps.updated_at,
+        )
+
+    async def add(self, user: User, password_hash: str) -> bool:
+        stmt = self._insert(user, password_hash).on_conflict_do_nothing(
+            index_elements=[m.users.c.username]
+        )
+        result = cast("CursorResult[Any]", await self._session.execute(stmt))
+        return result.rowcount == 1
+
+    async def add_first(self, user: User, password_hash: str) -> bool:
+        # SHARE ROW EXCLUSIVE conflicts with itself and with inserts: a
+        # concurrent setup waits here, then sees this user and backs off.
+        await self._session.execute(
+            text("LOCK TABLE users IN SHARE ROW EXCLUSIVE MODE")
+        )
+        if await self._session.scalar(select(func.count()).select_from(m.users)):
+            return False
+        await self._session.execute(self._insert(user, password_hash))
+        return True
+
+    async def update(self, user: User, password_hash: str | None = None) -> bool:
+        values: dict[str, Any] = {
+            "disabled": user.disabled,
+            "updated_at": user.timestamps.updated_at,
+        }
+        if password_hash is not None:
+            values["password_hash"] = password_hash
+        result = cast(
+            "CursorResult[Any]",
+            await self._session.execute(
+                m.users.update().where(m.users.c.id == user.id).values(**values)
+            ),
+        )
+        return result.rowcount == 1
+
+    async def lock_active_admins(self) -> int:
+        rows = await self._session.execute(
+            select(m.users.c.id)
+            .where(m.users.c.role == Role.ADMIN.value, m.users.c.disabled.is_(False))
+            .with_for_update()
+        )
+        return len(rows.all())
+
+    async def list(self, *, offset: int = 0, limit: int = 100) -> Sequence[User]:
+        rows = (
+            (
+                await self._session.execute(
+                    select(*self._PUBLIC)
+                    .order_by(m.users.c.username)
+                    .offset(offset)
+                    .limit(limit)
+                )
+            )
+            .mappings()
+            .all()
+        )
+        return [_user(row) for row in rows]
+
+
+class SqlAlchemySessionRepository(SessionRepository):
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def add(self, session: UserSession) -> None:
+        await self._session.execute(
+            m.sessions.insert().values(
+                token_hash=session.token_hash,
+                user_id=session.user_id,
+                created_at=session.created_at,
+                expires_at=session.expires_at,
+            )
+        )
+
+    async def get_active(
+        self, token_hash: str, now: datetime
+    ) -> tuple[UserSession, User] | None:
+        s, u = m.sessions, m.users
+        row = (
+            (
+                await self._session.execute(
+                    select(
+                        s.c.token_hash,
+                        s.c.user_id,
+                        s.c.created_at.label("session_created_at"),
+                        s.c.expires_at,
+                        *SqlAlchemyUserRepository._PUBLIC,
+                    )
+                    .join(u, u.c.id == s.c.user_id)
+                    .where(
+                        s.c.token_hash == token_hash,
+                        s.c.expires_at > now,
+                        u.c.disabled.is_(False),
+                    )
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if row is None:
+            return None
+        session = UserSession(
+            token_hash=row["token_hash"],
+            user_id=row["user_id"],
+            created_at=_ensure_utc(row["session_created_at"]),
+            expires_at=_ensure_utc(row["expires_at"]),
+        )
+        return session, _user(row)
+
+    async def delete(self, token_hash: str) -> None:
+        await self._session.execute(
+            delete(m.sessions).where(m.sessions.c.token_hash == token_hash)
+        )
+
+    async def delete_for_user(self, user_id: str, *, keep: str | None = None) -> None:
+        stmt = delete(m.sessions).where(m.sessions.c.user_id == user_id)
+        if keep is not None:
+            stmt = stmt.where(m.sessions.c.token_hash != keep)
+        await self._session.execute(stmt)
+
+    async def delete_expired(self, now: datetime) -> None:
+        await self._session.execute(
+            delete(m.sessions).where(m.sessions.c.expires_at <= now)
+        )
+
+
 class SqlAlchemyUnitOfWork(UnitOfWork):
     """One session = one transaction; commit is explicit, exit rolls back."""
 
@@ -731,6 +918,8 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
         self.credentials: CredentialRepository = SqlAlchemyCredentialRepository(
             self._session
         )
+        self.users: UserRepository = SqlAlchemyUserRepository(self._session)
+        self.sessions: SessionRepository = SqlAlchemySessionRepository(self._session)
 
     async def __aenter__(self) -> "SqlAlchemyUnitOfWork":
         return self

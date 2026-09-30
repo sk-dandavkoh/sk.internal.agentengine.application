@@ -361,6 +361,9 @@ class Project(Entity):
     ``revision`` is the optimistic-concurrency token of the persisted row
     (0 = never persisted). Persistence advances it on every successful save;
     domain logic only reads it.
+
+    ``owner_id`` is the user who created the project; it is fixed for the
+    project's life. None means admin-only (see ``may_access_project``).
     """
 
     name: str
@@ -369,19 +372,27 @@ class Project(Entity):
     current_version: int = 0
     revision: int = 0
     timestamps: Timestamps = field(default_factory=Timestamps)
+    owner_id: str | None = None
 
     def __post_init__(self) -> None:
         self.id = validate_id(self.id)
+        if self.owner_id is not None:
+            validate_id(self.owner_id)
         validate_name(self.name)
         self.status = ProjectStatus(self.status)
         if self.current_version < 0 or self.revision < 0:
             raise DomainValidationError("version counters must be >= 0")
 
     @classmethod
-    def create(cls, name: str, *, description: str = "") -> "Project":
+    def create(
+        cls, name: str, *, description: str = "", owner_id: str | None = None
+    ) -> "Project":
         validate_text(description, "description")
         return cls(
-            id=new_id("proj"), name=name, draft=ProjectDraft(description=description)
+            id=new_id("proj"),
+            name=name,
+            draft=ProjectDraft(description=description),
+            owner_id=owner_id,
         )
 
     def replace_draft(self, draft: ProjectDraft, *, name: str) -> None:

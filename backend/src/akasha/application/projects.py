@@ -134,8 +134,10 @@ class ProjectService:
         self._plugins = plugins
         self._events = events or EventPublisher()
 
-    async def create_project(self, name: str, *, description: str = "") -> Project:
-        project = Project.create(name, description=description)
+    async def create_project(
+        self, name: str, *, description: str = "", owner_id: str | None = None
+    ) -> Project:
+        project = Project.create(name, description=description, owner_id=owner_id)
         async with self._uow() as uow:
             await uow.projects.save(project)
             await uow.commit()
@@ -146,10 +148,15 @@ class ProjectService:
         async with self._uow() as uow:
             return await load_project(uow, project_id)
 
-    async def list_projects(self, *, offset: int = 0, limit: int = 50) -> Page[Project]:
+    async def list_projects(
+        self, *, offset: int = 0, limit: int = 50, owner_id: str | None = None
+    ) -> Page[Project]:
+        """All projects, or only those of ``owner_id``."""
         check_page(offset, limit)
         async with self._uow() as uow:
-            rows = await uow.projects.list(offset=offset, limit=limit + 1)
+            rows = await uow.projects.list(
+                offset=offset, limit=limit + 1, owner_id=owner_id
+            )
         return to_page(rows, offset, limit)
 
     async def update_draft(

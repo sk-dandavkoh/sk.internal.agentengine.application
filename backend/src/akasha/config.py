@@ -61,6 +61,13 @@ class Settings(BaseSettings):
     )
     openai_compatible_requires_credential: bool = True
 
+    # Authentication (Phase 20). Sessions expire this long after login;
+    # there is no sliding renewal.
+    session_ttl_seconds: int = Field(default=12 * 60 * 60, ge=60, le=30 * 24 * 60 * 60)
+    # Static bearer token for Prometheus to scrape /metrics. Unset → only an
+    # admin session may read /metrics. Never commit it.
+    metrics_token: SecretStr | None = Field(default=None, min_length=32)
+
     # Plugin System (Phase 17): directory of installed plugin packages; it
     # must exist. Unset → no plugins. Plugins are trusted code: only
     # operators may write here.

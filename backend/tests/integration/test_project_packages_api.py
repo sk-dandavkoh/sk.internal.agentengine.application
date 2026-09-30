@@ -18,7 +18,7 @@ from akasha.domain.node import NodeDefinition
 from akasha.infrastructure.database import Database
 from akasha.infrastructure.persistence import SqlAlchemyUnitOfWork
 from tests.application.test_project_package import read
-from tests.integration.conftest import SOURCE
+from tests.integration.conftest import SOURCE, AuthKit, make_auth_kit
 from tests.integration.test_projects_api import (
     assert_error,
     create,
@@ -32,7 +32,9 @@ ZIP = {"content-type": "application/zip"}
 
 
 def client_for(
-    database: Database, definitions: dict[str, NodeDefinition]
+    database: Database,
+    definitions: dict[str, NodeDefinition],
+    headers: dict[str, str],
 ) -> httpx.AsyncClient:
     def uow() -> SqlAlchemyUnitOfWork:
         return SqlAlchemyUnitOfWork(database)
@@ -43,18 +45,26 @@ def client_for(
         database=database,
         projects=ProjectService(uow, definitions),
         packages=ProjectPackageService(uow, definitions),
+        **make_auth_kit(database).container_fields(),
     )
     app = create_app(settings=settings, container=container)
     return httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app), base_url="http://test"
+        transport=httpx.ASGITransport(app=app), base_url="http://test", headers=headers
     )
 
 
 @pytest.fixture
+async def admin(auth_kit: AuthKit) -> dict[str, str]:
+    return await auth_kit.admin_headers()
+
+
+@pytest.fixture
 async def api(
-    database: Database, node_definitions: dict[str, NodeDefinition]
+    database: Database,
+    node_definitions: dict[str, NodeDefinition],
+    admin: dict[str, str],
 ) -> AsyncIterator[httpx.AsyncClient]:
-    async with client_for(database, node_definitions) as client:
+    async with client_for(database, node_definitions, admin) as client:
         yield client
 
 
@@ -160,11 +170,11 @@ async def test_import_rejects_oversized_uploads_while_streaming(
 
 
 async def test_import_rejects_incompatible_packages(
-    api: httpx.AsyncClient, database: Database
+    api: httpx.AsyncClient, database: Database, admin: dict[str, str]
 ) -> None:
     _, data = await exported(api)
     # An installation without test.sink.
-    async with client_for(database, {"test.source": SOURCE}) as target:
+    async with client_for(database, {"test.source": SOURCE}, admin) as target:
         body = assert_error(
             await target.post("/api/v1/projects/import", content=data, headers=ZIP),
             422,

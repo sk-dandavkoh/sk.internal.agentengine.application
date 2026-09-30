@@ -177,6 +177,7 @@ class ProjectSummary(BaseModel):
     current_version: int
     created_at: datetime
     updated_at: datetime
+    owner_id: str | None
 
     @classmethod
     def from_domain(cls, p: Project) -> "ProjectSummary":
@@ -189,6 +190,7 @@ class ProjectSummary(BaseModel):
             current_version=p.current_version,
             created_at=p.timestamps.created_at,
             updated_at=p.timestamps.updated_at,
+            owner_id=p.owner_id,
         )
 
 

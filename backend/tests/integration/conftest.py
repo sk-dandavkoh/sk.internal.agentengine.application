@@ -8,12 +8,21 @@ developer-local PostgreSQL.
 
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from dataclasses import dataclass
+from datetime import timedelta
+from typing import Any
 
 import pytest
 from sqlalchemy import text
 from testcontainers.community.postgres import PostgresContainer
 
+from akasha.application.auth import (
+    AuthenticationService,
+    AuthorizationService,
+    UserService,
+)
 from akasha.application.projects import ProjectService
+from akasha.domain.identity import Role
 from akasha.domain.node import (
     NodeConfigSchema,
     NodeDefinition,
@@ -24,6 +33,7 @@ from akasha.domain.node import (
 )
 from akasha.infrastructure.database import Database, normalize_async_url
 from akasha.infrastructure.persistence import SqlAlchemyUnitOfWork
+from akasha.security.passwords import PasswordHasher
 from tests.support import docker_available
 
 _POSTGRES_IMAGE = "postgres:17.2"
@@ -68,6 +78,8 @@ async def truncate_all(database: Database) -> None:
             "project_versions",
             "projects",
             "credentials",
+            "sessions",
+            "users",
         ):
             await conn.execute(text(f"TRUNCATE {table} CASCADE"))
 
@@ -123,3 +135,60 @@ def project_service(
     database: Database, node_definitions: dict[str, NodeDefinition]
 ) -> ProjectService:
     return ProjectService(lambda: SqlAlchemyUnitOfWork(database), node_definitions)
+
+
+# Cheap scrypt parameters: tests exercise the hashing logic, not its cost
+# (the production defaults are asserted in tests/test_passwords.py).
+FAST_HASHER = PasswordHasher(n=2**4, r=8, p=1)
+PASSWORD = "correct horse battery"
+
+
+@dataclass
+class AuthKit:
+    """The Phase 20 services over the test database, plus shortcuts to get
+    a logged-in client header."""
+
+    auth: AuthenticationService
+    authorization: AuthorizationService
+    users: UserService
+
+    def container_fields(self) -> dict[str, Any]:
+        return {
+            "auth": self.auth,
+            "authorization": self.authorization,
+            "users": self.users,
+        }
+
+    async def admin_headers(self, username: str = "admin") -> dict[str, str]:
+        """The installation's first admin (setup), logged in."""
+        await self.auth.setup(username, PASSWORD)
+        return await self.login(username)
+
+    async def member_headers(
+        self, admin: dict[str, str], username: str, role: Role = Role.MEMBER
+    ) -> dict[str, str]:
+        identity = await self.auth.authenticate(admin["Authorization"][7:])
+        await self.users.create_user(identity, username, PASSWORD, role=role)
+        return await self.login(username)
+
+    async def login(self, username: str) -> dict[str, str]:
+        result = await self.auth.login(username, PASSWORD)
+        return {"Authorization": f"Bearer {result.token}"}
+
+
+def make_auth_kit(database: Database, **auth_options: Any) -> AuthKit:
+    def uow() -> SqlAlchemyUnitOfWork:
+        return SqlAlchemyUnitOfWork(database)
+
+    options: dict[str, Any] = {
+        "session_ttl": timedelta(hours=1),
+        "hasher": FAST_HASHER,
+        **auth_options,
+    }
+    auth = AuthenticationService(uow, **options)
+    return AuthKit(auth, AuthorizationService(uow), UserService(uow, auth))
+
+
+@pytest.fixture
+def auth_kit(database: Database) -> AuthKit:
+    return make_auth_kit(database)

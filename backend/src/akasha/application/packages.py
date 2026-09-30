@@ -140,7 +140,9 @@ class ProjectPackageService:
         )
         return data
 
-    async def import_project(self, data: bytes) -> ImportResult:
+    async def import_project(
+        self, data: bytes, *, owner_id: str | None = None
+    ) -> ImportResult:
         package = read_package(data, engine_version=self._engine_version)
         draft = package.draft
         issues = self._requirement_issues(package.requires) + validate_dependencies(
@@ -151,7 +153,9 @@ class ProjectPackageService:
                 "This installation does not provide what the project requires.",
                 issues=issues,
             )
-        project = Project.create(package.name, description=draft.description)
+        project = Project.create(
+            package.name, description=draft.description, owner_id=owner_id
+        )
         # The same write gate as every draft: file rules, no secret values.
         project.replace_draft(draft, name=package.name)
         async with self._uow() as uow:

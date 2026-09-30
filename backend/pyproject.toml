@@ -54,7 +54,8 @@ target-version = "py312"
 select = ["E", "F", "I", "UP", "B", "ASYNC", "S", "T20", "RUF"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101"]  # assert is the pytest idiom
+# assert is the pytest idiom; tests hold throwaway test passwords/tokens.
+"tests/**" = ["S101", "S105", "S106"]
 "examples/**/test_*.py" = ["S101"]
 
 [tool.mypy]

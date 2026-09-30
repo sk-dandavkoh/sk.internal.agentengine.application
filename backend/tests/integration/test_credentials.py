@@ -37,6 +37,7 @@ from akasha.runtime.runtime import ExecutionRuntime
 from akasha.security.crypto import SecretCipher, SecretDecryptionError
 from akasha.security.network import NetworkPolicy
 from akasha.security.redaction import MASK
+from tests.integration.conftest import AuthKit
 from tests.support import (
     SMTP_LOGIN,
     LocalHttpServer,
@@ -210,6 +211,7 @@ async def api(
     database: Database,
     credentials: CredentialService,
     project_service: ProjectService,
+    auth_kit: AuthKit,
 ) -> AsyncIterator[httpx.AsyncClient]:
     settings = Settings(environment="test", log_level="CRITICAL")
     container = Container(
@@ -217,11 +219,16 @@ async def api(
         database=database,
         projects=project_service,
         credentials=credentials,
+        **auth_kit.container_fields(),
     )
     transport = httpx.ASGITransport(
         app=create_app(settings=settings, container=container)
     )
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+    async with httpx.AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        headers=await auth_kit.admin_headers(),
+    ) as client:
         yield client
 
 

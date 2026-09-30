@@ -19,7 +19,9 @@ from akasha.application.persistence import (
     ExecutionRepository,
     ProjectRepository,
     ProjectVersionRepository,
+    SessionRepository,
     UnitOfWork,
+    UserRepository,
 )
 from akasha.application.projects import ProjectVersionNotFoundError
 from akasha.application.triggers import (
@@ -89,7 +91,9 @@ class FakeProjects(ProjectRepository):
     async def delete(self, project_id: str, *, revision: int) -> bool:
         return False
 
-    async def list(self, *, offset: int = 0, limit: int = 100) -> Sequence[Project]:
+    async def list(
+        self, *, offset: int = 0, limit: int = 100, owner_id: str | None = None
+    ) -> Sequence[Project]:
         return []
 
 
@@ -117,8 +121,11 @@ class FakeUow(UnitOfWork):
         self.executions = FakeExecutions()
         self.projects = FakeProjects()
         self.events = FakeEvents()
-        # Triggers never touch credentials; any access would fail loudly.
+        # Triggers never touch credentials or accounts; any access would
+        # fail loudly.
         self.credentials = cast(CredentialRepository, None)
+        self.users = cast(UserRepository, None)
+        self.sessions = cast(SessionRepository, None)
 
     async def __aenter__(self) -> "FakeUow":
         return self

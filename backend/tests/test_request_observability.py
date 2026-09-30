@@ -6,6 +6,7 @@ import logging
 import pytest
 from fastapi import APIRouter
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
 
 from akasha.api.app import create_app
 from akasha.config import Settings
@@ -105,8 +106,18 @@ def test_error_messages_and_details_are_redacted(app_client: TestClient) -> None
     assert body["details"] == {"password": MASK, "url": f"https://{MASK}@h/x"}
 
 
-def test_metrics_endpoint_serves_prometheus_text(client: TestClient) -> None:
-    response = client.get("/metrics")
+METRICS_TOKEN = SecretStr("m" * 32)
+
+
+def test_metrics_endpoint_serves_prometheus_text() -> None:
+    settings = Settings(
+        environment="test", log_level="CRITICAL", metrics_token=METRICS_TOKEN
+    )
+    with TestClient(create_app(settings=settings)) as client:
+        response = client.get(
+            "/metrics",
+            headers={"Authorization": f"Bearer {METRICS_TOKEN.get_secret_value()}"},
+        )
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("text/plain")
     for family in (

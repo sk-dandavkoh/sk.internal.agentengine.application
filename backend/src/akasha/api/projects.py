@@ -2,9 +2,10 @@
 
 Handlers parse, delegate, serialize. No domain rules, no persistence here.
 
-Authorization boundary: every project endpoint lives on this one router,
-so Phase 20 secures them all by adding a single router-level dependency;
-the service stays HTTP-free and gains a principal argument then.
+Authorization: the v1 router authenticates every request and checks access
+to the ``{project_id}`` in the path (``akasha.api.auth``). Handlers without
+one scope by the caller: new projects are owned by them, listings show
+only what they may see.
 """
 
 from typing import Annotated, Any
@@ -20,6 +21,7 @@ from fastapi import (
     status,
 )
 
+from akasha.api.auth import CurrentIdentity
 from akasha.api.project_schemas import (
     CreateProjectRequest,
     ImportProjectResponse,
@@ -32,6 +34,7 @@ from akasha.api.project_schemas import (
     ValidationResponse,
 )
 from akasha.api.schemas import ErrorResponse
+from akasha.application.auth import AuthorizationService
 from akasha.application.packages import ProjectPackageService
 from akasha.application.project_package import (
     MAX_PACKAGE_BYTES,
@@ -91,8 +94,12 @@ def create_projects_router() -> APIRouter:
     router = APIRouter(prefix="/projects", tags=["projects"], responses=errors)
 
     @router.post("", status_code=status.HTTP_201_CREATED)
-    async def create_project(body: CreateProjectRequest, svc: Service) -> ProjectDetail:
-        project = await svc.create_project(body.name, description=body.description)
+    async def create_project(
+        body: CreateProjectRequest, svc: Service, identity: CurrentIdentity
+    ) -> ProjectDetail:
+        project = await svc.create_project(
+            body.name, description=body.description, owner_id=identity.user.id
+        )
         return ProjectDetail.from_domain(project)
 
     @router.post(
@@ -108,16 +115,20 @@ def create_projects_router() -> APIRouter:
         },
     )
     async def import_project(
-        svc: Packages, body: Annotated[bytes, Depends(_package_body)]
+        svc: Packages,
+        identity: CurrentIdentity,
+        body: Annotated[bytes, Depends(_package_body)],
     ) -> ImportProjectResponse:
-        return ImportProjectResponse.from_domain(await svc.import_project(body))
+        result = await svc.import_project(body, owner_id=identity.user.id)
+        return ImportProjectResponse.from_domain(result)
 
     @router.get("")
     async def list_projects(
-        svc: Service, offset: Offset = 0, limit: Limit = 50
+        svc: Service, identity: CurrentIdentity, offset: Offset = 0, limit: Limit = 50
     ) -> ProjectPage:
+        owner = AuthorizationService.owner_filter(identity)
         return ProjectPage.from_page(
-            await svc.list_projects(offset=offset, limit=limit)
+            await svc.list_projects(offset=offset, limit=limit, owner_id=owner)
         )
 
     @router.get("/{project_id}")

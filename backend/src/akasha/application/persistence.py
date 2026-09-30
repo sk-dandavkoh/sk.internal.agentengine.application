@@ -13,12 +13,14 @@ Boundary rules (backend/AGENTS.md §13/§15/§16):
 """
 
 from collections.abc import Sequence
+from datetime import datetime
 from types import TracebackType
 from typing import Protocol
 
 from akasha.domain.credentials import Credential
 from akasha.domain.event import Event
 from akasha.domain.execution import Execution
+from akasha.domain.identity import User, UserSession
 from akasha.domain.project import Project, ProjectVersion
 from akasha.errors import AkashaError
 
@@ -50,7 +52,11 @@ class ProjectRepository(Protocol):
         False when the project is missing or has moved on."""
         ...
 
-    async def list(self, *, offset: int = 0, limit: int = 100) -> Sequence[Project]: ...
+    async def list(
+        self, *, offset: int = 0, limit: int = 100, owner_id: str | None = None
+    ) -> Sequence[Project]:
+        """All projects, or only those owned by ``owner_id``."""
+        ...
 
 
 class ProjectVersionRepository(Protocol):
@@ -146,6 +152,57 @@ class CredentialRepository(Protocol):
     ) -> Sequence[Credential]: ...
 
 
+class UserRepository(Protocol):
+    """Local accounts. The password hash crosses this interface only as an
+    opaque string; hashing happens in the application layer."""
+
+    async def get(self, user_id: str) -> User | None: ...
+
+    async def get_with_password(self, username: str) -> tuple[User, str] | None:
+        """The user and their stored password hash, for login only."""
+        ...
+
+    async def add(self, user: User, password_hash: str) -> bool:
+        """Insert; False when the username is taken."""
+        ...
+
+    async def add_first(self, user: User, password_hash: str) -> bool:
+        """Insert only into an empty user table; False otherwise. Safe
+        against concurrent callers: at most one first user can exist."""
+        ...
+
+    async def update(self, user: User, password_hash: str | None = None) -> bool:
+        """Update ``disabled`` (and the hash when given); False if missing."""
+        ...
+
+    async def lock_active_admins(self) -> int:
+        """Lock the active admin rows until the transaction ends and count
+        them, so two admins disabling each other cannot both succeed."""
+        ...
+
+    async def list(self, *, offset: int = 0, limit: int = 100) -> Sequence[User]: ...
+
+
+class SessionRepository(Protocol):
+    """Server-side login sessions, keyed by the hash of their token."""
+
+    async def add(self, session: UserSession) -> None: ...
+
+    async def get_active(
+        self, token_hash: str, now: datetime
+    ) -> tuple[UserSession, User] | None:
+        """The unexpired session and its user, only if the user is enabled."""
+        ...
+
+    async def delete(self, token_hash: str) -> None: ...
+
+    async def delete_for_user(self, user_id: str, *, keep: str | None = None) -> None:
+        """Revoke every session of ``user_id`` except the ``keep`` hash."""
+        ...
+
+    async def delete_expired(self, now: datetime) -> None: ...
+
+
 class UnitOfWork(Protocol):
     """Explicit transaction boundary (backend/AGENTS.md §16).
 
@@ -158,6 +215,8 @@ class UnitOfWork(Protocol):
     executions: ExecutionRepository
     events: EventRepository
     credentials: CredentialRepository
+    users: UserRepository
+    sessions: SessionRepository
 
     async def __aenter__(self) -> "UnitOfWork": ...
     async def __aexit__(
