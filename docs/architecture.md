@@ -2449,6 +2449,31 @@ timestamps
 
 Report generation should not directly depend on the frontend.
 
+Implementation (Phase 19):
+
+- **Service.** `ReportService.execution_report` (`akasha.application.reports`)
+  loads the Execution aggregate, its project and its event log in one unit of
+  work; `build_report` is a pure function over that state. HTTP:
+  `GET /api/v1/reports/executions/{execution_id}`.
+- **Canonical source.** Every status, timing, error, output and metric comes
+  from the Execution aggregate and its pinned ProjectVersion. Events are
+  attached as a timeline and are never read to derive a field. They are
+  read before the aggregate, so the timeline can never run ahead of the state.
+- **Token usage and cost.** Taken from each completed node's `metadata`
+  output (`usage` {input_tokens, output_tokens}, optional `cost` {amount,
+  currency}), which is the `core.llm` shape. Malformed values count as not
+  reported. Costs are summed per currency. `cost_complete` is false when a node
+  reported usage without a price. Usage from failed attempts is not persisted,
+  so it is not counted.
+- **Determinism.** Reports have no generation timestamp and no clock, so a
+  running execution has no duration. Nodes are ordered by id and events by
+  store position. `report_json` (sorted keys) is the export format and the
+  HTTP body: the same persisted state gives the same bytes.
+- **Redaction.** Input, outputs, error messages and details, labels and the
+  cancellation reason pass through `akasha.security.redaction`. Credential
+  plaintext is never loaded for a report.
+- **Limits.** The timeline is capped at 10,000 events (`events_truncated`).
+
 ----------
 
 # 56. Import / Export Architecture

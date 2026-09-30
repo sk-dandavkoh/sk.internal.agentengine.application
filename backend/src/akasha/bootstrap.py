@@ -17,6 +17,7 @@ from akasha.application.events import EventPublisher
 from akasha.application.executions import ExecutionService
 from akasha.application.packages import ProjectPackageService
 from akasha.application.projects import ProjectService
+from akasha.application.reports import ReportService
 from akasha.application.triggers import TriggerRegistry, TriggerService
 from akasha.config import Settings
 from akasha.domain.ai import LLMClient
@@ -54,6 +55,7 @@ class Container:
     projects: ProjectService | None = None
     packages: ProjectPackageService | None = None
     executions: ExecutionService | None = None
+    reports: ReportService | None = None
     triggers: TriggerService | None = None
     # Needs the database and AKASHA_CREDENTIAL_ENCRYPTION_KEY. The runtime
     # must receive this same service (Phase 21/22 wiring) to resolve secrets.
@@ -150,6 +152,7 @@ def create_container(settings: Settings) -> Container:
         projects=projects,
         packages=packages,
         executions=executions,
+        reports=ReportService(uow),
         triggers=triggers,
         credentials=None if cipher is None else CredentialService(uow, cipher),
         trigger_registry=trigger_registry,
