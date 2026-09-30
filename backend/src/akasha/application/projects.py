@@ -88,14 +88,14 @@ class Page[T]:
     has_more: bool
 
 
-def _check_page(offset: int, limit: int) -> None:
+def check_page(offset: int, limit: int) -> None:
     if offset < 0 or not 1 <= limit <= MAX_PAGE_SIZE:
         raise DomainValidationError(
             f"offset must be >= 0 and limit between 1 and {MAX_PAGE_SIZE}"
         )
 
 
-def _page[T](rows: Sequence[T], offset: int, limit: int) -> Page[T]:
+def to_page[T](rows: Sequence[T], offset: int, limit: int) -> Page[T]:
     # Callers fetch limit + 1 rows: the extra row only signals has_more.
     return Page(rows[:limit], offset, limit, has_more=len(rows) > limit)
 
@@ -143,10 +143,10 @@ class ProjectService:
             return await _load(uow, project_id)
 
     async def list_projects(self, *, offset: int = 0, limit: int = 50) -> Page[Project]:
-        _check_page(offset, limit)
+        check_page(offset, limit)
         async with self._uow() as uow:
             rows = await uow.projects.list(offset=offset, limit=limit + 1)
-        return _page(rows, offset, limit)
+        return to_page(rows, offset, limit)
 
     async def update_draft(
         self,
@@ -233,11 +233,11 @@ class ProjectService:
     async def list_versions(
         self, project_id: str, *, offset: int = 0, limit: int = 50
     ) -> Page[ProjectVersion]:
-        _check_page(offset, limit)
+        check_page(offset, limit)
         async with self._uow() as uow:
             await _load(uow, project_id)
             rows = await uow.versions.list(project_id, offset=offset, limit=limit + 1)
-        return _page(rows, offset, limit)
+        return to_page(rows, offset, limit)
 
 
 async def _load(uow: UnitOfWork, project_id: str) -> Project:

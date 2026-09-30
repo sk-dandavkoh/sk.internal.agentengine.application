@@ -9,23 +9,27 @@ Two structural rules:
 - Free text: credential-shaped substrings (bearer/basic auth, URL userinfo,
   ``key=value`` with a sensitive key, well-known token formats) are masked.
 
-This is defence in depth for *unknown* secrets. Masking exact known
-credential values belongs to the credential store (Phase 13), which can
-extend the text rules at that point.
+This is defence in depth for *unknown* secrets. Known values are masked
+exactly: resolving a credential registers its plaintext for the current
+(async) context via ``register_secret``, so the node that resolved it — its
+logs, its errors, its outputs — can never echo it back (Phase 13).
 """
 
 import re
 from collections.abc import Mapping
+from contextvars import ContextVar
 
 MASK = "[REDACTED]"
 
 _SENSITIVE_WORDS = frozenset(
     {
         "password",
+        "passwords",
         "passwd",
         "pwd",
         "passphrase",
         "secret",
+        "secrets",
         "token",
         "apikey",
         "authorization",
@@ -56,7 +60,8 @@ _TEXT_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
     # api_key=..., "password": "...", secret: ...
     (
         re.compile(
-            rf"""(?i)\b({_SENSITIVE_KEY_TEXT})(["']?\s*[:=]\s*["']?)[^\s"'&,;}}]+"""
+            # ``credential:<name>`` is a credential *reference*, not a value.
+            rf"""(?i)\b(?!credential:[a-z0-9])({_SENSITIVE_KEY_TEXT})(["']?\s*[:=]\s*["']?)[^\s"'&,;}}]+"""
         ),
         rf"\1\2{MASK}",
     ),
@@ -82,7 +87,49 @@ def is_sensitive_key(key: str) -> bool:
     )
 
 
+# Shorter values would mask ordinary words; such secrets are weak anyway.
+MIN_KNOWN_SECRET_LENGTH = 4
+
+# Per asyncio task (and threads started via ``asyncio.to_thread``): a node
+# task sees the secrets it resolved, nothing leaks into unrelated contexts.
+_known_secrets: ContextVar[frozenset[str]] = ContextVar(
+    "akasha_known_secrets", default=frozenset()
+)
+
+
+def register_secret(value: str) -> None:
+    """Mask ``value`` in every redaction within the current context."""
+    if len(value) >= MIN_KNOWN_SECRET_LENGTH:
+        _known_secrets.set(_known_secrets.get() | {value})
+
+
+def mask_known_secrets(value: object) -> object:
+    """Replace registered secret values inside strings (and mapping keys) of
+    a JSON-like value; types and structure are left untouched."""
+    known = _known_secrets.get()
+    if not known:
+        return value
+    if isinstance(value, str):
+        return _mask_known(value, known)
+    if isinstance(value, Mapping):
+        return {
+            _mask_known(k, known) if isinstance(k, str) else k: mask_known_secrets(v)
+            for k, v in value.items()
+        }
+    if isinstance(value, list | tuple):
+        return [mask_known_secrets(v) for v in value]
+    return value
+
+
+def _mask_known(text: str, known: frozenset[str]) -> str:
+    # Longest first: a secret containing another one is masked whole.
+    for secret in sorted(known, key=len, reverse=True):
+        text = text.replace(secret, MASK)
+    return text
+
+
 def redact_text(text: str) -> str:
+    text = _mask_known(text, _known_secrets.get())
     for pattern, replacement in _TEXT_RULES:
         text = pattern.sub(replacement, text)
     return text

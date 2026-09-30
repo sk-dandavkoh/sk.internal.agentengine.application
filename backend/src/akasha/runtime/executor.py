@@ -7,7 +7,9 @@ mistaken for a node failure.
 
 Error messages and details are node-authored text that is persisted,
 returned by the API and logged, so they are redacted here, once, on the way
-in (``akasha.security.redaction``).
+in (``akasha.security.redaction``). Outputs are persisted and returned too:
+credential values the node resolved are masked in them (this runs inside the
+node's task, whose context holds those values).
 """
 
 import asyncio
@@ -16,6 +18,7 @@ import traceback
 from collections.abc import Mapping
 from dataclasses import replace
 from datetime import timedelta
+from typing import Any, cast
 
 from akasha.domain.execution import ExecutionError
 from akasha.domain.node import (
@@ -26,7 +29,11 @@ from akasha.domain.node import (
     NodeResult,
 )
 from akasha.errors import NodeValidationError
-from akasha.security.redaction import redact_mapping, redact_text
+from akasha.security.redaction import (
+    mask_known_secrets,
+    redact_mapping,
+    redact_text,
+)
 
 logger = logging.getLogger("akasha.runtime.executor")
 
@@ -52,7 +59,7 @@ async def execute_node(
             message=redact_text(outcome.message),
             details={k: str(v) for k, v in redact_mapping(outcome.details).items()},
         )
-    return outcome
+    return NodeResult(cast("Mapping[str, Any]", mask_known_secrets(outcome.outputs)))
 
 
 async def _execute(

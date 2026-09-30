@@ -19,12 +19,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from akasha.application.persistence import (
     ConcurrentModificationError,
+    CredentialRepository,
     EventRepository,
     ExecutionRepository,
     ProjectRepository,
     ProjectVersionRepository,
     UnitOfWork,
 )
+from akasha.domain.credentials import Credential, CredentialKind
 from akasha.domain.event import Event, EventType
 from akasha.domain.execution import (
     CancellationState,
@@ -600,6 +602,110 @@ class SqlAlchemyEventRepository(EventRepository):
         ]
 
 
+class SqlAlchemyCredentialRepository(CredentialRepository):
+    """Metadata reads never select ``ciphertext``: only resolution loads it."""
+
+    _META = (
+        m.credentials.c.name,
+        m.credentials.c.kind,
+        m.credentials.c.description,
+        m.credentials.c.created_at,
+        m.credentials.c.updated_at,
+    )
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def get(self, name: str) -> Credential | None:
+        row = (
+            (
+                await self._session.execute(
+                    select(*self._META).where(m.credentials.c.name == name)
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        return None if row is None else self._to_domain(row)
+
+    async def get_ciphertext(self, name: str) -> bytes | None:
+        value = await self._session.scalar(
+            select(m.credentials.c.ciphertext).where(m.credentials.c.name == name)
+        )
+        return None if value is None else bytes(value)
+
+    async def add(self, credential: Credential, ciphertext: bytes) -> bool:
+        result = cast(
+            "CursorResult[Any]",
+            await self._session.execute(
+                pg_insert(m.credentials)
+                .values(
+                    name=credential.name,
+                    kind=credential.kind.value,
+                    description=credential.description,
+                    ciphertext=ciphertext,
+                    created_at=credential.timestamps.created_at,
+                    updated_at=credential.timestamps.updated_at,
+                )
+                .on_conflict_do_nothing(index_elements=[m.credentials.c.name])
+            ),
+        )
+        return result.rowcount == 1
+
+    async def update(self, credential: Credential, ciphertext: bytes | None) -> bool:
+        values: dict[str, Any] = {
+            "description": credential.description,
+            "updated_at": credential.timestamps.updated_at,
+        }
+        if ciphertext is not None:
+            values["ciphertext"] = ciphertext
+        result = cast(
+            "CursorResult[Any]",
+            await self._session.execute(
+                m.credentials.update()
+                .where(m.credentials.c.name == credential.name)
+                .values(**values)
+            ),
+        )
+        return result.rowcount == 1
+
+    async def delete(self, name: str) -> bool:
+        result = cast(
+            "CursorResult[Any]",
+            await self._session.execute(
+                delete(m.credentials).where(m.credentials.c.name == name)
+            ),
+        )
+        return result.rowcount > 0
+
+    async def list(self, *, offset: int = 0, limit: int = 100) -> Sequence[Credential]:
+        rows = (
+            (
+                await self._session.execute(
+                    select(*self._META)
+                    .order_by(m.credentials.c.name)
+                    .offset(offset)
+                    .limit(limit)
+                )
+            )
+            .mappings()
+            .all()
+        )
+        return [self._to_domain(row) for row in rows]
+
+    @staticmethod
+    def _to_domain(row: RowMapping) -> Credential:
+        return Credential(
+            name=row["name"],
+            kind=CredentialKind(row["kind"]),
+            description=row["description"],
+            timestamps=Timestamps(
+                created_at=_ensure_utc(row["created_at"]),
+                updated_at=_ensure_utc(row["updated_at"]),
+            ),
+        )
+
+
 class SqlAlchemyUnitOfWork(UnitOfWork):
     """One session = one transaction; commit is explicit, exit rolls back."""
 
@@ -613,6 +719,9 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
             self._session, self.versions
         )
         self.events: EventRepository = SqlAlchemyEventRepository(self._session)
+        self.credentials: CredentialRepository = SqlAlchemyCredentialRepository(
+            self._session
+        )
 
     async def __aenter__(self) -> "SqlAlchemyUnitOfWork":
         return self

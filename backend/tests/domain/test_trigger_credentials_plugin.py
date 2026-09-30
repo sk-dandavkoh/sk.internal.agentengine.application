@@ -185,15 +185,25 @@ class TestTriggerContext:
 
 class TestCredentialReference:
     def test_valid(self) -> None:
-        assert CredentialReference("credential:openai-production").ref
+        ref = CredentialReference("credential:openai-production")
+        assert ref.name == "openai-production"
 
-    def test_blank_rejected(self) -> None:
-        with pytest.raises(DomainValidationError, match="blank"):
-            CredentialReference("")
-
-    def test_whitespace_rejected(self) -> None:
-        with pytest.raises(DomainValidationError, match="whitespace"):
-            CredentialReference("cred 123")
+    @pytest.mark.parametrize(
+        "ref",
+        [
+            "",
+            "credential:",
+            "credential:cred 123",
+            "openai",
+            "credential:UPPER",
+            "credential:-lead",
+            "credential:" + "x" * 65,
+            "sk-live-abc",
+        ],
+    )
+    def test_malformed_rejected(self, ref: str) -> None:
+        with pytest.raises(DomainValidationError, match="credential reference"):
+            CredentialReference(ref)
 
 
 class TestPluginMetadata:

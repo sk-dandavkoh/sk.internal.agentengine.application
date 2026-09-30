@@ -100,7 +100,7 @@ class SmtpNode(Node):
             )
         security = cfg.get("security", "starttls")
         host, port = cfg["host"], cfg.get("port", _DEFAULT_PORTS[security])
-        password = self._password(context)
+        password = await self._password(context)
         message = self._message(context)
         await check_destination(host, port, self._policy)
         refused = await asyncio.to_thread(
@@ -121,7 +121,7 @@ class SmtpNode(Node):
         )
 
     @staticmethod
-    def _password(context: NodeExecutionContext) -> str | None:
+    async def _password(context: NodeExecutionContext) -> str | None:
         reference = context.config.get("password_credential")
         if reference is None:
             return None
@@ -131,7 +131,7 @@ class SmtpNode(Node):
                 NodeErrorKind.CONFIGURATION,
                 "SMTP_CREDENTIALS_UNAVAILABLE",
             )
-        return context.credentials.resolve(reference)
+        return await context.credentials.resolve(reference)
 
     @staticmethod
     def _message(context: NodeExecutionContext) -> EmailMessage:

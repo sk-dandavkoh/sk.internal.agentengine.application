@@ -10,6 +10,7 @@ import contextlib
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
+from akasha.application.credentials import CredentialService
 from akasha.application.events import EventPublisher
 from akasha.application.executions import ExecutionService
 from akasha.application.projects import ProjectService
@@ -21,6 +22,7 @@ from akasha.nodes.builtins import create_builtin_registry
 from akasha.nodes.registry import NodeRegistry
 from akasha.observability.metrics import EngineMetrics
 from akasha.runtime.scheduler import TriggerScheduler
+from akasha.security.crypto import SecretCipher
 from akasha.security.network import NetworkPolicy
 
 # A readiness check returns None when healthy, or a human-readable reason.
@@ -44,6 +46,9 @@ class Container:
     projects: ProjectService | None = None
     executions: ExecutionService | None = None
     triggers: TriggerService | None = None
+    # Needs the database and AKASHA_CREDENTIAL_ENCRYPTION_KEY. The runtime
+    # must receive this same service (Phase 21/22 wiring) to resolve secrets.
+    credentials: CredentialService | None = None
     trigger_registry: TriggerRegistry | None = None
     scheduler: TriggerScheduler | None = None
     ready_checks: dict[str, ReadyCheck] = field(default_factory=dict)
@@ -89,6 +94,9 @@ def create_container(settings: Settings) -> Container:
     their own container.
     """
     nodes = create_node_registry(settings)
+    # Built first: a malformed key fails startup even without a database.
+    key = settings.credential_encryption_key
+    cipher = None if key is None else SecretCipher.from_config(key.get_secret_value())
     if not settings.database_url:
         return Container(settings=settings, nodes=nodes)
     database = Database(normalize_async_url(settings.database_url))
@@ -120,6 +128,7 @@ def create_container(settings: Settings) -> Container:
         projects=projects,
         executions=executions,
         triggers=triggers,
+        credentials=None if cipher is None else CredentialService(uow, cipher),
         trigger_registry=trigger_registry,
         scheduler=scheduler,
         ready_checks={"database": database.check},

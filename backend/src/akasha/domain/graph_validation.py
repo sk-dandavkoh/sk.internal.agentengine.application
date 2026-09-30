@@ -19,6 +19,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum, auto
 
+from akasha.domain.credentials import plaintext_secret_paths
 from akasha.domain.graph import Edge, Graph, NodeInstance
 from akasha.domain.node import NodeDefinition, NodeInput, NodeOutput, PortType
 from akasha.errors import AkashaError, DomainValidationError
@@ -35,6 +36,8 @@ class ValidationCode(StrEnum):
     INVALID_PORT_CONNECTION = auto()
     MISSING_REQUIRED_INPUT = auto()
     INVALID_CONFIG = auto()
+    # Secret material in config (stored before Phase 13 enforced references).
+    PLAINTEXT_SECRET = auto()
     CYCLE_DETECTED = auto()
     DISCONNECTED_NODE = auto()
     # Declared project dependencies (architecture §3.8/§144).
@@ -233,6 +236,15 @@ def _check_node_config(
             ValidationIssue(
                 ValidationCode.INVALID_CONFIG,
                 "configuration must be an object",
+                node_id=node_id,
+            )
+        ]
+    if leaks := plaintext_secret_paths(instance.config):
+        return [
+            ValidationIssue(
+                ValidationCode.PLAINTEXT_SECRET,
+                "configuration contains a secret value at "
+                f"{', '.join(f'config{p}' for p in leaks)}; use a credential reference",
                 node_id=node_id,
             )
         ]

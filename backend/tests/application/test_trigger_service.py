@@ -8,12 +8,13 @@ tests (backend/AGENTS.md §52/§54).
 
 from collections.abc import Sequence
 from types import TracebackType
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 from akasha.application.executions import ExecutionService
 from akasha.application.persistence import (
+    CredentialRepository,
     EventRepository,
     ExecutionRepository,
     ProjectRepository,
@@ -116,6 +117,8 @@ class FakeUow(UnitOfWork):
         self.executions = FakeExecutions()
         self.projects = FakeProjects()
         self.events = FakeEvents()
+        # Triggers never touch credentials; any access would fail loudly.
+        self.credentials = cast(CredentialRepository, None)
 
     async def __aenter__(self) -> "FakeUow":
         return self

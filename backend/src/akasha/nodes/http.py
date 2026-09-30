@@ -248,6 +248,10 @@ class HttpNode(Node):
                 "method": {"type": "string", "enum": list(METHODS)},
                 "url": {"type": "string", "pattern": "^https?://"},
                 "headers": {"type": "object"},
+                # Header name -> credential reference, e.g. Authorization ->
+                # "credential:crm-api" holding "Bearer ...". Secret headers
+                # never live in ``headers`` (project config is secret-free).
+                "header_credentials": {"type": "object"},
                 "timeout_seconds": {
                     "type": "number",
                     "minimum": 0.1,
@@ -281,6 +285,17 @@ class HttpNode(Node):
                 NodeErrorKind.CONFIGURATION,
                 "HTTP_INVALID_HEADERS",
             )
+        secret_headers = cfg.get("header_credentials", {})
+        if secret_headers:
+            if context.credentials is None:
+                raise _error(
+                    "credential references cannot be resolved in this engine",
+                    NodeErrorKind.CONFIGURATION,
+                    "HTTP_CREDENTIALS_UNAVAILABLE",
+                )
+            headers = dict(headers)
+            for name, reference in secret_headers.items():
+                headers[name] = await context.credentials.resolve(reference)
         content = None
         if "body" in context.inputs:
             content = json.dumps(context.inputs["body"]).encode()

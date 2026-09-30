@@ -64,6 +64,8 @@ def test_ordinary_text_is_left_alone(text: str) -> None:
         "private_key",
         "Cookie",
         "smtp_credentials",
+        "secrets",
+        "user_passwords",
     ],
 )
 def test_sensitive_keys(key: str) -> None:

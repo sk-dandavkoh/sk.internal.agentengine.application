@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
 from akasha import __version__
+from akasha.api.credentials import create_credentials_router
 from akasha.api.projects import create_projects_router
 from akasha.api.triggers import create_triggers_router
 from akasha.observability.metrics import CONTENT_TYPE
@@ -54,4 +55,5 @@ def create_api_v1_router() -> APIRouter:
     router = APIRouter(prefix="/api/v1")
     router.include_router(create_projects_router())
     router.include_router(create_triggers_router())
+    router.include_router(create_credentials_router())
     return router

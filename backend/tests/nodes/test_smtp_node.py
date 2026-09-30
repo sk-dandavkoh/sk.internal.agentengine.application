@@ -31,7 +31,7 @@ class FakeCredentials:
     def __init__(self, secrets: dict[str, str]) -> None:
         self._secrets = secrets
 
-    def resolve(self, reference: str) -> str:
+    async def resolve(self, reference: str) -> str:
         return self._secrets[reference]
 
 

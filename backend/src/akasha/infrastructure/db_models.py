@@ -18,6 +18,7 @@ from sqlalchemy import (
     Identity,
     Index,
     Integer,
+    LargeBinary,
     MetaData,
     String,
     Table,
@@ -155,4 +156,20 @@ events = Table(
     Column("payload", JSONB_VARIANT, nullable=False),
     Index("ix_events_execution_position", "execution_id", "position"),
     Index("ix_events_project_position", "project_id", "position"),
+)
+
+_CREDENTIAL_KINDS = "'api_key','smtp','provider','generic'"
+
+# Credential Store (Phase 13). ``ciphertext`` is AES-GCM output bound to the
+# name; the plaintext never reaches the database.
+credentials = Table(
+    "credentials",
+    metadata,
+    Column("name", String, primary_key=True),
+    Column("kind", String, nullable=False),
+    Column("description", String, nullable=False, server_default=""),
+    Column("ciphertext", LargeBinary, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("updated_at", DateTime(timezone=True), nullable=False),
+    CheckConstraint(f"kind IN ({_CREDENTIAL_KINDS})", name="ck_credentials_kind"),
 )

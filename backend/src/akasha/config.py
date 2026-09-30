@@ -5,7 +5,7 @@ Missing or invalid critical configuration fails fast at startup (see
 ``Settings.model_validate`` in the bootstrap path).
 """
 
-from pydantic import AnyHttpUrl, Field
+from pydantic import AnyHttpUrl, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -39,6 +39,11 @@ class Settings(BaseSettings):
     scheduler_poll_seconds: float = Field(default=1.0, gt=0)
     # Inbound webhook body cap; the payload becomes the execution input.
     webhook_max_payload_bytes: int = Field(default=1024 * 1024, gt=0)
+
+    # Credential Store (Phase 13): 32 random bytes, URL-safe base64 (see
+    # ``akasha.security.crypto``). Unset → credentials are unavailable.
+    # Never commit it; losing it makes stored credentials unrecoverable.
+    credential_encryption_key: SecretStr | None = None
 
 
 def load_settings() -> Settings:

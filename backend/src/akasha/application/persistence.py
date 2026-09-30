@@ -16,6 +16,7 @@ from collections.abc import Sequence
 from types import TracebackType
 from typing import Protocol
 
+from akasha.domain.credentials import Credential
 from akasha.domain.event import Event
 from akasha.domain.execution import Execution
 from akasha.domain.project import Project, ProjectVersion
@@ -123,6 +124,28 @@ class EventRepository(Protocol):
         ...
 
 
+class CredentialRepository(Protocol):
+    """Credential metadata plus the *encrypted* secret. Plaintext never
+    crosses this interface: encryption happens in the application layer."""
+
+    async def get(self, name: str) -> Credential | None: ...
+    async def get_ciphertext(self, name: str) -> bytes | None: ...
+
+    async def add(self, credential: Credential, ciphertext: bytes) -> bool:
+        """Insert; False when the name is already taken."""
+        ...
+
+    async def update(self, credential: Credential, ciphertext: bytes | None) -> bool:
+        """Update metadata, and the secret when ``ciphertext`` is given;
+        False when the credential does not exist."""
+        ...
+
+    async def delete(self, name: str) -> bool: ...
+    async def list(
+        self, *, offset: int = 0, limit: int = 100
+    ) -> Sequence[Credential]: ...
+
+
 class UnitOfWork(Protocol):
     """Explicit transaction boundary (backend/AGENTS.md §16).
 
@@ -134,6 +157,7 @@ class UnitOfWork(Protocol):
     versions: ProjectVersionRepository
     executions: ExecutionRepository
     events: EventRepository
+    credentials: CredentialRepository
 
     async def __aenter__(self) -> "UnitOfWork": ...
     async def __aexit__(

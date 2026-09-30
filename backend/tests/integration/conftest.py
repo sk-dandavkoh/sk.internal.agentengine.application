@@ -68,6 +68,7 @@ async def clean_db(database: Database) -> None:
             "executions",
             "project_versions",
             "projects",
+            "credentials",
         ):
             await conn.execute(text(f"TRUNCATE {table} CASCADE"))
 

@@ -49,6 +49,7 @@ from akasha.errors import AkashaError, ConfigurationError, InvalidStateTransitio
 from akasha.observability.execution import observe_execution
 from akasha.observability.logging import log_context
 from akasha.observability.metrics import EngineMetrics
+from akasha.runtime.credentials import NodeCredentials, SecretSource
 from akasha.runtime.executor import NodeOutcome, execute_node
 from akasha.runtime.plan import (
     ExecutionGraphInvalidError,
@@ -139,6 +140,7 @@ class ExecutionRuntime:
         clock: Clock = utcnow,
         events: EventPublisher | None = None,
         metrics: EngineMetrics | None = None,
+        credentials: SecretSource | None = None,
     ) -> None:
         if max_concurrency < 1:
             raise ConfigurationError("max_concurrency must be >= 1")
@@ -148,6 +150,7 @@ class ExecutionRuntime:
         self._max_concurrency = max_concurrency
         self._clock = clock
         self._active: dict[str, _CancelRequest] = {}
+        self._credentials = credentials
 
     async def run(self, execution_id: str) -> Execution:
         """Run a QUEUED execution to a terminal state and return it.
@@ -336,6 +339,10 @@ class ExecutionRuntime:
                 project_version=str(version.version),
                 # A copy: node code must not be able to mutate the snapshot.
                 config=deepcopy(instance.config),
+                # Scoped to references in this node's snapshot config.
+                credentials=None
+                if self._credentials is None
+                else NodeCredentials(self._credentials, instance.config),
                 inputs=plan.inputs_for(node_id, execution),
                 logger=logging.getLogger(f"akasha.nodes.{instance.node_type}"),
                 is_cancelled=request.should_stop,

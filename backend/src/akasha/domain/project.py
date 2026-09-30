@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum, auto
 
+from akasha.domain.credentials import PlaintextSecretError, plaintext_secret_paths
 from akasha.domain.graph import Graph
 from akasha.domain.graph_validation import (
     ValidationCode,
@@ -250,9 +251,26 @@ class Project(Entity):
     def replace_draft(self, draft: ProjectDraft, *, name: str) -> None:
         """Replace the editable state wholesale (autosave semantics).
 
-        Never touches published versions or the version counter.
+        Never touches published versions or the version counter. Rejects
+        secret values in node/trigger config (only credential references
+        may be stored); the error names locations, never values.
         """
         validate_name(name)
+        leaks = [
+            f"nodes.{node_id}.config{path}"
+            for node_id in sorted(draft.graph.nodes)
+            for path in plaintext_secret_paths(draft.graph.nodes[node_id].config)
+        ] + [
+            f"triggers.{trigger.id}.config{path}"
+            for trigger in draft.triggers
+            for path in plaintext_secret_paths(trigger.config)
+        ]
+        if leaks:
+            raise PlaintextSecretError(
+                "Project configuration must reference credentials"
+                " (credential:<name>) instead of containing secret values.",
+                details={"paths": leaks},
+            )
         self.name = name
         self.draft = draft
         self._touch(utcnow())

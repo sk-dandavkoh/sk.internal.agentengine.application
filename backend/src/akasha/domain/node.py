@@ -422,9 +422,10 @@ def _check_single(port: NodeInput | NodeOutput, value: Any) -> None:
 
 class CredentialResolver(Protocol):
     """Late secret resolution (Phase 13). Config stores references only; the
-    reference becomes a value at execution time, never earlier."""
+    reference becomes a value at execution time, never earlier. Only
+    references in the node's own config resolve (``NodeError`` otherwise)."""
 
-    def resolve(self, reference: str) -> str: ...
+    async def resolve(self, reference: str) -> str: ...
 
 
 @dataclass(frozen=True)

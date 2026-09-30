@@ -1542,6 +1542,37 @@ Secrets must:
 
 Credential access must happen through a dedicated service.
 
+Implementation (Phase 13):
+
+- **Reference format.** `credential:<name>`; the name (`[a-z0-9][a-z0-9._-]{0,63}`)
+  is the credential's immutable identity. Rotation never touches projects, and
+  an imported project resolves against a same-named credential on the target.
+- **Storage.** `CredentialService` (`akasha.application.credentials`) encrypts
+  with AES-256-GCM (`akasha.security.crypto`, `cryptography` package) before
+  any repository call. The credential name is bound as associated data, so a
+  ciphertext copied onto another row does not decrypt. The key comes only from
+  `AKASHA_CREDENTIAL_ENCRYPTION_KEY` (32 bytes, base64). A malformed key fails
+  startup; without a key the store is unavailable (`CONFIGURATION_ERROR`).
+  Back the key up separately from the database (§110).
+- **API.** `/api/v1/credentials` (create, list, get, patch, delete). Values
+  are write-only (`SecretStr`); no endpoint returns plaintext.
+- **Project config.** `Project.replace_draft` rejects secret material
+  (`PLAINTEXT_SECRET`, locations only). A string under a sensitive key must be
+  a reference, and no string may be credential-shaped. Graph validation
+  reports the same rule for data stored earlier, so it can be neither
+  published nor run.
+- **Resolution boundary.** The runtime gives each node attempt a
+  `NodeCredentials` resolver (`akasha.runtime.credentials`). It resolves only
+  references that literally appear in that node's frozen config snapshot, so
+  references arriving through ports, execution input or webhooks are refused
+  (`CREDENTIAL_NOT_REFERENCED`). Values are resolved at call time, never
+  earlier, and never written back.
+- **Known-value masking.** Each resolved value is registered in a `ContextVar`
+  scoped to the node task. Redaction then masks it exactly in that node's
+  logs, errors and outputs, including those of threads started from the task.
+  `Secret` wraps plaintext in memory: masked `str`/`repr`, not
+  picklable or JSON-encodable.
+
 ----------
 
 # 33. Python Node SDK
@@ -3527,9 +3558,10 @@ Implementation (Phase 12, `akasha.security.redaction`):
      are persisted, published or logged.
 - Events stay secret-free by construction (closed scalar payloads, §18).
 - Metric labels never carry ids, codes or text (§113).
-- Limit: this catches *credential-shaped* secrets. A secret without a
-  recognisable shape (e.g. a bare password in prose) is only masked once
-  the credential store (Phase 13) redacts known values.
+- Limit: patterns catch *credential-shaped* secrets. Since Phase 13, values
+  resolved from the credential store are also masked exactly within the
+  resolving node's context (§32). A shapeless secret that never went through
+  the store (e.g. typed into an execution input) is still not recognisable.
 
 ----------
 

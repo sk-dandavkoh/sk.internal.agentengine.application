@@ -8,6 +8,7 @@ dependencies = [
     "alembic>=1.14",
     "asyncpg>=0.30",
     "croniter>=6.2.4",
+    "cryptography~=46.0",
     "fastapi>=0.141.1",
     "httpx>=0.28.1",
     "prometheus-client~=0.26",
