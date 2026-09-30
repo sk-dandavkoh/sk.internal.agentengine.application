@@ -5,7 +5,9 @@ tests and several containers never share counters.
 
 Label values are bounded by construction (AGENTS §41): statuses and error
 kinds are enums, ``trigger_type`` is an enum, ``node_type`` is bounded by
-the installed node registry. Never label with ids, error codes, messages or
+the installed node registry, ``metric`` by the names each node type declares
+in its definition (``NodeDefinition.metrics``). Never label with ids, error
+codes, messages or
 anything a workflow author types.
 """
 
@@ -79,6 +81,12 @@ class EngineMetrics:
             "akasha_node_execution_errors",
             "Failed node executions by error classification.",
             ["node_type", "error_kind"],
+            registry=registry,
+        )
+        self.node_metric = Counter(
+            "akasha_node_metric",
+            "Counters incremented by node code (context.metrics).",
+            ["node_type", "metric"],
             registry=registry,
         )
 

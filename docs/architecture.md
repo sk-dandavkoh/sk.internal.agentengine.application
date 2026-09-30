@@ -1103,6 +1103,11 @@ Implementation (Phase 11):
   deduplicate by `event_id`.
 - Canonical state stays the `executions`/`node_executions` rows; the
   lifecycle is reconstructable from persisted events plus that state.
+- Phase 16 adds `node.emitted` (payload `name`, `attempt`): a node's own
+  event, declared in `NodeDefinition.events` and emitted through the SDK
+  (`context.events`). The runtime records it before the attempt's outcome
+  (also for failed/cancelled attempts). Name-only, so the closed-payload
+  rule holds. It is not a terminal event for the lifecycle metrics.
 
 ----------
 
@@ -1638,6 +1643,34 @@ Artifacts
 Errors
 Testing utilities
 ```
+
+Implementation (Phase 16, `backend/src/akasha/sdk`, guide: `docs/sdk.md`):
+
+- `akasha.sdk` is a facade: it re-exports the domain Node contract
+  (`akasha.domain.node`) plus the three contract errors, and pins the
+  surface with `SDK_VERSION` (semver, `tests/test_sdk.py` guards
+  `__all__`). No parallel SDK types exist, so built-in and custom nodes
+  share one contract and the runtime needs no adapter.
+- Contract additions: `NodeDefinition.metrics` / `.events` (declared
+  names), `NodeMetrics` / `NodeEvents` on the context (per attempt,
+  undeclared names raise `NodeContractError`, at most 100 events per
+  attempt), and `NodeExecutionContext.resolve_credential` (a
+  `CREDENTIALS_UNAVAILABLE` error instead of an optional resolver).
+- The runtime flushes both when an attempt ends: events become
+  `node.emitted`, metrics `akasha_node_metric_total{node_type, metric}`.
+  Per attempt by design, not live: it keeps the single-writer rule (node
+  tasks never touch the aggregate or database) and one save per outcome.
+  Revisit when a live-update consumer (WebSocket gateway) exists.
+- Built-in nodes import the contract from `akasha.sdk` too (guarded by
+  `tests/test_architecture.py`), so every built-in exercises the SDK.
+- `akasha.sdk.testing.run_node` runs a node with the engine's checks in
+  the engine's order and the runtime's credential access rule
+  (`NodeCredentials`).
+- Not provided: artifacts (no artifact storage exists yet), `node
+  validate/package` commands (CLI Phase 21 / plugins Phase 17; `validate` is
+  `check_node_contract`), registration without engine code (Phase 17).
+- Example: `backend/examples/hmac_signer` (imports `akasha.sdk` only,
+  enforced by `tests/test_sdk.py`).
 
 ----------
 
@@ -3688,6 +3721,7 @@ exposition at `GET /metrics`, unauthenticated until Phase 20 like
 | `akasha_node_executions_finished_total` | counter | `node_type`, `status` |
 | `akasha_node_execution_duration_seconds` | histogram | `node_type`, `status` |
 | `akasha_node_execution_errors_total` | counter | `node_type`, `error_kind` |
+| `akasha_node_metric_total` | counter | `node_type`, `metric` (declared names only, Phase 16) |
 
 - Label values are bounded enums or the installed node types. Error codes
   are not labels (node/plugin-defined, open-ended).

@@ -13,9 +13,10 @@ or plugins (Phase 17) — deliberately not here.
 
 import json
 import logging
+import math
 import re
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum, auto
 from typing import Any, ClassVar, Protocol
@@ -255,6 +256,11 @@ class NodeDefinition:
     outputs: tuple[NodeOutput, ...] = ()
     config_schema: NodeConfigSchema = field(default_factory=NodeConfigSchema)
     capabilities: NodeCapabilities = field(default_factory=NodeCapabilities)
+    # Names the node may pass to ``context.metrics`` / ``context.events``.
+    # Declared up front so metric labels and event names stay a closed,
+    # reviewable set (AGENTS §41) — never derived from workflow data.
+    metrics: tuple[str, ...] = ()
+    events: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         for port_in in self.inputs:
@@ -263,6 +269,11 @@ class NodeDefinition:
             _check_port(port_out)
         _check_unique((p.name for p in self.inputs), "input")
         _check_unique((p.name for p in self.outputs), "output")
+        for kind, names in (("metric", self.metrics), ("event", self.events)):
+            for name in names:
+                if not _PORT_NAME_RE.match(name):
+                    raise NodeContractError(f"malformed {kind} name: {name!r}")
+            _check_unique(names, kind)
 
     @property
     def node_id(self) -> str:
@@ -428,6 +439,57 @@ class CredentialResolver(Protocol):
     async def resolve(self, reference: str) -> str: ...
 
 
+def _undeclared(kind: str, name: str) -> NodeContractError:
+    return NodeContractError(
+        f"{kind} {name!r} is not declared in the node definition",
+        details={kind: name},
+    )
+
+
+class NodeMetrics:
+    """Counters of one node attempt. Only names declared in
+    ``NodeDefinition.metrics`` are accepted; the runtime exports the totals
+    as ``akasha_node_metric_total{node_type, metric}`` when the attempt ends.
+    """
+
+    def __init__(self, declared: Iterable[str] = ()) -> None:
+        self._declared = frozenset(declared)
+        self.totals: dict[str, float] = {}
+
+    def increment(self, name: str, amount: float = 1.0) -> None:
+        if name not in self._declared:
+            raise _undeclared("metric", name)
+        if not _is_number(amount) or amount < 0 or not math.isfinite(amount):
+            raise NodeContractError(
+                f"metric {name!r} increment must be a finite number >= 0"
+            )
+        self.totals[name] = self.totals.get(name, 0.0) + amount
+
+
+# Resource limit (AGENTS §43): every emitted name becomes a persisted event.
+MAX_EVENTS_PER_ATTEMPT = 100
+
+
+class NodeEvents:
+    """Named events of one node attempt, persisted by the runtime as
+    ``node.emitted`` events (payload: ``name``, ``attempt``) when the attempt
+    ends. Deliberately name-only: event payloads never carry workflow data
+    (see ``akasha.domain.event``)."""
+
+    def __init__(self, declared: Iterable[str] = ()) -> None:
+        self._declared = frozenset(declared)
+        self.emitted: list[str] = []
+
+    def emit(self, name: str) -> None:
+        if name not in self._declared:
+            raise _undeclared("event", name)
+        if len(self.emitted) >= MAX_EVENTS_PER_ATTEMPT:
+            raise NodeContractError(
+                f"a node attempt may emit at most {MAX_EVENTS_PER_ATTEMPT} events"
+            )
+        self.emitted.append(name)
+
+
 @dataclass(frozen=True)
 class NodeExecutionContext:
     """Everything a node is allowed to see while it runs (§21).
@@ -451,6 +513,22 @@ class NodeExecutionContext:
     # The payload the execution was started with (manual/API/trigger input).
     # Read by entry nodes such as core.input; other nodes use their ports.
     execution_input: Mapping[str, Any] = field(default_factory=dict)
+    metrics: NodeMetrics = field(default_factory=NodeMetrics)
+    events: NodeEvents = field(default_factory=NodeEvents)
+
+    async def resolve_credential(self, reference: str) -> str:
+        """The secret behind a credential reference from this node's config.
+
+        Raises ``NodeError`` (CONFIGURATION) when the engine runs without a
+        credential store, the reference is not in the config, or is unknown.
+        """
+        if self.credentials is None:
+            raise NodeError(
+                "credential references cannot be resolved in this engine",
+                kind=NodeErrorKind.CONFIGURATION,
+                code="CREDENTIALS_UNAVAILABLE",
+            )
+        return await self.credentials.resolve(reference)
 
 
 @dataclass(frozen=True)

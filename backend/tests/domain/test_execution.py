@@ -18,6 +18,7 @@ from hypothesis import strategies as st
 from hypothesis.stateful import RuleBasedStateMachine, invariant, rule
 
 from akasha import __version__
+from akasha.domain.event import EventType
 from akasha.domain.execution import (
     EXECUTION_ACTIONS,
     EXECUTION_TRANSITIONS,
@@ -1215,3 +1216,25 @@ class TestPhase08Additions:
                 project_version=_version(0),
                 revision=-1,
             )
+
+
+def test_running_node_records_emitted_events() -> None:
+    e = _running()
+    node_id = _ids(e)[0]
+    _run_node(e, node_id)
+    e.pull_events()
+    e.record_node_event(node_id, "tick", now=T0)
+    [event] = e.pull_events()
+    assert event.event_type is EventType.NODE_EMITTED
+    assert event.node_id == node_id
+    assert event.payload == {"name": "tick", "attempt": 1}
+
+
+def test_only_running_nodes_record_emitted_events() -> None:
+    e = _running()
+    first, second = _ids(e)
+    _run_node(e, first)
+    e.complete_node(first, outputs={}, now=T0)
+    for node_id in (first, second):  # completed / pending
+        with pytest.raises(InvalidStateTransitionError):
+            e.record_node_event(node_id, "tick")

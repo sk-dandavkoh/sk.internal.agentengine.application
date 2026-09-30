@@ -23,11 +23,12 @@ RULES: dict[str, set[str]] = {
     "application": {"fastapi", "starlette", "uvicorn", "sqlalchemy", "redis"},
     "runtime": {"fastapi", "starlette", "uvicorn"},
     "nodes": {"fastapi", "starlette", "uvicorn"},
+    "sdk": {"fastapi", "starlette", "uvicorn", "sqlalchemy", "redis"},
 }
 
 # Provider libraries live behind ``akasha.providers`` only (§27, §78).
 PROVIDER_LIBRARIES = {"litellm", "openai", "anthropic"}
-for _layer in ("domain", "application", "runtime", "nodes"):
+for _layer in ("domain", "application", "runtime", "nodes", "sdk"):
     RULES[_layer] |= PROVIDER_LIBRARIES
 
 # akasha-internal layers each outer layer must not reach into
@@ -36,6 +37,9 @@ INTERNAL_RULES: dict[str, set[str]] = {
     "api": {"infrastructure"},
     # Nodes see only the contract (+ security guards); never the engine.
     "nodes": {"api", "application", "infrastructure", "runtime"},
+    # The SDK re-exports the contract; only its test harness borrows the
+    # runtime's credential rule. Never HTTP or persistence.
+    "sdk": {"api", "infrastructure", "providers"},
 }
 
 
@@ -82,3 +86,22 @@ def test_layers_exist() -> None:
         "observability",
     ]:
         assert (SRC / layer / "__init__.py").exists(), f"missing layer: {layer}"
+
+
+def test_builtin_nodes_use_the_sdk_for_the_node_contract() -> None:
+    """Built-ins dogfood ``akasha.sdk``: a contract name imported from the
+    domain instead would let the SDK surface drift unnoticed. The registry
+    is engine code and exempt."""
+    import akasha.sdk
+
+    public = set(akasha.sdk.__all__)
+    violations = []
+    for py_file in (SRC / "nodes").glob("*.py"):
+        if py_file.name == "registry.py":
+            continue
+        for node in ast.walk(ast.parse(py_file.read_text())):
+            if isinstance(node, ast.ImportFrom) and node.module == "akasha.domain.node":
+                violations += [
+                    f"{py_file.name}: {a.name}" for a in node.names if a.name in public
+                ]
+    assert not violations, "import these from akasha.sdk:\n" + "\n".join(violations)

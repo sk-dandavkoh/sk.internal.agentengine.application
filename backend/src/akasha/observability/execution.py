@@ -82,7 +82,7 @@ def observe_execution(
                 metrics.node_execution_errors.labels(
                     node_type, str(event.payload["error_kind"])
                 ).inc()
-            if kind is not EventType.NODE_STARTED:
+            if kind not in (EventType.NODE_STARTED, EventType.NODE_EMITTED):
                 seconds = _seconds(ne.started_at, event.occurred_at)
                 metrics.node_executions_finished.labels(node_type, status).inc()
                 if seconds is not None:

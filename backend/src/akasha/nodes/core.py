@@ -8,7 +8,7 @@ stateless and constructed without arguments.
 import asyncio
 import logging
 
-from akasha.domain.node import (
+from akasha.sdk import (
     Node,
     NodeCapabilities,
     NodeConfigSchema,

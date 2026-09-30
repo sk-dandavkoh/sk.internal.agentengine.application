@@ -745,6 +745,28 @@ class Execution(Entity):
         ne.start(now=now)
         self._emit(EventType.NODE_STARTED, now, node_id=node_id, attempt=ne.attempt)
 
+    def record_node_event(
+        self, node_id: str, name: str, *, now: datetime | None = None
+    ) -> None:
+        """A named event the running node emitted (``NodeEvents``); the
+        runtime records it before the attempt's outcome. The name is checked
+        against the node definition by ``NodeEvents``, not here."""
+        ne = self._node_for(node_id, "emit", _E_STARTED, blocked_by_cancellation=False)
+        if ne.status is not NodeExecutionStatus.RUNNING:
+            raise _illegal(
+                "only a running node can emit events",
+                action="node.emit",
+                current=ne.status,
+                node_id=node_id,
+            )
+        self._emit(
+            EventType.NODE_EMITTED,
+            now or utcnow(),
+            node_id=node_id,
+            name=name,
+            attempt=ne.attempt,
+        )
+
     def skip_node(self, node_id: str, *, now: datetime | None = None) -> None:
         ne = self._node_for(node_id, "skip", _E_STARTED, blocked_by_cancellation=True)
         now = now or utcnow()

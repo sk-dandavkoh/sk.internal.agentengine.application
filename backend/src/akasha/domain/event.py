@@ -37,6 +37,7 @@ class EventType(StrEnum):
     NODE_FAILED = "node.failed"
     NODE_SKIPPED = "node.skipped"
     NODE_CANCELLED = "node.cancelled"
+    NODE_EMITTED = "node.emitted"  # a node's own declared event (SDK)
     PROJECT_PUBLISHED = "project.published"
 
 
@@ -57,6 +58,8 @@ PAYLOAD_KEYS: Final[Mapping[EventType, frozenset[str]]] = {
     EventType.NODE_FAILED: _ERROR | {"attempt"},
     EventType.NODE_SKIPPED: frozenset(),
     EventType.NODE_CANCELLED: frozenset(),
+    # ``name`` is one of the node definition's declared event names.
+    EventType.NODE_EMITTED: frozenset({"name", "attempt"}),
     EventType.PROJECT_PUBLISHED: frozenset(),
 }
 

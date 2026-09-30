@@ -43,7 +43,13 @@ from akasha.domain.execution import (
     ExecutionStatus,
     NodeExecutionStatus,
 )
-from akasha.domain.node import NodeErrorKind, NodeExecutionContext, NodeResult
+from akasha.domain.node import (
+    NodeErrorKind,
+    NodeEvents,
+    NodeExecutionContext,
+    NodeMetrics,
+    NodeResult,
+)
 from akasha.domain.primitives import utcnow
 from akasha.errors import AkashaError, ConfigurationError, InvalidStateTransitionError
 from akasha.observability.execution import observe_execution
@@ -121,7 +127,14 @@ def _verdict(
     return None
 
 
-_Running = dict[asyncio.Task[NodeOutcome], str]  # task -> node instance id
+@dataclass(frozen=True)
+class _Attempt:
+    node_id: str  # node instance id
+    node_type: str
+    context: NodeExecutionContext
+
+
+_Running = dict[asyncio.Task[NodeOutcome], _Attempt]
 
 
 class ExecutionRuntime:
@@ -331,6 +344,7 @@ class ExecutionRuntime:
         for node_id in batch:
             ne = execution.node(node_id)
             instance = plan.graph.nodes[node_id]
+            definition = plan.implementations[node_id].definition
             context = NodeExecutionContext(
                 execution_id=execution.id,
                 node_execution_id=ne.id,
@@ -353,6 +367,8 @@ class ExecutionRuntime:
                 },
                 # A copy for the same reason as ``config``.
                 execution_input=deepcopy(execution.input),
+                metrics=NodeMetrics(definition.metrics),
+                events=NodeEvents(definition.events),
             )
             # The task copies the context it is created in: every log line
             # of the node's code (and libraries it calls) carries these ids.
@@ -371,7 +387,7 @@ class ExecutionRuntime:
                         limit=execution.timeout_policy.node_timeout,
                     )
                 )
-            running[task] = node_id
+            running[task] = _Attempt(node_id, instance.node_type, context)
         return True
 
     def _advance(self, execution: Execution, plan: ExecutionPlan, done: str) -> None:
@@ -401,11 +417,13 @@ class ExecutionRuntime:
         first failure."""
         completed: list[str] = []
         first_failure: ExecutionError | None = None
-        finished.sort(key=lambda t: running[t])
+        finished.sort(key=lambda t: running[t].node_id)
         for task in finished:
-            node_id = running.pop(task)
+            attempt = running.pop(task)
+            node_id = attempt.node_id
             outcome = task.result()
             now = self._clock()
+            self._flush(execution, attempt, now)
             if isinstance(outcome, NodeResult):
                 execution.complete_node(node_id, outputs=outcome.outputs, now=now)
                 completed.append(node_id)
@@ -413,6 +431,23 @@ class ExecutionRuntime:
                 execution.fail_node(node_id, outcome, now=now)
                 first_failure = first_failure or outcome
         return completed, first_failure
+
+    def _flush(self, execution: Execution, attempt: _Attempt, now: datetime) -> None:
+        """Record what the node emitted through ``context.events`` /
+        ``context.metrics`` — also for failed and cancelled attempts: the
+        node really did it.
+
+        Once per attempt by design: node tasks never touch the aggregate or
+        the database (module docstring), and every emitted event lands in
+        the same save as the attempt's outcome. Live progress would need a
+        channel from node tasks to this loop plus a save per emission;
+        revisit when a consumer of live progress (a live-update gateway)
+        exists.
+        """
+        for name in attempt.context.events.emitted:
+            execution.record_node_event(attempt.node_id, name, now=now)
+        for name, amount in attempt.context.metrics.totals.items():
+            self._metrics.node_metric.labels(attempt.node_type, name).inc(amount)
 
     async def _stop(self, execution: Execution, running: _Running) -> None:
         """Cancel in-flight attempts and wait until each really ended.
@@ -429,4 +464,7 @@ class ExecutionRuntime:
             task.cancel()
         await asyncio.wait(running)
         self._record(execution, running, [t for t in running if not t.cancelled()])
+        now = self._clock()
+        for attempt in running.values():  # the cancelled rest
+            self._flush(execution, attempt, now)
         running.clear()

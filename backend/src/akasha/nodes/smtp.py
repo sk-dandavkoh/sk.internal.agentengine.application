@@ -21,7 +21,8 @@ import ssl
 from email.message import EmailMessage
 from email.utils import formatdate
 
-from akasha.domain.node import (
+from akasha.nodes.core import VERSION, closed_schema
+from akasha.sdk import (
     Node,
     NodeCapabilities,
     NodeDefinition,
@@ -34,7 +35,6 @@ from akasha.domain.node import (
     NodeResult,
     PortType,
 )
-from akasha.nodes.core import VERSION, closed_schema
 from akasha.security.network import NetworkPolicy, check_destination
 
 MAX_RECIPIENTS = 50
