@@ -1081,6 +1081,29 @@ Event Publisher
 
 The runtime should publish domain/application events rather than directly manipulating frontend connections.
 
+Implementation (Phase 11):
+
+- `domain/event.py`: immutable `Event`, `EventType`. Payloads are closed
+  per type and scalar-only (ids, statuses, error codes, attempt), so node
+  inputs/outputs, config, error messages and cancellation reasons can
+  structurally never enter an event. `schema_version` versions payloads.
+- The `Execution` aggregate records its own lifecycle events inside the
+  transition methods (`pending_events` / `pull_events`); no caller can
+  change state without the event. `project.published` is recorded by
+  `ProjectService.publish_project`.
+- Persistence: `EventRepository` (`events` table, append-only, idempotent
+  on `event_id`). Events are appended in the *same transaction* as the
+  state change they describe: never state without events, never events
+  without state. `position` totally orders the events of one execution or
+  project; across unrelated streams it only approximates commit order.
+- Delivery: `EventPublisher` fans out in-process *after* commit,
+  at-most-once, with per-subscriber error and timeout isolation. A broken
+  consumer can never fail or roll back a use case. Consumers that must not
+  miss events catch up from `EventRepository.list(after=position)` and
+  deduplicate by `event_id`.
+- Canonical state stays the `executions`/`node_executions` rows; the
+  lifecycle is reconstructable from persisted events plus that state.
+
 ----------
 
 # 20. Application Layer

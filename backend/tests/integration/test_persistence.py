@@ -34,7 +34,7 @@ UowFactory = Callable[[], AbstractAsyncContextManager[SqlAlchemyUnitOfWork]]
 pytestmark = pytest.mark.usefixtures("clean_db")
 
 _BACKENDS_DIR = Path(__file__).resolve().parents[2]
-_HEAD = "0004_execution_input"
+_HEAD = "0005_events"
 
 
 def _alembic_command(verb: str, db_url: str, target: str) -> None:
@@ -419,6 +419,7 @@ async def test_migrations_upgrade_downgrade_upgrade_on_empty_database(
                 "project_versions",
                 "executions",
                 "node_executions",
+                "events",
             } <= tables
             assert rev == _HEAD
 
@@ -437,6 +438,7 @@ async def test_migrations_upgrade_downgrade_upgrade_on_empty_database(
             assert "project_versions" not in tables
             assert "executions" not in tables
             assert "node_executions" not in tables
+            assert "events" not in tables
 
             await asyncio.to_thread(_alembic_command, "upgrade", scratch_url, "head")
             async with verify.engine.connect() as conn:

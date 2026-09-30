@@ -11,6 +11,7 @@ import logging
 from collections.abc import Mapping
 from typing import Any
 
+from akasha.application.events import EventPublisher
 from akasha.application.persistence import UnitOfWork
 from akasha.application.projects import ProjectVersionNotFoundError, UowFactory
 from akasha.domain.execution import Execution, ExecutionMetadata, TimeoutPolicy
@@ -33,9 +34,20 @@ async def load_execution(uow: UnitOfWork, execution_id: str) -> Execution:
     return execution
 
 
+async def save_execution(uow: UnitOfWork, execution: Execution) -> None:
+    """Stage the aggregate and its recorded events in ``uow``'s transaction.
+
+    The events stay pending on the aggregate: the caller publishes
+    ``execution.pull_events()`` only after ``uow.commit()`` succeeded.
+    """
+    await uow.executions.save(execution)
+    await uow.events.append(execution.pending_events)
+
+
 class ExecutionService:
-    def __init__(self, uow: UowFactory) -> None:
+    def __init__(self, uow: UowFactory, events: EventPublisher | None = None) -> None:
         self._uow = uow
+        self._events = events or EventPublisher()
 
     async def create_execution(
         self,
@@ -68,8 +80,9 @@ class ExecutionService:
                 input=input,
             )
             execution.enqueue()
-            await uow.executions.save(execution)
+            await save_execution(uow, execution)
             await uow.commit()
+        await self._events.publish(execution.pull_events())
         logger.info(
             "execution_created",
             extra={

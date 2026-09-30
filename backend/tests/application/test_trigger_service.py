@@ -14,6 +14,7 @@ import pytest
 
 from akasha.application.executions import ExecutionService
 from akasha.application.persistence import (
+    EventRepository,
     ExecutionRepository,
     ProjectRepository,
     ProjectVersionRepository,
@@ -26,6 +27,7 @@ from akasha.application.triggers import (
     TriggerRegistry,
     TriggerService,
 )
+from akasha.domain.event import Event
 from akasha.domain.execution import Execution, ExecutionStatus
 from akasha.domain.graph import Graph
 from akasha.domain.primitives import new_id
@@ -90,11 +92,30 @@ class FakeProjects(ProjectRepository):
         return []
 
 
+class FakeEvents(EventRepository):
+    def __init__(self) -> None:
+        self.items: list[Event] = []
+
+    async def append(self, events: Sequence[Event]) -> None:
+        self.items.extend(events)
+
+    async def list(
+        self,
+        *,
+        execution_id: str | None = None,
+        project_id: str | None = None,
+        after: int = 0,
+        limit: int = 100,
+    ) -> Sequence[Event]:
+        return self.items[:limit]
+
+
 class FakeUow(UnitOfWork):
     def __init__(self) -> None:
         self.versions = FakeVersions()
         self.executions = FakeExecutions()
         self.projects = FakeProjects()
+        self.events = FakeEvents()
 
     async def __aenter__(self) -> "FakeUow":
         return self

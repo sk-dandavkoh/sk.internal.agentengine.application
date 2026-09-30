@@ -16,6 +16,7 @@ from collections.abc import Sequence
 from types import TracebackType
 from typing import Protocol
 
+from akasha.domain.event import Event
 from akasha.domain.execution import Execution
 from akasha.domain.project import Project, ProjectVersion
 from akasha.errors import AkashaError
@@ -93,6 +94,35 @@ class ExecutionRepository(Protocol):
     async def save(self, execution: Execution) -> None: ...
 
 
+class EventRepository(Protocol):
+    """Append-only event store (no update, no delete: events are history).
+
+    ``append`` participates in the caller's transaction, so events commit
+    atomically with the state change they describe — never one without the
+    other. It is idempotent on ``event_id``: re-appending a stored event is a
+    no-op, so a redelivered or retried append cannot duplicate history.
+    """
+
+    async def append(self, events: Sequence[Event]) -> None: ...
+
+    async def list(
+        self,
+        *,
+        execution_id: str | None = None,
+        project_id: str | None = None,
+        after: int = 0,
+        limit: int = 100,
+    ) -> Sequence[Event]:
+        """Stored events with ``position > after``, ascending by position.
+
+        Ordering is guaranteed per execution and per project (each has a
+        single CAS-guarded writer). Across unrelated streams positions only
+        approximate commit order, so a global "after" cursor may skip a
+        concurrently committed event.
+        """
+        ...
+
+
 class UnitOfWork(Protocol):
     """Explicit transaction boundary (backend/AGENTS.md §16).
 
@@ -103,6 +133,7 @@ class UnitOfWork(Protocol):
     projects: ProjectRepository
     versions: ProjectVersionRepository
     executions: ExecutionRepository
+    events: EventRepository
 
     async def __aenter__(self) -> "UnitOfWork": ...
     async def __aexit__(

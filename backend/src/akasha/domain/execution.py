@@ -18,6 +18,13 @@ execution has only terminal nodes, cancellation is never revived by a retry).
 
 Retry/timeout *policies* live here as values; *enforcement* (sleeping for
 backoff, watching deadlines) is the runtime's job (Phase 08+).
+
+Lifecycle events (Phase 11) are recorded by the transitions themselves, so no
+caller can change state without its event: ``pending_events`` accumulates
+them until persistence stores them in the same transaction as the state.
+Rehydrating an execution records nothing. Not evented: enqueue (folded into
+``execution.created``), mark_ready, pause/wait/resume and retry — no runtime
+path drives the last four yet (Phase 23).
 """
 
 import json
@@ -31,6 +38,7 @@ from math import inf
 from typing import Any, Final
 
 from akasha import __version__
+from akasha.domain.event import Event, EventType, PayloadValue
 from akasha.domain.node import RETRYABLE_ERROR_KINDS, NodeError, NodeErrorKind
 from akasha.domain.primitives import Entity, new_id, utcnow, validate_id
 from akasha.domain.project import ProjectVersion
@@ -455,6 +463,8 @@ class Execution(Entity):
     # The JSON object the execution was started with (manual/API/trigger
     # payload); entry nodes read it via NodeExecutionContext.execution_input.
     input: dict[str, Any] = field(default_factory=dict)
+    # Events recorded since the last ``pull_events`` (never persisted state).
+    _events: list[Event] = field(default_factory=list, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.id = validate_id(self.id)
@@ -497,7 +507,7 @@ class Execution(Entity):
         input: Mapping[str, Any] | None = None,
         now: datetime | None = None,
     ) -> "Execution":
-        return cls(
+        execution = cls(
             id=new_id("exec"),
             project_id=project_id,
             project_version=project_version,
@@ -511,6 +521,45 @@ class Execution(Entity):
             created_at=now or utcnow(),
             # Deep copy: the caller's payload must not alias the record.
             input=deepcopy(dict(input or {})),
+        )
+        execution._emit(
+            EventType.EXECUTION_CREATED,
+            execution.created_at,
+            trigger_type=execution.metadata.trigger_type.value,
+            trigger_id=execution.metadata.trigger_id,
+        )
+        return execution
+
+    # -- events ---------------------------------------------------------------
+
+    @property
+    def pending_events(self) -> tuple[Event, ...]:
+        return tuple(self._events)
+
+    def pull_events(self) -> list[Event]:
+        """Hand over the recorded events (oldest first) and forget them."""
+        events, self._events = self._events, []
+        return events
+
+    def _emit(
+        self,
+        event_type: EventType,
+        now: datetime,
+        *,
+        node_id: str | None = None,
+        **payload: PayloadValue,
+    ) -> None:
+        self._events.append(
+            Event(
+                event_type=event_type,
+                occurred_at=now,
+                project_id=self.project_id,
+                execution_id=self.id,
+                node_id=node_id,
+                project_version=self.project_version.version,
+                correlation_id=self.metadata.correlation_id,
+                payload=payload,
+            )
         )
 
     # -- queries ------------------------------------------------------------
@@ -552,16 +601,19 @@ class Execution(Entity):
             )
         return target
 
-    def _finish(self, action: str, now: datetime | None) -> None:
+    def _finish(self, action: str, now: datetime | None) -> datetime:
         """Enter a terminal state; every unfinished node is cancelled so a
-        terminal execution never has live nodes."""
+        terminal execution never has live nodes. Returns the finish time."""
         target = self._target(action)
         now = now or utcnow()
-        for ne in self.node_executions.values():
+        for node_id in sorted(self.node_executions):  # deterministic event order
+            ne = self.node_executions[node_id]
             if not ne.is_terminal:
                 ne.cancel(now=now)
+                self._emit(EventType.NODE_CANCELLED, now, node_id=node_id)
         self.status = target
         self.finished_at = now
+        return now
 
     def enqueue(self) -> None:
         self.status = self._target("enqueue")
@@ -578,6 +630,7 @@ class Execution(Entity):
         self.started_at = now or utcnow()
         if node_versions is not None:
             self.metadata = replace(self.metadata, node_versions=node_versions)
+        self._emit(EventType.EXECUTION_STARTED, self.started_at)
 
     def pause(self) -> None:
         self.status = self._target("pause")
@@ -603,14 +656,21 @@ class Execution(Entity):
                 to=str(target),
                 node_ids=",".join(unfinished),
             )
-        self._finish("complete", now)
+        self._emit(EventType.EXECUTION_COMPLETED, self._finish("complete", now))
 
     def fail(self, error: ExecutionError, *, now: datetime | None = None) -> None:
         self._target("fail")
         if error.node_id is not None:
             self.node(error.node_id)
-        self._finish("fail", now)
+        finished = self._finish("fail", now)
         self.error = error
+        self._emit(
+            EventType.EXECUTION_FAILED,
+            finished,
+            error_code=error.code,
+            error_kind=error.kind.value,
+            error_node_id=error.node_id,
+        )
 
     def request_cancellation(
         self, *, reason: str = "", now: datetime | None = None
@@ -632,15 +692,17 @@ class Execution(Entity):
         if self.cancellation is None:
             self.cancellation = CancellationState(now, reason)
         self._finish("cancel", now)
+        self._emit(EventType.EXECUTION_CANCELLED, now)
 
     def time_out(self, *, now: datetime | None = None) -> None:
         self._target("time_out")
-        self._finish("time_out", now)
+        finished = self._finish("time_out", now)
         self.error = ExecutionError(
             code="EXECUTION_TIMEOUT",
             message="execution exceeded its timeout",
             kind=NodeErrorKind.TIMEOUT,
         )
+        self._emit(EventType.EXECUTION_TIMED_OUT, finished, error_code=self.error.code)
 
     # -- node transitions (aggregate-guarded) --------------------------------
 
@@ -676,14 +738,18 @@ class Execution(Entity):
         ).mark_ready()
 
     def start_node(self, node_id: str, *, now: datetime | None = None) -> None:
-        self._node_for(
+        ne = self._node_for(
             node_id, "start", frozenset({_E.RUNNING}), blocked_by_cancellation=True
-        ).start(now=now)
+        )
+        now = now or utcnow()
+        ne.start(now=now)
+        self._emit(EventType.NODE_STARTED, now, node_id=node_id, attempt=ne.attempt)
 
     def skip_node(self, node_id: str, *, now: datetime | None = None) -> None:
-        self._node_for(node_id, "skip", _E_STARTED, blocked_by_cancellation=True).skip(
-            now=now
-        )
+        ne = self._node_for(node_id, "skip", _E_STARTED, blocked_by_cancellation=True)
+        now = now or utcnow()
+        ne.skip(now=now)
+        self._emit(EventType.NODE_SKIPPED, now, node_id=node_id)
 
     # In-flight nodes may finish after a pause or cancellation request: the
     # work (and its side effects) really happened, so the record stays true.
@@ -694,15 +760,26 @@ class Execution(Entity):
         outputs: Mapping[str, Any] | None = None,
         now: datetime | None = None,
     ) -> None:
-        self._node_for(
+        ne = self._node_for(
             node_id, "complete", _E_STARTED, blocked_by_cancellation=False
-        ).complete(outputs=outputs, now=now)
+        )
+        now = now or utcnow()
+        ne.complete(outputs=outputs, now=now)
+        self._emit(EventType.NODE_COMPLETED, now, node_id=node_id, attempt=ne.attempt)
 
     def fail_node(
         self, node_id: str, error: ExecutionError, *, now: datetime | None = None
     ) -> None:
-        self._node_for(node_id, "fail", _E_STARTED, blocked_by_cancellation=False).fail(
-            error, now=now
+        ne = self._node_for(node_id, "fail", _E_STARTED, blocked_by_cancellation=False)
+        now = now or utcnow()
+        ne.fail(error, now=now)
+        self._emit(
+            EventType.NODE_FAILED,
+            now,
+            node_id=node_id,
+            attempt=ne.attempt,
+            error_code=error.code,
+            error_kind=error.kind.value,
         )
 
     def retry_node(

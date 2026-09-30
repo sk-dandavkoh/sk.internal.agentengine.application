@@ -19,11 +19,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from akasha.application.persistence import (
     ConcurrentModificationError,
+    EventRepository,
     ExecutionRepository,
     ProjectRepository,
     ProjectVersionRepository,
     UnitOfWork,
 )
+from akasha.domain.event import Event, EventType
 from akasha.domain.execution import (
     CancellationState,
     Execution,
@@ -530,6 +532,74 @@ def _node_to_domain(row: RowMapping) -> NodeExecution:
     )
 
 
+class SqlAlchemyEventRepository(EventRepository):
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def append(self, events: Sequence[Event]) -> None:
+        # One statement per event, in order: identity values are then drawn
+        # in event order, which is what makes ``position`` the stream order.
+        # ponytail: N round trips per save (a terminal cascade emits one
+        # event per unfinished node); batch when large graphs make it show.
+        for e in events:
+            await self._session.execute(
+                pg_insert(m.events)
+                .values(
+                    event_id=e.event_id,
+                    event_type=e.event_type.value,
+                    schema_version=e.schema_version,
+                    occurred_at=e.occurred_at,
+                    project_id=e.project_id,
+                    execution_id=e.execution_id,
+                    node_id=e.node_id,
+                    project_version=e.project_version,
+                    correlation_id=e.correlation_id,
+                    payload=dict(e.payload),
+                )
+                # Idempotent: a re-appended event keeps its first row.
+                .on_conflict_do_nothing(index_elements=[m.events.c.event_id])
+            )
+
+    async def list(
+        self,
+        *,
+        execution_id: str | None = None,
+        project_id: str | None = None,
+        after: int = 0,
+        limit: int = 100,
+    ) -> Sequence[Event]:
+        stmt = select(m.events).where(m.events.c.position > after)
+        if execution_id is not None:
+            stmt = stmt.where(m.events.c.execution_id == execution_id)
+        if project_id is not None:
+            stmt = stmt.where(m.events.c.project_id == project_id)
+        rows = (
+            (
+                await self._session.execute(
+                    stmt.order_by(m.events.c.position).limit(limit)
+                )
+            )
+            .mappings()
+            .all()
+        )
+        return [
+            Event(
+                event_id=r["event_id"],
+                event_type=EventType(r["event_type"]),
+                schema_version=r["schema_version"],
+                occurred_at=_ensure_utc(r["occurred_at"]),
+                project_id=r["project_id"],
+                execution_id=r["execution_id"],
+                node_id=r["node_id"],
+                project_version=r["project_version"],
+                correlation_id=r["correlation_id"],
+                payload=dict(r["payload"]),
+                position=r["position"],
+            )
+            for r in rows
+        ]
+
+
 class SqlAlchemyUnitOfWork(UnitOfWork):
     """One session = one transaction; commit is explicit, exit rolls back."""
 
@@ -542,6 +612,7 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
         self.executions: ExecutionRepository = SqlAlchemyExecutionRepository(
             self._session, self.versions
         )
+        self.events: EventRepository = SqlAlchemyEventRepository(self._session)
 
     async def __aenter__(self) -> "SqlAlchemyUnitOfWork":
         return self

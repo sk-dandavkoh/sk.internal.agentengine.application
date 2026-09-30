@@ -10,6 +10,7 @@ import contextlib
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
+from akasha.application.events import EventPublisher
 from akasha.application.executions import ExecutionService
 from akasha.application.projects import ProjectService
 from akasha.application.triggers import TriggerRegistry, TriggerService
@@ -32,6 +33,9 @@ class Container:
 
     settings: Settings
     nodes: NodeRegistry = field(default_factory=NodeRegistry)
+    # One in-process fan-out shared by every producer; consumers (WebSocket
+    # gateway, metrics) subscribe here.
+    events: EventPublisher = field(default_factory=EventPublisher)
     database: Database | None = None
     projects: ProjectService | None = None
     executions: ExecutionService | None = None
@@ -90,8 +94,9 @@ def create_container(settings: Settings) -> Container:
 
     # The same registry must later back the ExecutionRuntime (Phase 21/22
     # wiring), so publish-time and run-time validation agree.
-    projects = ProjectService(uow, nodes.definitions)
-    executions = ExecutionService(uow)
+    events = EventPublisher()
+    projects = ProjectService(uow, nodes.definitions, events)
+    executions = ExecutionService(uow, events)
     triggers = TriggerService(executions)
     trigger_registry = TriggerRegistry(uow)
     scheduler = (
@@ -104,6 +109,7 @@ def create_container(settings: Settings) -> Container:
     return Container(
         settings=settings,
         nodes=nodes,
+        events=events,
         database=database,
         projects=projects,
         executions=executions,

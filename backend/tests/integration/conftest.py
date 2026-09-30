@@ -63,6 +63,7 @@ async def clean_db(database: Database) -> None:
     """Guaranteed-empty tables per test; no inter-test state leakage (§54)."""
     async with database.engine.begin() as conn:
         for table in (
+            "events",
             "node_executions",
             "executions",
             "project_versions",

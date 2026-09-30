@@ -13,11 +13,14 @@ Concurrency model (the reason this is race-free by construction):
   fail loudly instead of interleaving state.
 - A node is persisted RUNNING *before* its task is created, so the stored
   state never hides that a node may have produced side effects.
+- Lifecycle events are recorded by the aggregate's transitions, stored in
+  the same transaction as each save and published after its commit. A
+  failing event subscriber cannot affect the run (``EventPublisher``).
 
 Scope: no retries (Phase 23), no queue/worker/leases (Phase 22), no
-recovery of executions left RUNNING by a dead process (Phase 23), no events
-(Phase 11). Control flow is generic (``ExecutionPlan.readiness``): the loop
-never inspects node types.
+recovery of executions left RUNNING by a dead process (Phase 23). Control
+flow is generic (``ExecutionPlan.readiness``): the loop never inspects node
+types.
 """
 
 import asyncio
@@ -28,7 +31,8 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from akasha.application.executions import load_execution
+from akasha.application.events import EventPublisher
+from akasha.application.executions import load_execution, save_execution
 from akasha.application.projects import UowFactory
 from akasha.domain.execution import (
     Execution,
@@ -59,10 +63,12 @@ class ExecutionAlreadyRunningError(AkashaError):
 
 class StateManager:
     """Loads and persists the execution aggregate; one short transaction per
-    call. Never held open across node execution (backend/AGENTS.md §16)."""
+    call. Never held open across node execution (backend/AGENTS.md §16).
+    Publishes the saved transitions' events once the save committed."""
 
-    def __init__(self, uow: UowFactory) -> None:
+    def __init__(self, uow: UowFactory, events: EventPublisher) -> None:
         self._uow = uow
+        self._events = events
 
     async def load(self, execution_id: str) -> Execution:
         async with self._uow() as uow:
@@ -70,8 +76,9 @@ class StateManager:
 
     async def save(self, execution: Execution) -> None:
         async with self._uow() as uow:
-            await uow.executions.save(execution)
+            await save_execution(uow, execution)
             await uow.commit()
+        await self._events.publish(execution.pull_events())
 
 
 @dataclass
@@ -120,10 +127,11 @@ class ExecutionRuntime:
         *,
         max_concurrency: int = 8,
         clock: Clock = utcnow,
+        events: EventPublisher | None = None,
     ) -> None:
         if max_concurrency < 1:
             raise ConfigurationError("max_concurrency must be >= 1")
-        self._state = StateManager(uow)
+        self._state = StateManager(uow, events or EventPublisher())
         self._catalog = catalog
         self._max_concurrency = max_concurrency
         self._clock = clock

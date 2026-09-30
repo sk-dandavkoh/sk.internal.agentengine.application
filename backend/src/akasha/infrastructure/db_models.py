@@ -9,11 +9,13 @@ semantic validation happens in the domain, not in SQL.
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     CheckConstraint,
     Column,
     DateTime,
     ForeignKey,
     ForeignKeyConstraint,
+    Identity,
     Index,
     Integer,
     MetaData,
@@ -130,4 +132,27 @@ node_executions = Table(
     CheckConstraint(f"status IN ({_NODE_STATUSES})", name="ck_node_executions_status"),
     CheckConstraint("attempt >= 0", name="ck_node_executions_attempt_non_negative"),
     Index("uq_node_executions_execution_node", "execution_id", "node_id", unique=True),
+)
+
+# Append-only event log (Phase 11). Deliberately no foreign keys: events are
+# history and must stay readable (audit) even where retention later prunes
+# the rows they describe; ids are plain references.
+events = Table(
+    "events",
+    metadata,
+    # Store-assigned order. Per execution/project it is the true event order
+    # (one CAS-guarded writer, rows inserted in order).
+    Column("position", BigInteger, Identity(always=True), primary_key=True),
+    Column("event_id", String, nullable=False, unique=True),
+    Column("event_type", String, nullable=False),
+    Column("schema_version", Integer, nullable=False),
+    Column("occurred_at", DateTime(timezone=True), nullable=False),
+    Column("project_id", String, nullable=False),
+    Column("execution_id", String, nullable=True),
+    Column("node_id", String, nullable=True),
+    Column("project_version", Integer, nullable=True),
+    Column("correlation_id", String, nullable=True),
+    Column("payload", JSONB_VARIANT, nullable=False),
+    Index("ix_events_execution_position", "execution_id", "position"),
+    Index("ix_events_project_position", "project_id", "position"),
 )

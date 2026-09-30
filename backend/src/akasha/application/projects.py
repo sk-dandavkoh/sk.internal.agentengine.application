@@ -14,7 +14,9 @@ import logging
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
+from akasha.application.events import EventPublisher
 from akasha.application.persistence import ConcurrentModificationError, UnitOfWork
+from akasha.domain.event import Event, EventType
 from akasha.domain.graph_validation import ValidationIssue, ValidationResult
 from akasha.domain.node import NodeDefinition
 from akasha.domain.project import Project, ProjectDraft, ProjectVersion
@@ -119,10 +121,14 @@ class ProjectService:
     """
 
     def __init__(
-        self, uow: UowFactory, node_definitions: Mapping[str, NodeDefinition]
+        self,
+        uow: UowFactory,
+        node_definitions: Mapping[str, NodeDefinition],
+        events: EventPublisher | None = None,
     ) -> None:
         self._uow = uow
         self._definitions = node_definitions
+        self._events = events or EventPublisher()
 
     async def create_project(self, name: str, *, description: str = "") -> Project:
         project = Project.create(name, description=description)
@@ -200,9 +206,17 @@ class ProjectService:
             if not result.ok:
                 raise ProjectValidationFailedError(result)
             version = project.publish_draft()
+            published = Event(
+                event_type=EventType.PROJECT_PUBLISHED,
+                occurred_at=version.published_at,
+                project_id=project.id,
+                project_version=version.version,
+            )
             await uow.projects.save(project)
             await uow.versions.save(project.id, version)
+            await uow.events.append([published])
             await uow.commit()
+        await self._events.publish([published])
         _log("project_published", project, version=version.version)
         return version
 
