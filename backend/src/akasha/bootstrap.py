@@ -170,7 +170,12 @@ def create_container(settings: Settings) -> Container:
     executions = ExecutionService(uow, events, metrics, queue=queue)
     credentials = None if cipher is None else CredentialService(uow, cipher)
     runtime = ExecutionRuntime(
-        uow, nodes.catalog, events=events, metrics=metrics, credentials=credentials
+        uow,
+        nodes.catalog,
+        events=events,
+        metrics=metrics,
+        credentials=credentials,
+        heartbeat_seconds=settings.worker_heartbeat_seconds,
     )
     workers = (
         None
@@ -188,6 +193,7 @@ def create_container(settings: Settings) -> Container:
             executions,
             metrics=metrics,
             recovery_seconds=settings.queue_recovery_seconds,
+            stale_seconds=settings.execution_stale_seconds,
         )
     )
     ready_checks: dict[str, ReadyCheck] = {"database": database.check}

@@ -7,7 +7,7 @@ Missing or invalid critical configuration fails fast at startup (see
 
 from pathlib import Path
 
-from pydantic import AnyHttpUrl, Field, SecretStr
+from pydantic import AnyHttpUrl, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -51,6 +51,10 @@ class Settings(BaseSettings):
     # How often lost jobs are recovered, and how long an execution may stay
     # QUEUED before it is dispatched again.
     queue_recovery_seconds: float = Field(default=30.0, gt=0)
+    # A started execution whose owner has not heart-beaten (every
+    # worker_heartbeat_seconds) for this long is recovered. Keep it several
+    # heartbeats long: a live but slow owner past it loses its run.
+    execution_stale_seconds: float = Field(default=60.0, gt=0)
 
     # Trigger system (Phase 10). CRON/INTERVAL triggers are fired by one
     # in-process scheduler task per API process.
@@ -89,6 +93,14 @@ class Settings(BaseSettings):
     # must exist. Unset → no plugins. Plugins are trusted code: only
     # operators may write here.
     plugins_dir: Path | None = None
+
+    @model_validator(mode="after")
+    def _stale_after_heartbeats(self) -> "Settings":
+        if self.execution_stale_seconds < 3 * self.worker_heartbeat_seconds:
+            raise ValueError(
+                "execution_stale_seconds must be at least 3 worker heartbeats"
+            )
+        return self
 
 
 def load_settings() -> Settings:

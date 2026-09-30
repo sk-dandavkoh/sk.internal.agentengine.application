@@ -44,7 +44,7 @@ from akasha.domain.node import (
     PortType,
 )
 from akasha.domain.project import ProjectDraft
-from akasha.errors import ConfigurationError, InvalidStateTransitionError
+from akasha.errors import InvalidStateTransitionError
 from akasha.infrastructure.database import Database
 from akasha.infrastructure.persistence import SqlAlchemyUnitOfWork
 from akasha.runtime.plan import NodeCatalog
@@ -1270,28 +1270,6 @@ async def test_create_execution_for_missing_version(h: Harness) -> None:
     project_id, _ = await h.publish(catalog, graph)
     with pytest.raises(ProjectVersionNotFoundError):
         await h.executions.create_execution(project_id, 99)
-
-
-async def test_configured_retry_policy_is_refused_not_ignored(h: Harness) -> None:
-    catalog = base_catalog(Probe())
-    graph, _ = build(
-        {"A": ("test.emit", {"value": "a"}), "B": ("test.append", {"suffix": "b"})},
-        ["A.out>B.text"],
-    )
-    project_id, version = await h.publish(catalog, graph)
-    async with h.uow() as uow:
-        snapshot = await uow.versions.get(project_id, version)
-        assert snapshot is not None
-        execution = Execution.create(
-            project_id, snapshot, retry_policy=RetryPolicy(max_attempts=3)
-        )
-        execution.enqueue()
-        await uow.executions.save(execution)
-        await uow.commit()
-
-    with pytest.raises(ConfigurationError):
-        await h.runtime(catalog).run(execution.id)
-    assert (await h.load(execution.id)).status is _E.QUEUED
 
 
 async def test_nul_in_node_output_or_error_never_crashes_the_run(h: Harness) -> None:

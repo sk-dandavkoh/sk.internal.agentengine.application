@@ -89,6 +89,18 @@ class EngineMetrics:
             ["node_type", "error_kind"],
             registry=registry,
         )
+        self.node_retries = Counter(
+            "akasha_node_retries",
+            "Failed node attempts scheduled to run again (retry policy or"
+            " recovery), by error classification.",
+            ["node_type", "error_kind"],
+            registry=registry,
+        )
+        self.executions_recovered = Counter(
+            "akasha_executions_recovered",
+            "Stale executions taken over and queued to resume.",
+            registry=registry,
+        )
         self.node_metric = Counter(
             "akasha_node_metric",
             "Counters incremented by node code (context.metrics).",

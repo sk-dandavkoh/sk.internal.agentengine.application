@@ -16,7 +16,12 @@ from akasha.application.events import EventPublisher
 from akasha.application.persistence import UnitOfWork
 from akasha.application.projects import ProjectVersionNotFoundError, UowFactory
 from akasha.application.queue import ExecutionQueue, Job, QueueUnavailableError
-from akasha.domain.execution import Execution, ExecutionMetadata, TimeoutPolicy
+from akasha.domain.execution import (
+    Execution,
+    ExecutionMetadata,
+    RetryPolicy,
+    TimeoutPolicy,
+)
 from akasha.domain.primitives import utcnow
 from akasha.errors import AkashaError
 from akasha.observability.execution import observe_execution
@@ -72,6 +77,7 @@ class ExecutionService:
         input: Mapping[str, Any] | None = None,
         metadata: ExecutionMetadata | None = None,
         timeout_policy: TimeoutPolicy | None = None,
+        retry_policy: RetryPolicy | None = None,
         dispatch: bool = True,
     ) -> Execution:
         """Pin ``version`` and queue a new execution of it with ``input``
@@ -80,8 +86,8 @@ class ExecutionService:
         it itself, like the CLI's ``project run``).
 
         Never reads the draft: later draft edits or publishes cannot change
-        what this execution runs. Retry policy stays the default (no retry)
-        until retry enforcement exists (Phase 23).
+        what this execution runs. The retry policy defaults to no retries:
+        repeating side effects must be opted into (AGENTS §47).
         """
         async with self._uow() as uow:
             snapshot = await uow.versions.get(project_id, version)
@@ -95,6 +101,7 @@ class ExecutionService:
                 snapshot,
                 metadata=metadata,
                 timeout_policy=timeout_policy,
+                retry_policy=retry_policy,
                 input=input,
             )
             execution.enqueue()

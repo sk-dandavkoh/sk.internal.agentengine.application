@@ -13,7 +13,7 @@ Boundary rules (backend/AGENTS.md §13/§15/§16):
 """
 
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import datetime, timedelta
 from types import TracebackType
 from typing import Protocol
 
@@ -112,6 +112,25 @@ class ExecutionRepository(Protocol):
     ) -> Sequence[str]:
         """Ids of QUEUED executions created before ``created_before``,
         oldest first."""
+        ...
+
+    # Owner liveness (Phase 23). Every ``save`` also refreshes the
+    # heartbeat. Times come from the database clock, one clock for all
+    # hosts, so stale detection does not depend on their clocks agreeing.
+    async def heartbeat(self, execution_id: str, *, revision: int) -> bool:
+        """Refresh the owner's heartbeat if the row is still at ``revision``
+        (nobody else wrote it). False: the caller no longer owns the run."""
+        ...
+
+    async def list_stale(self, *, stale_after: timedelta, limit: int) -> Sequence[str]:
+        """Ids of started (running/paused/waiting) executions without a
+        heartbeat for ``stale_after``, stalest first."""
+        ...
+
+    async def claim_stale(self, execution_id: str, *, stale_after: timedelta) -> bool:
+        """Lock the execution row for this transaction if it is still stale.
+        Skips a row another recoverer holds; an owner's heartbeat then waits
+        for the commit and finds the revision moved on."""
         ...
 
 

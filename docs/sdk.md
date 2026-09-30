@@ -113,7 +113,7 @@ repeat those checks.
 | `resolve_credential(reference)` | Returns the secret behind a credential reference in `config`. |
 | `is_cancelled()` | Poll this during long work; stop promptly when it returns `True`. |
 | `execution_id`, `node_execution_id`, `node_instance_id`, `project_id`, `project_version` | Ids, for correlation only. |
-| `runtime_metadata` | Includes `attempt` and `engine_version`. |
+| `runtime_metadata` | Includes `attempt` (1-based) and `engine_version`. |
 | `execution_input` | The payload the execution started with. Entry nodes read it; other nodes use their ports. |
 
 ### Result and errors
@@ -173,6 +173,21 @@ Limits:
 - Events are name-only by design. Event payloads never carry workflow data.
   Put data in outputs.
 - An attempt may emit at most `MAX_EVENTS_PER_ATTEMPT` (100) events.
+
+### Retries, recovery and idempotency
+
+An attempt of your node can run again in two cases: the execution's retry
+policy allows another attempt after a `TRANSIENT`/`TIMEOUT` error, or the
+worker died while the attempt ran. After a crash the Engine repeats the
+attempt only if the retry policy allows it or your definition declares
+`NodeCapabilities(has_side_effects=False)` (the default). Declare
+`has_side_effects=True` for nodes that send, write or call out: an
+interrupted attempt then fails the execution with `NODE_INTERRUPTED`
+unless the user opted into retries.
+
+`context.node_execution_id` is the same for every attempt of one node in
+one execution. Send it as the idempotency key to systems that support one,
+so a repeated attempt cannot duplicate the effect.
 
 ## 7. Credentials
 

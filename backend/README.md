@@ -51,6 +51,7 @@ Workers and queue (Phase 22):
 | `AKASHA_WORKER_HEARTBEAT_SECONDS` | `5.0` | heartbeat interval; a worker is dead after 3 missed beats |
 | `AKASHA_WORKER_SHUTDOWN_GRACE_SECONDS` | `30.0` | on stop, runs get this long before they are cancelled |
 | `AKASHA_QUEUE_RECOVERY_SECONDS` | `30.0` | recovery pass interval, and how long an execution may stay QUEUED before re-dispatch |
+| `AKASHA_EXECUTION_STALE_SECONDS` | `60.0` | a started execution without an owner heartbeat this long is recovered (≥ 3 heartbeats) |
 
 First run: `POST /api/v1/auth/setup` with `{"username", "password"}` creates
 the initial admin. It works only while no account exists, so complete it

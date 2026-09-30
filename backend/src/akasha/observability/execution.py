@@ -31,7 +31,15 @@ _TERMINAL = {
 _WARN = {
     EventType.EXECUTION_FAILED,
     EventType.EXECUTION_TIMED_OUT,
+    EventType.EXECUTION_RECOVERED,
     EventType.NODE_FAILED,
+    EventType.NODE_RETRY_SCHEDULED,
+}
+# Node events that do not end the node execution.
+_NOT_FINISHED = {
+    EventType.NODE_STARTED,
+    EventType.NODE_EMITTED,
+    EventType.NODE_RETRY_SCHEDULED,
 }
 
 
@@ -77,12 +85,15 @@ def observe_execution(
                 "node_execution_id": ne.id,
                 "node_type": node_type,
             }
-            if kind is EventType.NODE_FAILED:
+            if kind in (EventType.NODE_FAILED, EventType.NODE_RETRY_SCHEDULED):
                 fields |= _error_fields(ne.failures[-1] if ne.failures else None)
-                metrics.node_execution_errors.labels(
-                    node_type, str(event.payload["error_kind"])
-                ).inc()
-            if kind not in (EventType.NODE_STARTED, EventType.NODE_EMITTED):
+                counter = (
+                    metrics.node_execution_errors
+                    if kind is EventType.NODE_FAILED
+                    else metrics.node_retries
+                )
+                counter.labels(node_type, str(event.payload["error_kind"])).inc()
+            if kind not in _NOT_FINISHED:
                 seconds = _seconds(ne.started_at, event.occurred_at)
                 metrics.node_executions_finished.labels(node_type, status).inc()
                 if seconds is not None:
@@ -97,6 +108,8 @@ def observe_execution(
                 fields["queue_wait_ms"] = round(wait * 1000)
                 metrics.execution_queue_wait.observe(wait)
             metrics.executions_started.inc()
+        elif kind is EventType.EXECUTION_RECOVERED:
+            metrics.executions_recovered.inc()
         elif kind in _TERMINAL:
             fields |= _error_fields(execution.error)
             seconds = _seconds(execution.started_at, event.occurred_at)

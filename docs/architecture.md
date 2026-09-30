@@ -298,6 +298,11 @@ actions share a target with different legal sources. Rules (Phase 07):
 - Cancellation is cooperative: `request_cancellation` records a sticky,
   idempotent `CancellationState`; afterwards the only legal execution
   transition is `cancel`, so a cancelled run can never report success.
+- Recovery (Phase 23): `recover` (`RUNNING`/`PAUSED`/`WAITING → QUEUED`)
+  takes over an execution whose owner died; see §138. A QUEUED execution
+  with `started_at` set is a recovered one: it may carry finished nodes but
+  never a `RUNNING` one, and `start` resumes it (keeps `started_at` and the
+  recorded node versions, emits `execution.resumed`).
 
 ----------
 
@@ -845,8 +850,15 @@ Runtime rules:
 - Every save is compare-and-swap on the execution revision: a second writer
   (another runtime, an out-of-process cancel) makes one side lose.
 - A cancelled or crashed run (outer task cancellation) leaves the execution
-  `RUNNING`; recovery is Phase 23. Retries are not executed yet: an
-  execution with `max_attempts > 1` is refused.
+  `RUNNING` with its heartbeat frozen; stale-execution recovery (§138)
+  takes it over.
+- Retries (Phase 23): a failed attempt the execution's `RetryPolicy` allows
+  goes back to READY with `retry_at` (exponential backoff, capped, no
+  jitter), persisted before the wait. The loop starts it once due; the wait
+  is interruptible by cancellation and the execution deadline, which win
+  (the node ends CANCELLED, never re-run). Nothing retries while the run is
+  ending. `ExecutionService.create_execution(retry_policy=...)` sets it;
+  the default is no retry.
 
 ----------
 
@@ -1109,6 +1121,11 @@ Implementation (Phase 11):
   (`context.events`). The runtime records it before the attempt's outcome
   (also for failed/cancelled attempts). Name-only, so the closed-payload
   rule holds. It is not a terminal event for the lifecycle metrics.
+- Phase 23 adds `node.retry_scheduled` (payload `attempt` — the failed
+  one —, `error_code`, `error_kind`, `backoff_ms`), `execution.recovered`
+  (payload `interrupted_nodes`) and `execution.resumed` (no payload). A
+  resumed run emits `execution.resumed`, never a second
+  `execution.started`. New types only: `EVENT_SCHEMA_VERSION` stays 1.
 
 ----------
 
@@ -3025,15 +3042,16 @@ Implementation (Phase 22): contract `akasha.application.queue`
   executions) with a TTL of three intervals.
 - Worker failure: an unexpected error from `ExecutionRuntime.run` is logged
   (`job_failed`) and acknowledged. An execution that never started is still
-  QUEUED and is retried by recovery (2); one that started stays RUNNING.
+  QUEUED and is retried by recovery (2); one that started is recovered as
+  stale (§138).
 - Graceful stop (SIGTERM for `akasha worker`, API shutdown): no new jobs;
   runs get `AKASHA_WORKER_SHUTDOWN_GRACE_SECONDS`, then are cancelled
   through `ExecutionRuntime.cancel` and end CANCELLED; the worker
   deregisters and hands back anything it still holds.
 - Crash: nothing is acknowledged. Held jobs are redelivered after the
-  registration expired; an execution the dead worker had started stays
-  RUNNING (§139) until stale-execution recovery (Phase 23), and its
-  redelivered job is skipped.
+  registration expired. An execution the dead worker had started stops
+  heart-beating; once stale the recovery pass settles and requeues it
+  (§138), and a worker resumes it.
 - Placement: `AKASHA_WORKER_ENABLED=true` (default) runs one worker in each
   API process; `false` plus `akasha worker` processes separates them.
   Without `AKASHA_REDIS_URL` there is no queue.
@@ -3994,8 +4012,10 @@ exposition at `GET /metrics`; since Phase 20 it needs the
 - `akasha_queue_depth` (gauge, no labels, Phase 22) is sampled by each
   worker manager's recovery pass, so it is as fresh as
   `AKASHA_QUEUE_RECOVERY_SECONDS`.
-- Not yet emitted: retries (the
-  runtime has no retries before Phase 23), `llm_tokens_total`/`llm_cost`
+- Phase 23: `akasha_node_retries_total{node_type, error_kind}` (attempts
+  scheduled again, by the retry policy or by recovery) and
+  `akasha_executions_recovered_total` (stale executions requeued).
+- Not yet emitted: `llm_tokens_total`/`llm_cost`
   (token usage and cost estimates are persisted in `core.llm` outputs and
   logged by `AIService`; the metrics need the runtime's `EngineMetrics` to
   reach the LLM path, Phases 21/22), `http_requests_total` (the `http_request` log line covers
@@ -4437,6 +4457,46 @@ retry state
 ```
 
 Future worker architectures can resume eligible executions.
+
+Implementation (Phase 23, `Execution.recover`,
+`ExecutionRuntime.recover_stale`, migration `0010`):
+
+- Liveness: `executions.heartbeat_at` (database clock — one clock for all
+  hosts). Every save refreshes it, and the owning runtime's loop refreshes
+  it every `AKASHA_WORKER_HEARTBEAT_SECONDS` with a compare-and-swap on the
+  revision. A failed CAS means another writer (an out-of-process cancel, a
+  recoverer) moved the row on: the owner stops its nodes and raises
+  `ExecutionOwnershipLostError` within one interval.
+- Stale: started (`running`/`paused`/`waiting`) and no heartbeat for
+  `AKASHA_EXECUTION_STALE_SECONDS` (≥ 3 heartbeats, validated). Every
+  worker manager's recovery pass scans for them (partial index
+  `ix_executions_started_heartbeat_at`), skipping runs its own runtime
+  owns. Each is claimed with `SELECT … FOR UPDATE SKIP LOCKED` plus a
+  re-check, then settled and saved in that one transaction: concurrent
+  recoverers take an execution over exactly once, and a racing owner
+  heartbeat waits for the commit and loses.
+- Settling (deterministic, in this order): a requested cancellation ends it
+  `CANCELLED`; a passed deadline ends it `TIMEOUT`; every attempt left
+  `RUNNING` is recorded as `NODE_INTERRUPTED` (kind `TRANSIENT`) and is
+  repeated only if the retry policy allows it or its node type declares
+  `has_side_effects=False` (then at most `INTERRUPTED_ATTEMPTS_LIMIT` = 3
+  attempts, so a node that kills its worker cannot loop). Otherwise the
+  node and the execution `FAIL` with `NODE_INTERRUPTED`: a possibly
+  half-done side effect is never repeated silently. If nothing failed, the
+  execution is `QUEUED` again (`execution.recovered`) and dispatched.
+- Resume: finished nodes keep their outputs and never run again; readiness
+  is re-derived from every finished node, so a torn state cannot strand a
+  node; the deadline still counts from the first start; a resume whose
+  resolved node versions differ from the recorded ones fails with
+  `NODE_VERSIONS_CHANGED` instead of mixing implementations.
+- Idempotency boundary: node code can be repeated only by an explicit retry
+  policy or for side-effect-free node types. `node_execution_id` is stable
+  across all attempts of a node (retries and recoveries) and
+  `runtime_metadata["attempt"]` tells them apart: side-effecting nodes use
+  the id as their idempotency key toward external systems.
+- Out-of-process cancel still writes `CANCELLED` directly; the owner learns
+  it at its next heartbeat and stops its nodes, so node code may outlive
+  the stored `CANCELLED` by up to one heartbeat interval.
 
 ----------
 

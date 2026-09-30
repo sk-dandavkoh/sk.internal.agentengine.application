@@ -23,8 +23,15 @@ Lifecycle events (Phase 11) are recorded by the transitions themselves, so no
 caller can change state without its event: ``pending_events`` accumulates
 them until persistence stores them in the same transaction as the state.
 Rehydrating an execution records nothing. Not evented: enqueue (folded into
-``execution.created``), mark_ready, pause/wait/resume and retry — no runtime
-path drives the last four yet (Phase 23).
+``execution.created``), mark_ready and pause/wait/resume — no runtime path
+drives the last three yet.
+
+Recovery (Phase 23): ``recover`` takes over a started execution whose owner
+died. Work that finished stays finished; the attempts the owner left
+RUNNING are the only unknowns — their side effects may or may not have
+happened — so each is settled explicitly (``recover``) before the execution
+is QUEUED again. A worker then resumes it (``start`` keeps the original
+start time, so the execution deadline still counts from the first start).
 """
 
 import re
@@ -80,10 +87,13 @@ _N = NodeExecutionStatus
 _E_ACTIVE: Final = frozenset({_E.CREATED, _E.QUEUED, _E.RUNNING, _E.PAUSED, _E.WAITING})
 # Started and not finished: nodes may be in flight.
 _E_STARTED: Final = frozenset({_E.RUNNING, _E.PAUSED, _E.WAITING})
+_N_SETTLED: Final = frozenset(set(_N) - {_N.RUNNING})
 
 # action -> (legal source states, target state)
 EXECUTION_ACTIONS: Final[Mapping[str, tuple[frozenset[_E], _E]]] = {
     "enqueue": (frozenset({_E.CREATED}), _E.QUEUED),
+    # Owner lost (stale heartbeat): back to the queue to be resumed.
+    "recover": (_E_STARTED, _E.QUEUED),
     "start": (frozenset({_E.QUEUED}), _E.RUNNING),
     "pause": (frozenset({_E.RUNNING}), _E.PAUSED),
     "wait": (frozenset({_E.RUNNING}), _E.WAITING),
@@ -156,6 +166,12 @@ def _apply[S: StrEnum](
 
 _CODE_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
 
+NODE_INTERRUPTED: Final = "NODE_INTERRUPTED"
+# Attempts in all a side-effect-free node gets when its owner keeps dying
+# mid-attempt without a retry policy. The bound stops a node that kills its
+# worker (OOM, segfault) from being recovered forever.
+INTERRUPTED_ATTEMPTS_LIMIT: Final = 3
+
 
 @dataclass(frozen=True)
 class ExecutionError:
@@ -212,6 +228,18 @@ class ExecutionError:
             kind=kind,
             node_id=node_id,
             details={str(k): str(v) for k, v in error.details.items()},
+        )
+
+    @classmethod
+    def node_interrupted(cls, *, node_id: str) -> "ExecutionError":
+        # TRANSIENT: the attempt did not fail on its own; repeating it may
+        # well succeed — whether it *may* be repeated is ``recover``'s call.
+        return cls(
+            code=NODE_INTERRUPTED,
+            message="the process running this node attempt was lost; "
+            "its side effects may or may not have happened",
+            kind=NodeErrorKind.TRANSIENT,
+            node_id=node_id,
         )
 
     @classmethod
@@ -498,10 +526,12 @@ class Execution(Entity):
             ne.is_terminal for ne in self.node_executions.values()
         ):
             raise DomainValidationError("terminal execution with unfinished nodes")
-        if self.status in (_E.CREATED, _E.QUEUED) and any(
-            ne.status is not _N.PENDING for ne in self.node_executions.values()
-        ):
-            raise DomainValidationError("unstarted execution with progressed nodes")
+        if self.status in (_E.CREATED, _E.QUEUED):
+            # A recovered execution (started before) keeps its progress, but
+            # ``recover`` settled every in-flight attempt.
+            allowed = {_N.PENDING} if self.started_at is None else _N_SETTLED
+            if any(ne.status not in allowed for ne in self.node_executions.values()):
+                raise DomainValidationError("queued execution with progressed nodes")
         if self.status in (_E.FAILED, _E.TIMEOUT) and self.error is None:
             raise DomainValidationError(f"{self.status} execution requires an error")
         if self.status is _E.CANCELLED and self.cancellation is None:
@@ -585,6 +615,11 @@ class Execution(Entity):
         """What ``NodeExecutionContext.is_cancelled`` reflects to nodes."""
         return self.cancellation is not None
 
+    @property
+    def is_resumed(self) -> bool:
+        """Queued again by ``recover`` after it had started."""
+        return self.status is _E.QUEUED and self.started_at is not None
+
     def is_timed_out(self, now: datetime) -> bool:
         deadline = self.timeout_policy.execution_deadline(self.started_at)
         return deadline is not None and now >= deadline
@@ -637,9 +672,19 @@ class Execution(Entity):
         node_versions: Mapping[str, str] | None = None,
     ) -> None:
         """``node_versions``: the node type → version map resolved for this
-        run, recorded for reproducibility (AGENTS §73)."""
-        self.status = self._target("start")
-        self.started_at = now or utcnow()
+        run, recorded for reproducibility (AGENTS §73).
+
+        Resuming a recovered execution keeps the first start time and the
+        recorded versions; the caller must refuse a resume whose resolved
+        versions differ (``is_resumed``)."""
+        target = self._target("start")
+        now = now or utcnow()
+        if self.started_at is not None:
+            self.status = target
+            self._emit(EventType.EXECUTION_RESUMED, now)
+            return
+        self.status = target
+        self.started_at = now
         if node_versions is not None:
             self.metadata = replace(self.metadata, node_versions=node_versions)
         self._emit(EventType.EXECUTION_STARTED, self.started_at)
@@ -715,6 +760,59 @@ class Execution(Entity):
             kind=NodeErrorKind.TIMEOUT,
         )
         self._emit(EventType.EXECUTION_TIMED_OUT, finished, error_code=self.error.code)
+
+    def recover(
+        self, *, repeatable: frozenset[str], now: datetime | None = None
+    ) -> None:
+        """Take over a started execution whose owner is gone.
+
+        Deterministic outcome, in this precedence:
+
+        1. cancellation was requested → CANCELLED (never revived);
+        2. the execution deadline passed → TIMEOUT;
+        3. each attempt left RUNNING is settled as ``NODE_INTERRUPTED``:
+           it is repeated if the retry policy allows it (the owner opted
+           into repeats, side effects included) or if its node type is in
+           ``repeatable`` (declared side-effect free) and has had fewer than
+           ``INTERRUPTED_ATTEMPTS_LIMIT`` attempts; otherwise it FAILS and so
+           does the execution — a possibly half-done side effect is never
+           silently repeated;
+        4. otherwise → QUEUED, to be resumed where it stopped.
+
+        ``repeatable``: node *instance* ids whose node type has no side
+        effects (the caller knows the node definitions, the aggregate not).
+        """
+        target = _apply(EXECUTION_ACTIONS, "recover", self.status)
+        now = now or utcnow()
+        if self.cancellation is not None:
+            self.cancel(now=now)
+            return
+        if self.is_timed_out(now):
+            self.time_out(now=now)
+            return
+        interrupted = sorted(
+            node_id
+            for node_id, ne in self.node_executions.items()
+            if ne.status is _N.RUNNING
+        )
+        failure: ExecutionError | None = None
+        for node_id in interrupted:
+            ne = self.node_executions[node_id]
+            error = ExecutionError.node_interrupted(node_id=node_id)
+            if self.retry_policy.allows_retry(error, attempt=ne.attempt) or (
+                node_id in repeatable and ne.attempt < INTERRUPTED_ATTEMPTS_LIMIT
+            ):
+                self._schedule_retry(ne, error, timedelta(0), now)
+            else:
+                self.fail_node(node_id, error, now=now)
+                failure = failure or error
+        if failure is not None:
+            self.fail(failure, now=now)
+            return
+        self.status = target
+        self._emit(
+            EventType.EXECUTION_RECOVERED, now, interrupted_nodes=len(interrupted)
+        )
 
     # -- node transitions (aggregate-guarded) --------------------------------
 
@@ -816,6 +914,16 @@ class Execution(Entity):
             error_kind=error.kind.value,
         )
 
+    def can_retry_node(self, node_id: str, error: ExecutionError) -> bool:
+        """Would ``retry_node`` accept this failed attempt?"""
+        ne = self.node(node_id)
+        return (
+            self.status in _E_STARTED
+            and self.cancellation is None
+            and ne.status is _N.RUNNING
+            and self.retry_policy.allows_retry(error, attempt=ne.attempt)
+        )
+
     def retry_node(
         self, node_id: str, error: ExecutionError, *, now: datetime | None = None
     ) -> timedelta:
@@ -823,7 +931,8 @@ class Execution(Entity):
 
         Rejected (state unchanged) when the error is not retryable, attempts
         are exhausted, or cancellation was requested — the caller then
-        records the failure with ``fail_node``.
+        records the failure with ``fail_node`` (``can_retry_node`` asks
+        first).
         """
         ne = self._node_for(node_id, "retry", _E_STARTED, blocked_by_cancellation=True)
         _apply(NODE_ACTIONS, "retry", ne.status)
@@ -838,5 +947,19 @@ class Execution(Entity):
                 max_attempts=str(self.retry_policy.max_attempts),
             )
         delay = self.retry_policy.backoff(ne.attempt)
-        ne.retry(error, retry_at=(now or utcnow()) + delay)
+        self._schedule_retry(ne, error, delay, now or utcnow())
         return delay
+
+    def _schedule_retry(
+        self, ne: NodeExecution, error: ExecutionError, delay: timedelta, now: datetime
+    ) -> None:
+        ne.retry(error, retry_at=now + delay)
+        self._emit(
+            EventType.NODE_RETRY_SCHEDULED,
+            now,
+            node_id=ne.node_id,
+            attempt=ne.attempt,
+            error_code=error.code,
+            error_kind=error.kind.value,
+            backoff_ms=round(delay.total_seconds() * 1000),
+        )

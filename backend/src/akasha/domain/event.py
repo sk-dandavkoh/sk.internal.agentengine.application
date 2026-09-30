@@ -32,9 +32,14 @@ class EventType(StrEnum):
     EXECUTION_FAILED = "execution.failed"
     EXECUTION_CANCELLED = "execution.cancelled"
     EXECUTION_TIMED_OUT = "execution.timed_out"
+    # Recovery (Phase 23): a stale run was taken over and queued again; it
+    # resumes (never restarts) when a worker runs it.
+    EXECUTION_RECOVERED = "execution.recovered"
+    EXECUTION_RESUMED = "execution.resumed"
     NODE_STARTED = "node.started"
     NODE_COMPLETED = "node.completed"
     NODE_FAILED = "node.failed"
+    NODE_RETRY_SCHEDULED = "node.retry_scheduled"
     NODE_SKIPPED = "node.skipped"
     NODE_CANCELLED = "node.cancelled"
     NODE_EMITTED = "node.emitted"  # a node's own declared event (SDK)
@@ -58,9 +63,14 @@ PAYLOAD_KEYS: Final[Mapping[EventType, frozenset[str]]] = {
     # No cancellation reason: it is caller-supplied free text.
     EventType.EXECUTION_CANCELLED: frozenset(),
     EventType.EXECUTION_TIMED_OUT: frozenset({"error_code"}),
+    # How many in-flight node attempts the dead owner left behind.
+    EventType.EXECUTION_RECOVERED: frozenset({"interrupted_nodes"}),
+    EventType.EXECUTION_RESUMED: frozenset(),
     EventType.NODE_STARTED: frozenset({"attempt"}),
     EventType.NODE_COMPLETED: frozenset({"attempt"}),
     EventType.NODE_FAILED: _ERROR | {"attempt"},
+    # ``attempt`` is the failed one; the next starts after ``backoff_ms``.
+    EventType.NODE_RETRY_SCHEDULED: _ERROR | {"attempt", "backoff_ms"},
     EventType.NODE_SKIPPED: frozenset(),
     EventType.NODE_CANCELLED: frozenset(),
     # ``name`` is one of the node definition's declared event names.

@@ -402,10 +402,50 @@ class SqlAlchemyExecutionRepository(ExecutionRepository):
         )
         return list(rows.scalars())
 
+    async def heartbeat(self, execution_id: str, *, revision: int) -> bool:
+        result = cast(
+            "CursorResult[Any]",
+            await self._session.execute(
+                m.executions.update()
+                .where(
+                    m.executions.c.id == execution_id,
+                    m.executions.c.revision == revision,
+                )
+                .values(heartbeat_at=func.now())
+            ),
+        )
+        return result.rowcount == 1
+
+    def _stale(self, stale_after: timedelta) -> Any:
+        c = m.executions.c
+        return (
+            c.status.in_([s.value for s in _STARTED]),
+            c.heartbeat_at < func.now() - stale_after,
+        )
+
+    async def list_stale(self, *, stale_after: timedelta, limit: int) -> Sequence[str]:
+        rows = await self._session.execute(
+            select(m.executions.c.id)
+            .where(*self._stale(stale_after))
+            .order_by(m.executions.c.heartbeat_at, m.executions.c.id)
+            .limit(limit)
+        )
+        return list(rows.scalars())
+
+    async def claim_stale(self, execution_id: str, *, stale_after: timedelta) -> bool:
+        row = await self._session.execute(
+            select(m.executions.c.id)
+            .where(m.executions.c.id == execution_id, *self._stale(stale_after))
+            .with_for_update(skip_locked=True)
+        )
+        return row.scalar_one_or_none() is not None
+
     async def save(self, execution: Execution) -> None:
         e = execution
         values = {
             "status": e.status.value,
+            # Every write proves the writer alive (see ``heartbeat``).
+            "heartbeat_at": func.now(),
             "metadata": {
                 "trigger_type": e.metadata.trigger_type.value,
                 "trigger_id": e.metadata.trigger_id,
@@ -481,6 +521,9 @@ class SqlAlchemyExecutionRepository(ExecutionRepository):
                 )
             )
         e.revision += 1
+
+
+_STARTED = (ExecutionStatus.RUNNING, ExecutionStatus.PAUSED, ExecutionStatus.WAITING)
 
 
 def _opt_utc(dt: datetime | None) -> datetime | None:

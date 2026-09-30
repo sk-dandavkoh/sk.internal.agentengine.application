@@ -5,7 +5,8 @@
 
 A ``Worker`` only moves jobs to the ``ExecutionRuntime``; execution
 semantics (state machine, scheduling, cancellation, persistence) stay in the
-runtime. The ``WorkerManager`` owns a worker's task and the recovery pass.
+runtime. The ``WorkerManager`` owns a worker's task and the recovery pass (queue
+recovery, and stale-execution recovery through the runtime).
 
 Delivery is at-least-once, and duplicates are harmless by construction: the
 runtime runs only QUEUED executions and every save is compare-and-swap, so a
@@ -21,9 +22,11 @@ Lifecycle:
   seconds, then cancel the rest through ``ExecutionRuntime.cancel`` (they
   end CANCELLED — never silently RUNNING), acknowledge, deregister.
 - crash (task cancelled / process killed): nothing is acknowledged. Held
-  jobs are redelivered after the registration expired; an execution the
-  dead worker had started stays RUNNING (§139: a crash is not a clean
-  failure) until stale-execution recovery exists (Phase 23).
+  jobs are redelivered after the registration expired (and skipped: the
+  execution is not QUEUED). An execution the dead worker had started stops
+  heart-beating; once stale, ``ExecutionRuntime.recover_stale`` settles it
+  (§139: a crash is not a clean failure, the recovery rules decide) and the
+  manager dispatches it again to be resumed.
 """
 
 import asyncio
@@ -43,6 +46,7 @@ from akasha.application.queue import (
     WorkerInfo,
     WorkerState,
 )
+from akasha.domain.execution import ExecutionStatus
 from akasha.domain.primitives import new_id, utcnow
 from akasha.errors import AkashaError, ConfigurationError, InvalidStateTransitionError
 from akasha.observability.logging import log_context
@@ -83,7 +87,7 @@ class Worker:
             )
         self.worker_id = worker_id or new_id("wrk")
         self._queue = queue
-        self._runtime = runtime
+        self.runtime = runtime
         self._concurrency = concurrency
         self._poll = poll_seconds
         self._heartbeat = heartbeat_seconds
@@ -193,7 +197,7 @@ class Worker:
     async def _process(self, job: Job) -> None:
         with log_context(execution_id=job.execution_id):
             try:
-                execution = await self._runtime.run(job.execution_id)
+                execution = await self.runtime.run(job.execution_id)
             except _SKIP as exc:
                 logger.info(
                     "job_skipped", extra={"event": "job_skipped", "reason": exc.code}
@@ -202,7 +206,7 @@ class Worker:
                 # Logged with its traceback, then acknowledged: the database
                 # is the truth. An execution that never started is still
                 # QUEUED and ``dispatch_queued`` re-dispatches it; one that
-                # started is left for stale-execution recovery (Phase 23).
+                # started stops heart-beating and is recovered as stale.
                 logger.exception("job_failed", extra={"event": "job_failed"})
             else:
                 logger.info(
@@ -223,7 +227,7 @@ class Worker:
         for task in overdue:
             execution_id = self._active[task].execution_id
             try:
-                await self._runtime.cancel(execution_id, reason="worker shutdown")
+                await self.runtime.cancel(execution_id, reason="worker shutdown")
             except AkashaError as exc:
                 # It reached a terminal state meanwhile: nothing to cancel.
                 logger.info(
@@ -250,9 +254,11 @@ class WorkerManager:
         *,
         metrics: EngineMetrics | None = None,
         recovery_seconds: float = 30.0,
+        stale_seconds: float = 60.0,
     ) -> None:
-        if recovery_seconds <= 0:
-            raise ConfigurationError("recovery_seconds must be > 0")
+        if recovery_seconds <= 0 or stale_seconds <= 0:
+            raise ConfigurationError("recovery_seconds and stale_seconds must be > 0")
+        self._stale = timedelta(seconds=stale_seconds)
         self.worker = worker
         self._queue = queue
         self._executions = executions
@@ -285,25 +291,34 @@ class WorkerManager:
         with contextlib.suppress(Exception):
             await worker
 
-    async def recover(self) -> tuple[int, int]:
-        """One recovery pass: redeliver dead workers' held jobs, re-dispatch
-        executions left QUEUED for ``recovery_seconds``. Returns both
-        counts."""
+    async def recover(self) -> tuple[int, int, int]:
+        """One recovery pass: take over stale started executions and
+        dispatch those queued to resume, redeliver dead workers' held jobs,
+        re-dispatch executions left QUEUED for ``recovery_seconds``. Returns
+        the three counts (stale ones: every execution taken over, whatever
+        its outcome)."""
+        stale = await self.worker.runtime.recover_stale(stale_after=self._stale)
+        for execution in stale:
+            if execution.status is ExecutionStatus.QUEUED:
+                # A lost job is caught by ``dispatch_queued`` later.
+                with contextlib.suppress(QueueUnavailableError):
+                    await self._queue.enqueue(Job(execution.id))
         redelivered = await self._queue.recover()
         redispatched = await self._executions.dispatch_queued(
             older_than=timedelta(seconds=self._recovery)
         )
         self._metrics.queue_depth.set(await self._queue.depth())
-        if redelivered or redispatched:
+        if redelivered or redispatched or stale:
             logger.warning(
                 "queue_recovered",
                 extra={
                     "event": "queue_recovered",
                     "jobs_redelivered": redelivered,
                     "executions_redispatched": redispatched,
+                    "stale_executions_recovered": len(stale),
                 },
             )
-        return redelivered, redispatched
+        return redelivered, redispatched, len(stale)
 
     async def workers(self) -> list[WorkerInfo]:
         return await self._queue.workers()

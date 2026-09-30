@@ -22,6 +22,7 @@ from akasha.domain.event import EventType
 from akasha.domain.execution import (
     EXECUTION_ACTIONS,
     EXECUTION_TRANSITIONS,
+    INTERRUPTED_ATTEMPTS_LIMIT,
     NODE_ACTIONS,
     NODE_TRANSITIONS,
     TERMINAL_EXECUTION_STATUSES,
@@ -125,9 +126,18 @@ def _run_node(e: Execution, node_id: str, now: datetime = T0) -> None:
 EXPECTED_EXECUTION = {
     E.CREATED: {E.QUEUED, E.FAILED, E.CANCELLED},
     E.QUEUED: {E.RUNNING, E.FAILED, E.CANCELLED},
-    E.RUNNING: {E.PAUSED, E.WAITING, E.COMPLETED, E.FAILED, E.CANCELLED, E.TIMEOUT},
-    E.PAUSED: {E.RUNNING, E.FAILED, E.CANCELLED, E.TIMEOUT},
-    E.WAITING: {E.RUNNING, E.FAILED, E.CANCELLED, E.TIMEOUT},
+    # QUEUED from a started state = recover (Phase 23): owner lost, resume.
+    E.RUNNING: {
+        E.PAUSED,
+        E.WAITING,
+        E.COMPLETED,
+        E.FAILED,
+        E.CANCELLED,
+        E.TIMEOUT,
+        E.QUEUED,
+    },
+    E.PAUSED: {E.RUNNING, E.FAILED, E.CANCELLED, E.TIMEOUT, E.QUEUED},
+    E.WAITING: {E.RUNNING, E.FAILED, E.CANCELLED, E.TIMEOUT, E.QUEUED},
     E.COMPLETED: set(),
     E.FAILED: set(),
     E.CANCELLED: set(),
@@ -209,6 +219,8 @@ def _drive_execution(state: ExecutionStatus) -> Execution:
 def _execution_action(e: Execution, action: str) -> None:
     if action == "fail":
         e.fail(PERMANENT)
+    elif action == "recover":
+        e.recover(repeatable=frozenset())
     else:
         getattr(e, action)()
 
@@ -1010,6 +1022,8 @@ class ExecutionMachine(RuleBasedStateMachine):
             "fail": lambda: e.fail(error, now=now),
             "cancel": lambda: e.cancel(now=now),
             "time_out": lambda: e.time_out(now=now),
+            # Only the first node type is side-effect free.
+            "recover": lambda: e.recover(repeatable=frozenset(self.ids[:1]), now=now),
         }
         self._try(ops[action])
 
@@ -1067,6 +1081,23 @@ class ExecutionMachine(RuleBasedStateMachine):
         for n in self.e.node_executions.values():
             assert n.attempt <= self.e.retry_policy.max_attempts
             assert len(n.failures) <= n.attempt
+
+    @invariant()
+    def state_survives_rehydration(self) -> None:
+        # Every reachable state (recovered QUEUED ones included) is one the
+        # constructor accepts, i.e. can be loaded back from the database.
+        e = self.e
+        Execution(
+            id=e.id,
+            project_id=e.project_id,
+            project_version=e.project_version,
+            retry_policy=e.retry_policy,
+            status=e.status,
+            node_executions=e.node_executions,
+            error=e.error,
+            cancellation=e.cancellation,
+            started_at=e.started_at,
+        )
 
     @invariant()
     def failure_states_carry_errors(self) -> None:
@@ -1238,3 +1269,184 @@ def test_only_running_nodes_record_emitted_events() -> None:
     for node_id in (first, second):  # completed / pending
         with pytest.raises(InvalidStateTransitionError):
             e.record_node_event(node_id, "tick")
+
+
+# ==========================================================================
+# 6. Recovery (Phase 23): taking over a started execution whose owner died.
+# ==========================================================================
+
+
+def _crashed(
+    *,
+    retry_policy: RetryPolicy | None = None,
+    timeout_policy: TimeoutPolicy | None = None,
+) -> tuple[Execution, str, str, str]:
+    """A done, B in flight (RUNNING) when the owner died, C never started."""
+    e = _running(3, retry_policy=retry_policy, timeout_policy=timeout_policy)
+    a, b, c = _ids(e)
+    _run_node(e, a)
+    e.complete_node(a, outputs={"out": "a"}, now=T0)
+    _run_node(e, b)
+    e.pull_events()
+    return e, a, b, c
+
+
+class TestRecovery:
+    def test_side_effect_free_in_flight_node_is_repeated_and_run_resumes(
+        self,
+    ) -> None:
+        e, a, b, c = _crashed()
+        e.recover(repeatable=frozenset({b}), now=T0 + 90 * S)
+
+        assert e.status is E.QUEUED and e.is_resumed
+        assert e.node(a).status is N.COMPLETED  # finished work is kept
+        assert e.node(a).outputs == {"out": "a"}
+        nb = e.node(b)
+        assert nb.status is N.READY
+        assert nb.attempt == 1  # the lost attempt still counts
+        assert [f.code for f in nb.failures] == ["NODE_INTERRUPTED"]
+        assert nb.retry_at == T0 + 90 * S  # no backoff: staleness waited
+        assert e.node(c).status is N.PENDING
+        assert [(ev.event_type, ev.node_id) for ev in e.pull_events()] == [
+            (EventType.NODE_RETRY_SCHEDULED, b),
+            (EventType.EXECUTION_RECOVERED, None),
+        ]
+
+    def test_recovery_event_payloads(self) -> None:
+        e, _, b, _ = _crashed()
+        e.recover(repeatable=frozenset({b}), now=T0)
+        retry, recovered = e.pull_events()
+        assert retry.payload == {
+            "attempt": 1,
+            "error_code": "NODE_INTERRUPTED",
+            "error_kind": "transient",
+            "backoff_ms": 0,
+        }
+        assert recovered.payload == {"interrupted_nodes": 1}
+
+    def test_side_effect_node_is_never_silently_repeated(self) -> None:
+        e, a, b, c = _crashed()
+        e.recover(repeatable=frozenset(), now=T0 + S)
+
+        assert e.status is E.FAILED
+        assert e.error is not None
+        assert (e.error.code, e.error.node_id) == ("NODE_INTERRUPTED", b)
+        assert e.node(b).status is N.FAILED
+        assert e.node(a).status is N.COMPLETED
+        assert e.node(c).status is N.CANCELLED
+        assert EventType.EXECUTION_RECOVERED not in {
+            ev.event_type for ev in e.pull_events()
+        }
+
+    def test_retry_policy_opts_side_effect_node_into_repeat(self) -> None:
+        e, _, b, _ = _crashed(retry_policy=RETRY3)
+        e.recover(repeatable=frozenset(), now=T0)
+        assert e.status is E.QUEUED
+        assert e.node(b).status is N.READY
+
+    def test_policy_without_transient_kind_does_not_repeat(self) -> None:
+        policy = RetryPolicy(
+            max_attempts=3, retryable_kinds=frozenset({NodeErrorKind.TIMEOUT})
+        )
+        e, _, _, _ = _crashed(retry_policy=policy)
+        e.recover(repeatable=frozenset(), now=T0)
+        assert e.status is E.FAILED
+
+    def test_node_that_keeps_killing_its_worker_fails_at_the_limit(self) -> None:
+        e, _, b, _ = _crashed()
+        now = T0
+        for _ in range(INTERRUPTED_ATTEMPTS_LIMIT - 1):
+            now += S
+            e.recover(repeatable=frozenset({b}), now=now)
+            assert e.status is E.QUEUED
+            e.start(now=now)
+            e.start_node(b, now=now)  # ... and the worker dies again
+        assert e.node(b).attempt == INTERRUPTED_ATTEMPTS_LIMIT
+
+        e.recover(repeatable=frozenset({b}), now=now + S)
+        assert e.status is E.FAILED
+        assert [f.code for f in e.node(b).failures] == ["NODE_INTERRUPTED"] * 3
+
+    def test_requested_cancellation_is_honoured_not_revived(self) -> None:
+        e, _, b, _ = _crashed(retry_policy=RETRY3)
+        e.request_cancellation(reason="stop", now=T0)
+        e.recover(repeatable=frozenset({b}), now=T0 + S)
+        assert e.status is E.CANCELLED
+        assert e.node(b).status is N.CANCELLED
+
+    def test_passed_deadline_times_out(self) -> None:
+        e, _, b, _ = _crashed(timeout_policy=TimeoutPolicy(execution_timeout=60 * S))
+        e.recover(repeatable=frozenset({b}), now=T0 + 61 * S)
+        assert e.status is E.TIMEOUT
+        assert e.error is not None and e.error.code == "EXECUTION_TIMEOUT"
+
+    def test_nothing_in_flight_just_requeues(self) -> None:
+        e = _running(2)
+        a, _ = _ids(e)
+        e.mark_node_ready(a)
+        e.pull_events()
+        e.recover(repeatable=frozenset(), now=T0)
+        assert e.status is E.QUEUED
+        assert e.node(a).status is N.READY
+        [event] = e.pull_events()
+        assert event.payload == {"interrupted_nodes": 0}
+
+    @pytest.mark.parametrize(
+        "state", [E.CREATED, E.QUEUED, E.COMPLETED, E.FAILED, E.CANCELLED, E.TIMEOUT]
+    )
+    def test_only_started_executions_can_be_recovered(
+        self, state: ExecutionStatus
+    ) -> None:
+        e = _drive_execution(state)
+        with pytest.raises(InvalidStateTransitionError):
+            e.recover(repeatable=frozenset())
+        assert e.status is state
+
+    def test_resume_keeps_first_start_and_versions(self) -> None:
+        e = _execution(1)
+        e.enqueue()
+        e.start(now=T0, node_versions={"core.log": "1.0.0"})
+        e.recover(repeatable=frozenset(), now=T0 + 10 * S)
+        e.pull_events()
+
+        e.start(now=T0 + 20 * S, node_versions={"core.log": "9.9.9"})
+
+        assert e.status is E.RUNNING
+        assert e.started_at == T0  # the deadline still counts from here
+        assert e.metadata.node_versions == {"core.log": "1.0.0"}
+        [event] = e.pull_events()
+        assert event.event_type is EventType.EXECUTION_RESUMED
+
+    def test_recovered_state_rehydrates_but_in_flight_queued_does_not(
+        self,
+    ) -> None:
+        e, _, b, _ = _crashed()
+        e.recover(repeatable=frozenset({b}), now=T0)
+
+        def rehydrate(nodes: dict[str, NodeExecution]) -> Execution:
+            return Execution(
+                id=e.id,
+                project_id=e.project_id,
+                project_version=e.project_version,
+                status=E.QUEUED,
+                started_at=e.started_at,
+                node_executions=nodes,
+            )
+
+        rehydrate(e.node_executions)  # valid
+
+        running = NodeExecution.for_node(b)
+        running.mark_ready()
+        running.start(now=T0)
+        with pytest.raises(DomainValidationError):
+            rehydrate({b: running})
+
+    def test_can_retry_node_mirrors_retry_node(self) -> None:
+        e = _running(1, retry_policy=RETRY3)
+        (a,) = _ids(e)
+        assert not e.can_retry_node(a, TRANSIENT)  # not running
+        _run_node(e, a)
+        assert e.can_retry_node(a, TRANSIENT)
+        assert not e.can_retry_node(a, PERMANENT)
+        e.request_cancellation()
+        assert not e.can_retry_node(a, TRANSIENT)

@@ -23,6 +23,7 @@ import httpx
 import pytest
 from pydantic import SecretStr
 from redis.asyncio import Redis
+from sqlalchemy import text
 
 from akasha.api.app import create_app
 from akasha.application.executions import ExecutionService
@@ -381,7 +382,7 @@ async def test_failed_job_is_acked_and_the_queued_execution_redispatched(
     assert await h.queue.depth() == 0
 
     manager = WorkerManager(worker, h.queue, h.executions, recovery_seconds=1e-6)
-    assert await manager.recover() == (0, 1)  # re-dispatched: the retry
+    assert await manager.recover() == (0, 1, 0)  # re-dispatched: the retry
 
     assert await h.queue.next_ack() == execution_id
     assert await h.status(execution_id) is _E.COMPLETED
@@ -405,8 +406,8 @@ async def test_execution_created_while_redis_is_down_is_dispatched_later(
 
     worker = h.worker()
     manager = WorkerManager(worker, h.queue, h.executions, recovery_seconds=1e-6)
-    assert await manager.recover() == (0, 1)
-    assert await manager.recover() == (0, 0)  # duplicate protection
+    assert await manager.recover() == (0, 1, 0)
+    assert await manager.recover() == (0, 0, 0)  # duplicate protection
 
     task = h.start(worker)
     assert await h.queue.next_ack() == execution.id
@@ -417,7 +418,7 @@ async def test_execution_created_while_redis_is_down_is_dispatched_later(
 async def test_fresh_queued_executions_are_not_redispatched(h: Harness) -> None:
     await h.create(dispatch=False)  # e.g. the CLI runs it itself
     manager = WorkerManager(h.worker(), h.queue, h.executions, recovery_seconds=3600)
-    assert await manager.recover() == (0, 0)
+    assert await manager.recover() == (0, 0, 0)
     assert await h.queue.depth() == 0
 
 
@@ -562,6 +563,48 @@ async def test_crash_mid_run_never_runs_node_code_twice(h: Harness) -> None:
 
     assert h.gate.starts == 1
     assert await h.status(execution_id) is _E.RUNNING
+    assert await h.guarded() == {}
+    await h.stop(survivor, task)
+
+
+async def test_worker_crash_mid_run_is_recovered_and_resumed(h: Harness) -> None:
+    """Phase 23 end to end: a worker dies mid-node; once its execution's
+    heartbeat is stale, a surviving worker's recovery pass takes it over and
+    the survivor resumes it. The finished upstream is not re-run; the
+    interrupted (side-effect free) gate runs again."""
+    h.gate.release.clear()
+    execution_id = await h.create()
+    crashed = h.worker()
+    crash_task = h.start(crashed)
+    await wait_for(h.gate.started)
+    crash_task.cancel()
+    await asyncio.gather(crash_task, return_exceptions=True)
+    await h.expire(crashed.worker_id)
+    async with h.database.engine.begin() as conn:  # the heartbeat went stale
+        await conn.execute(
+            text(
+                "UPDATE executions SET heartbeat_at = now() - interval '1 hour'"
+                " WHERE id = :id"
+            ),
+            {"id": execution_id},
+        )
+
+    survivor = h.worker()
+    manager = WorkerManager(survivor, h.queue, h.executions, stale_seconds=60)
+    h.gate.release.set()
+    # Stale recovery requeues it; the dead worker's held job is redelivered.
+    assert await manager.recover() == (1, 0, 1)
+    assert await h.status(execution_id) is _E.QUEUED
+    task = h.start(survivor)
+    assert await h.queue.next_ack() == execution_id
+
+    execution = await h.executions.get_execution(execution_id)
+    assert execution.status is _E.COMPLETED
+    assert h.gate.starts == 2
+    gate = next(
+        ne for ne in execution.node_executions.values() if ne.failures
+    )  # the interrupted one
+    assert [f.code for f in gate.failures] == ["NODE_INTERRUPTED"]
     assert await h.guarded() == {}
     await h.stop(survivor, task)
 

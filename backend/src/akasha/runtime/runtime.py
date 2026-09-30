@@ -20,11 +20,24 @@ Concurrency model (the reason this is race-free by construction):
   events become log lines and metrics (``observe_execution``), and node
   tasks inherit a log context carrying the execution/node correlation ids.
 
-Scope: no retries (Phase 23), no recovery of executions left RUNNING by a
-dead process (Phase 23). Workers (``akasha.workers``) call ``run``; the
-queue never reaches in here. Control
-flow is generic (``ExecutionPlan.readiness``): the loop never inspects node
-types.
+Reliability (Phase 23):
+
+- Retries: a failed attempt the execution's ``RetryPolicy`` allows goes
+  back to READY with a backoff; the loop starts it once ``retry_at`` passed.
+  Backoff waits are interruptible by cancellation and the deadline.
+- Ownership: the loop refreshes the row's heartbeat (a CAS on the revision)
+  every ``heartbeat_seconds``. If another writer moved the revision on (an
+  out-of-process cancel, a recoverer that declared this run stale) the owner
+  learns it within one interval and stops its nodes
+  (``ExecutionOwnershipLostError``) instead of running on unseen.
+- Recovery: ``recover_stale`` takes over started executions whose owner
+  stopped heart-beating (``Execution.recover`` decides the outcome); a
+  recovered execution is QUEUED again and ``run`` resumes it where it
+  stopped — finished nodes never run again.
+
+Workers (``akasha.workers``) call ``run`` and ``recover_stale``; the queue
+never reaches in here. Control flow is generic (``ExecutionPlan.readiness``):
+the loop never inspects node types.
 """
 
 import asyncio
@@ -33,10 +46,11 @@ from collections import deque
 from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from akasha.application.events import EventPublisher
 from akasha.application.executions import load_execution, save_execution
+from akasha.application.persistence import ConcurrentModificationError
 from akasha.application.projects import UowFactory
 from akasha.domain.execution import (
     Execution,
@@ -67,10 +81,22 @@ from akasha.runtime.plan import (
 
 Clock = Callable[[], datetime]
 
+_DECIDED = (NodeExecutionStatus.COMPLETED, NodeExecutionStatus.SKIPPED)
+
+
+logger = logging.getLogger("akasha.runtime")
+
 
 class ExecutionAlreadyRunningError(AkashaError):
     code = "EXECUTION_ALREADY_RUNNING"
     http_status = 409
+
+
+class ExecutionOwnershipLostError(ConcurrentModificationError):
+    """Another writer took the running execution over (cancelled it out of
+    process, or recovered it as stale); this runtime stopped its nodes."""
+
+    code = "EXECUTION_OWNERSHIP_LOST"
 
 
 class StateManager:
@@ -94,6 +120,48 @@ class StateManager:
         async with self._uow() as uow:
             await save_execution(uow, execution)
             await uow.commit()
+        await self._committed(execution)
+
+    async def heartbeat(self, execution: Execution) -> None:
+        async with self._uow() as uow:
+            owned = await uow.executions.heartbeat(
+                execution.id, revision=execution.revision
+            )
+            await uow.commit()
+        if not owned:
+            raise ExecutionOwnershipLostError(
+                "The execution was taken over by another writer.",
+                details={"execution_id": execution.id},
+            )
+
+    async def list_stale(self, *, stale_after: timedelta, limit: int) -> list[str]:
+        async with self._uow() as uow:
+            return list(
+                await uow.executions.list_stale(stale_after=stale_after, limit=limit)
+            )
+
+    async def recover(
+        self,
+        execution_id: str,
+        *,
+        stale_after: timedelta,
+        settle: Callable[[Execution], None],
+    ) -> Execution | None:
+        """Claim, settle and save one stale execution in one transaction;
+        None when it is not stale (any more) or another recoverer holds it."""
+        async with self._uow() as uow:
+            if not await uow.executions.claim_stale(
+                execution_id, stale_after=stale_after
+            ):
+                return None
+            execution = await load_execution(uow, execution_id)
+            settle(execution)
+            await save_execution(uow, execution)
+            await uow.commit()
+        await self._committed(execution)
+        return execution
+
+    async def _committed(self, execution: Execution) -> None:
         events = execution.pull_events()
         observe_execution(execution, events, self._metrics)
         await self._events.publish(events)
@@ -155,9 +223,13 @@ class ExecutionRuntime:
         events: EventPublisher | None = None,
         metrics: EngineMetrics | None = None,
         credentials: SecretSource | None = None,
+        heartbeat_seconds: float = 5.0,
     ) -> None:
         if max_concurrency < 1:
             raise ConfigurationError("max_concurrency must be >= 1")
+        if heartbeat_seconds <= 0:
+            raise ConfigurationError("heartbeat_seconds must be > 0")
+        self._heartbeat = heartbeat_seconds
         self._metrics = metrics or EngineMetrics()
         self._state = StateManager(uow, events or EventPublisher(), self._metrics)
         self._catalog = catalog
@@ -167,12 +239,13 @@ class ExecutionRuntime:
         self._credentials = credentials
 
     async def run(self, execution_id: str) -> Execution:
-        """Run a QUEUED execution to a terminal state and return it.
+        """Run a QUEUED execution to a terminal state and return it; a
+        recovered execution resumes where it stopped.
 
         If the run itself is cancelled (e.g. process shutdown), node tasks
         are stopped and the execution is deliberately left RUNNING in the
-        database: a crash is not a clean failure (architecture §139);
-        recovery is Phase 23.
+        database: a crash is not a clean failure (architecture §139). Its
+        heartbeat stops, so ``recover_stale`` takes it over later.
         """
         if execution_id in self._active:
             raise ExecutionAlreadyRunningError(
@@ -208,6 +281,53 @@ class ExecutionRuntime:
         execution.cancel(reason=reason, now=self._clock())
         await self._state.save(execution)
 
+    async def recover_stale(
+        self, *, stale_after: timedelta, limit: int = 100
+    ) -> list[Execution]:
+        """Take over started executions without an owner heartbeat for
+        ``stale_after`` (their process died or hung) and settle each with
+        ``Execution.recover``. Returns them: those now QUEUED must be
+        dispatched again, the rest ended (failed, cancelled, timed out).
+
+        Safe to run from every worker at once: each execution is claimed
+        under a row lock that skips rows another recoverer holds, and a
+        claimed execution is no longer stale once saved."""
+        ids = await self._state.list_stale(stale_after=stale_after, limit=limit)
+        recovered: list[Execution] = []
+        for execution_id in ids:
+            if execution_id in self._active:
+                continue  # ours and alive; only its heartbeat is late
+            try:
+                execution = await self._state.recover(
+                    execution_id, stale_after=stale_after, settle=self._settle
+                )
+            except AkashaError as exc:
+                # One unrecoverable row (e.g. its version's nodes changed
+                # shape) must not block the others; it stays stale and is
+                # retried on the next pass, loudly.
+                logger.error(
+                    "execution_recovery_failed",
+                    extra={
+                        "event": "execution_recovery_failed",
+                        "execution_id": execution_id,
+                        "reason": exc.code,
+                    },
+                )
+                continue
+            if execution is not None:
+                recovered.append(execution)
+        return recovered
+
+    def _settle(self, execution: Execution) -> None:
+        graph = execution.project_version.graph
+        repeatable = frozenset(
+            node_id
+            for node_id, instance in graph.nodes.items()
+            if (impl := self._catalog.get(instance.node_type)) is not None
+            and not impl.definition.capabilities.has_side_effects
+        )
+        execution.recover(repeatable=repeatable, now=self._clock())
+
     # -- internals ----------------------------------------------------------
 
     async def _run(self, execution_id: str, request: _CancelRequest) -> Execution:
@@ -216,12 +336,6 @@ class ExecutionRuntime:
             raise InvalidStateTransitionError(
                 f"only queued executions can be run, not {execution.status}",
                 details={"action": "run", "from": str(execution.status)},
-            )
-        if execution.retry_policy.max_attempts > 1:
-            # Refuse rather than silently ignore a configured retry policy.
-            raise ConfigurationError(
-                "node retries are not supported by this runtime yet",
-                details={"execution_id": execution_id},
             )
         if request.event.is_set():  # cancelled before it started
             execution.cancel(reason=request.reason, now=self._clock())
@@ -243,19 +357,54 @@ class ExecutionRuntime:
             await self._state.save(execution)
             return execution
 
-        execution.start(now=self._clock(), node_versions=plan.node_versions)
+        now = self._clock()
+        elapsed = 0.0
+        if execution.is_resumed:
+            if plan.node_versions != dict(execution.metadata.node_versions):
+                # Finished nodes ran on the recorded versions; mixing in
+                # others would make the result unreproducible (AGENTS §73).
+                execution.fail(
+                    ExecutionError(
+                        code="NODE_VERSIONS_CHANGED",
+                        message="node versions changed since the execution "
+                        "started; it cannot be resumed",
+                        kind=NodeErrorKind.CONFIGURATION,
+                    ),
+                    now=now,
+                )
+                await self._state.save(execution)
+                return execution
+            started = execution.started_at or now  # set: is_resumed
+            elapsed = max(0.0, (now - started).total_seconds())
+        execution.start(now=now, node_versions=plan.node_versions)
+        # Fresh: marks the roots READY. Resumed: re-derives readiness from
+        # what finished, so no persisted progress can leave a node stranded.
         for node_id in plan.roots:
-            execution.mark_node_ready(node_id)
+            if execution.node(node_id).status is NodeExecutionStatus.PENDING:
+                execution.mark_node_ready(node_id)
+        for node_id, ne in sorted(execution.node_executions.items()):
+            if ne.status in _DECIDED:
+                self._advance(execution, plan, node_id)
         await self._state.save(execution)
-        await self._schedule(execution, plan, request)
+        await self._schedule(execution, plan, request, elapsed=elapsed)
         return execution
 
     async def _schedule(
-        self, execution: Execution, plan: ExecutionPlan, request: _CancelRequest
+        self,
+        execution: Execution,
+        plan: ExecutionPlan,
+        request: _CancelRequest,
+        *,
+        elapsed: float,
     ) -> None:
+        """``elapsed``: seconds the execution already ran before this
+        process took it (resume); the deadline counts from the first start."""
         loop = asyncio.get_running_loop()
         limit = execution.timeout_policy.execution_timeout
-        deadline = None if limit is None else loop.time() + limit.total_seconds()
+        deadline = (
+            None if limit is None else loop.time() + limit.total_seconds() - elapsed
+        )
+        next_beat = loop.time() + self._heartbeat
         running: _Running = {}
         failure: ExecutionError | None = None
         dirty = False  # recorded outcomes not yet persisted
@@ -268,18 +417,28 @@ class ExecutionRuntime:
                 if verdict is not None:
                     await self._end(execution, running, request, verdict, failure)
                     return
+                if loop.time() >= next_beat:
+                    await self._state.heartbeat(execution)
+                    next_beat = loop.time() + self._heartbeat
                 if not await self._launch(execution, plan, running, request) and dirty:
                     await self._state.save(execution)
-                if not running:
+                backoff = self._retry_wait(execution)
+                if not running and backoff is None:
                     break
-                timeout = None if deadline is None else max(0.0, deadline - loop.time())
+                waits = [next_beat - loop.time()]
+                if backoff is not None:
+                    waits.append(backoff)
+                if deadline is not None:
+                    waits.append(deadline - loop.time())
                 done, _ = await asyncio.wait(
                     [*running, cancel_signal],
-                    timeout=timeout,
+                    timeout=max(0.0, min(waits)),
                     return_when=asyncio.FIRST_COMPLETED,
                 )
                 finished = [t for t in running if t in done]
-                completed, failure = self._record(execution, running, finished)
+                completed, failure = self._record(
+                    execution, running, finished, retry=True
+                )
                 dirty = bool(finished)
                 if failure is None:
                     for completed_id in completed:
@@ -319,6 +478,20 @@ class ExecutionRuntime:
             execution.fail(failure, now=now)
             await self._state.save(execution)
 
+    def _retry_wait(self, execution: Execution) -> float | None:
+        """Seconds until the next READY node's retry backoff ends; None when
+        no node waits for one (READY nodes without a backoff wait for a
+        concurrency slot, i.e. for a running node, not for time)."""
+        now = self._clock()
+        due = [
+            ne.retry_at
+            for ne in execution.node_executions.values()
+            if ne.status is NodeExecutionStatus.READY
+            and ne.retry_at is not None
+            and ne.retry_at > now
+        ]
+        return None if not due else (min(due) - now).total_seconds()
+
     async def _launch(
         self,
         execution: Execution,
@@ -330,14 +503,15 @@ class ExecutionRuntime:
         limit. RUNNING is persisted before any node code can run. Returns
         whether it persisted (i.e. launched anything)."""
         slots = self._max_concurrency - len(running)
+        now = self._clock()
         batch = sorted(
             node_id
             for node_id, ne in execution.node_executions.items()
             if ne.status is NodeExecutionStatus.READY
+            and (ne.retry_at is None or ne.retry_at <= now)
         )[:slots]
         if not batch:
             return False
-        now = self._clock()
         for node_id in batch:
             execution.start_node(node_id, now=now)
         await self._state.save(execution)
@@ -412,10 +586,13 @@ class ExecutionRuntime:
         execution: Execution,
         running: _Running,
         finished: list[asyncio.Task[NodeOutcome]],
+        *,
+        retry: bool,
     ) -> tuple[list[str], ExecutionError | None]:
         """Record finished attempts in node-id order (deterministic when
         several finish together); returns the completed node ids and the
-        first failure."""
+        first failure. With ``retry``, a failed attempt the retry policy
+        allows is scheduled again instead of failing the node."""
         completed: list[str] = []
         first_failure: ExecutionError | None = None
         finished.sort(key=lambda t: running[t].node_id)
@@ -428,6 +605,8 @@ class ExecutionRuntime:
             if isinstance(outcome, NodeResult):
                 execution.complete_node(node_id, outputs=outcome.outputs, now=now)
                 completed.append(node_id)
+            elif retry and execution.can_retry_node(node_id, outcome):
+                execution.retry_node(node_id, outcome, now=now)
             else:
                 execution.fail_node(node_id, outcome, now=now)
                 first_failure = first_failure or outcome
@@ -464,7 +643,13 @@ class ExecutionRuntime:
         for task in running:
             task.cancel()
         await asyncio.wait(running)
-        self._record(execution, running, [t for t in running if not t.cancelled()])
+        # The run is ending: nothing is retried any more.
+        self._record(
+            execution,
+            running,
+            [t for t in running if not t.cancelled()],
+            retry=False,
+        )
         now = self._clock()
         for attempt in running.values():  # the cancelled rest
             self._flush(execution, attempt, now)

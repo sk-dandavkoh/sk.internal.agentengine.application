@@ -23,6 +23,7 @@ from sqlalchemy import (
     MetaData,
     String,
     Table,
+    func,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -140,6 +141,14 @@ executions = Table(
     Column("finished_at", DateTime(timezone=True), nullable=True),
     # Start payload (JSON object); written once at creation.
     Column("input", JSONB_VARIANT, nullable=False, server_default="{}"),
+    # Owner liveness, database clock (Phase 23): refreshed by every save and
+    # by the owning runtime's heartbeat; stale started rows are recovered.
+    Column(
+        "heartbeat_at",
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    ),
     # Pins the immutable snapshot; RESTRICT keeps history reproducible.
     ForeignKeyConstraint(
         ["project_id", "project_version"],
@@ -156,6 +165,12 @@ executions = Table(
         "ix_executions_queued_created_at",
         "created_at",
         postgresql_where=text("status = 'queued'"),
+    ),
+    # Stale-execution recovery scans only started rows.
+    Index(
+        "ix_executions_started_heartbeat_at",
+        "heartbeat_at",
+        postgresql_where=text("status IN ('running','paused','waiting')"),
     ),
 )
 

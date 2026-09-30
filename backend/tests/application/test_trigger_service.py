@@ -7,7 +7,7 @@ tests (backend/AGENTS.md §52/§54).
 """
 
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import datetime, timedelta
 from types import TracebackType
 from typing import Any, cast
 
@@ -83,6 +83,15 @@ class FakeExecutions(ExecutionRepository):
         self, *, created_before: datetime, limit: int
     ) -> Sequence[str]:
         return []
+
+    async def heartbeat(self, execution_id: str, *, revision: int) -> bool:
+        return True
+
+    async def list_stale(self, *, stale_after: timedelta, limit: int) -> Sequence[str]:
+        return []
+
+    async def claim_stale(self, execution_id: str, *, stale_after: timedelta) -> bool:
+        return False
 
 
 class FakeProjects(ProjectRepository):

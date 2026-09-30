@@ -559,3 +559,249 @@ async def test_list_queued_returns_old_queued_ids_oldest_first(
         assert await ctx.executions.list_queued(created_before=cutoff, limit=1) == [
             first
         ]
+
+
+# -- owner heartbeat + stale detection (Phase 23) ------------------------------------
+
+STALE = timedelta(minutes=10)
+
+
+async def backdate(database: Database, execution_id: str, *, minutes: int) -> None:
+    """What time passing without a heartbeat does, without waiting for it."""
+    async with database.engine.begin() as conn:
+        await conn.execute(
+            text(
+                "UPDATE executions SET heartbeat_at = now() - make_interval(mins => :m)"
+                " WHERE id = :id"
+            ),
+            {"m": minutes, "id": execution_id},
+        )
+
+
+async def running_execution(
+    uow: UowFactory, project: Project, version: ProjectVersion
+) -> Execution:
+    execution = Execution.create(project.id, version, now=T0)
+    execution.enqueue()
+    execution.start(now=T0, node_versions={})
+    return await saved(uow, execution)
+
+
+async def test_heartbeat_is_a_cas_on_the_revision(
+    uow: UowFactory, database: Database
+) -> None:
+    project, version = await published(uow)
+    execution = await running_execution(uow, project, version)
+    await backdate(database, execution.id, minutes=60)
+    async with uow() as ctx:
+        assert await ctx.executions.list_stale(stale_after=STALE, limit=10) == [
+            execution.id
+        ]
+
+    async with uow() as ctx:
+        assert await ctx.executions.heartbeat(execution.id, revision=execution.revision)
+        await ctx.commit()
+    async with uow() as ctx:
+        assert await ctx.executions.list_stale(stale_after=STALE, limit=10) == []
+        # Someone else wrote since: the owner is told it lost the run.
+        assert not await ctx.executions.heartbeat(
+            execution.id, revision=execution.revision - 1
+        )
+        loaded = await ctx.executions.get(execution.id)
+    assert loaded is not None and loaded.revision == execution.revision  # untouched
+
+
+async def test_every_save_refreshes_the_heartbeat(
+    uow: UowFactory, database: Database
+) -> None:
+    project, version = await published(uow)
+    execution = await running_execution(uow, project, version)
+    await backdate(database, execution.id, minutes=60)
+    execution.mark_node_ready(sorted(execution.node_executions)[0])
+    await saved(uow, execution)
+    async with uow() as ctx:
+        assert await ctx.executions.list_stale(stale_after=STALE, limit=10) == []
+
+
+async def test_list_stale_only_started_rows_stalest_first(
+    uow: UowFactory, database: Database
+) -> None:
+    project, version = await published(uow)
+    older = await running_execution(uow, project, version)
+    newer = await running_execution(uow, project, version)
+    fresh = await running_execution(uow, project, version)
+    queued = Execution.create(project.id, version, now=T0)
+    queued.enqueue()
+    await saved(uow, queued)
+    done = await running_execution(uow, project, version)
+    done.fail(ExecutionError("BOOM", "boom", NodeErrorKind.PERMANENT), now=T0)
+    await saved(uow, done)
+    for execution, minutes in ((older, 90), (newer, 60), (queued, 90), (done, 90)):
+        await backdate(database, execution.id, minutes=minutes)
+
+    async with uow() as ctx:
+        stale = await ctx.executions.list_stale(stale_after=STALE, limit=10)
+        assert stale == [older.id, newer.id]
+        assert fresh.id not in stale
+        assert await ctx.executions.list_stale(stale_after=STALE, limit=1) == [older.id]
+
+
+async def test_claim_stale_skips_fresh_rows_and_rows_another_recoverer_holds(
+    uow: UowFactory, database: Database
+) -> None:
+    project, version = await published(uow)
+    execution = await running_execution(uow, project, version)
+    async with uow() as ctx:
+        assert not await ctx.executions.claim_stale(execution.id, stale_after=STALE)
+
+    await backdate(database, execution.id, minutes=60)
+    async with uow() as first:
+        assert await first.executions.claim_stale(execution.id, stale_after=STALE)
+        async with uow() as second:  # a second recoverer, concurrently
+            assert not await second.executions.claim_stale(
+                execution.id, stale_after=STALE
+            )
+
+
+async def test_owner_heartbeat_waits_for_a_recoverer_and_then_loses(
+    uow: UowFactory, database: Database
+) -> None:
+    """The row lock orders a racing owner heartbeat after the takeover, so
+    the owner never keeps a run that was just recovered."""
+    project, version = await published(uow)
+    execution = await running_execution(uow, project, version)
+    await backdate(database, execution.id, minutes=60)
+
+    async with uow() as recoverer:
+        assert await recoverer.executions.claim_stale(execution.id, stale_after=STALE)
+
+        async def owner_beat() -> bool:
+            async with uow() as ctx:
+                owned = await ctx.executions.heartbeat(
+                    execution.id, revision=execution.revision
+                )
+                await ctx.commit()
+                return owned
+
+        beat = asyncio.create_task(owner_beat())
+        taken = await recoverer.executions.get(execution.id)
+        assert taken is not None
+        taken.recover(repeatable=frozenset(), now=T0)
+        await recoverer.executions.save(taken)
+        await recoverer.commit()
+    async with asyncio.timeout(10):
+        assert not await beat
+
+
+async def test_upgrade_from_0009_makes_orphaned_running_rows_recoverable(
+    db_url: str,
+) -> None:
+    """0009 schema + an execution left RUNNING by a process that died before
+    the upgrade → 0010 → it gets a heartbeat, is recovered once stale, and
+    resumes to completion without re-running its finished node."""
+    admin = Database(normalize_async_url(db_url))
+    scratch = "akasha_migration_0010"
+    try:
+        async with admin.engine.connect() as conn:
+            await conn.execution_options(isolation_level="AUTOCOMMIT")
+            await conn.execute(text(f"DROP DATABASE IF EXISTS {scratch}"))
+            await conn.execute(text(f"CREATE DATABASE {scratch}"))
+        scratch_url = f"{db_url.rpartition('/')[0]}/{scratch}"
+        await asyncio.to_thread(
+            _alembic, "upgrade", scratch_url, "0009_queued_executions_index"
+        )
+        db = Database(normalize_async_url(scratch_url))
+
+        def factory() -> SqlAlchemyUnitOfWork:
+            return SqlAlchemyUnitOfWork(db)
+
+        try:
+            project, version = await published(factory)
+            nodes = version.graph.nodes
+            a = next(n for n in nodes if nodes[n].node_type == "test.emit")
+            b = next(n for n in nodes if nodes[n].node_type == "test.echo")
+            execution_id = new_id("exec")
+            # Written with the columns 0009 has: A completed, B in flight.
+            async with db.engine.begin() as conn:
+                await conn.execute(
+                    text(
+                        "INSERT INTO executions (id, project_id, project_version,"
+                        " status, metadata, retry_policy, timeout_policy, revision,"
+                        " created_at, started_at, input) VALUES (:id, :pid, 1,"
+                        " 'running', CAST(:metadata AS jsonb), CAST(:retry AS jsonb),"
+                        " CAST(:timeout AS jsonb), 3, now(), now(), '{}')"
+                    ),
+                    {
+                        "id": execution_id,
+                        "pid": project.id,
+                        "metadata": json.dumps(
+                            {
+                                "trigger_type": "manual",
+                                "trigger_id": None,
+                                "correlation_id": None,
+                                "engine_version": "0.1.0",
+                                "node_versions": {
+                                    "test.echo": "1.0.0",
+                                    "test.emit": "1.0.0",
+                                },
+                            }
+                        ),
+                        "retry": json.dumps(
+                            {
+                                "max_attempts": 1,
+                                "initial_backoff_s": 1.0,
+                                "backoff_multiplier": 2.0,
+                                "max_backoff_s": 300.0,
+                                "retryable_kinds": ["timeout", "transient"],
+                            }
+                        ),
+                        "timeout": json.dumps(
+                            {"execution_timeout_s": None, "node_timeout_s": None}
+                        ),
+                    },
+                )
+                for node_id, status, outputs in (
+                    (a, "completed", '{"out": "before crash"}'),
+                    (b, "running", None),
+                ):
+                    await conn.execute(
+                        text(
+                            "INSERT INTO node_executions (id, execution_id, node_id,"
+                            " status, attempt, failures, outputs, started_at,"
+                            " finished_at) VALUES (:id, :eid, :nid, :status, 1, '[]',"
+                            " CAST(:outputs AS jsonb), now(), :finished)"
+                        ),
+                        {
+                            "id": new_id("nexec"),
+                            "eid": execution_id,
+                            "nid": node_id,
+                            "status": status,
+                            "outputs": outputs,
+                            "finished": T0 if outputs else None,
+                        },
+                    )
+            await asyncio.to_thread(_alembic, "upgrade", scratch_url, "head")
+
+            runtime = ExecutionRuntime(factory, {"test.emit": Emit, "test.echo": Echo})
+            assert await runtime.recover_stale(stale_after=STALE) == []  # fresh
+            async with db.engine.begin() as conn:
+                await conn.execute(
+                    text(
+                        "UPDATE executions SET heartbeat_at = now() - interval '1 hour'"
+                    )
+                )
+            [recovered] = await runtime.recover_stale(stale_after=STALE)
+            assert recovered.status is ExecutionStatus.QUEUED
+
+            result = await runtime.run(execution_id)
+            assert result.status is ExecutionStatus.COMPLETED
+            assert result.node(a).outputs == {"out": "before crash"}  # not re-run
+            assert result.node(b).outputs == {"out": "before crash"}
+            assert result.node(b).attempt == 2
+        finally:
+            await db.dispose()
+    finally:
+        async with admin.engine.connect() as conn:
+            await conn.execution_options(isolation_level="AUTOCOMMIT")
+            await conn.execute(text(f"DROP DATABASE IF EXISTS {scratch}"))
+        await admin.dispose()
