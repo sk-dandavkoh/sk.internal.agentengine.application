@@ -6,7 +6,7 @@ React + TypeScript single-page app for the Akasha Agent Engine. Rules live in
 
 ## Requirements
 
-- Node.js `^22.13.0 || >=24` (`.nvmrc` pins 24)
+- Node.js `^22.22.0 || >=24` (`.nvmrc` pins 24)
 - npm (the committed `package-lock.json` is authoritative; `.npmrc` saves exact versions)
 
 ## Setup
@@ -55,7 +55,7 @@ This keeps the backend free of CORS configuration.
 frontend/
 ├── src/
 │   ├── main.tsx        entry point: mounts <App/>
-│   ├── app/            app root (shell, routing, providers from Phase 01 on)
+│   ├── app/            app root: router, shell layout, route boundaries
 │   ├── styles/         global CSS (Tailwind v4 entry)
 │   └── test/           Vitest setup (jest-dom matchers, RTL cleanup)
 ├── tests/e2e/          Playwright specs
@@ -81,3 +81,15 @@ Later phases add directories as they gain content, following `AGENTS.md` §6:
   `verbatimModuleSyntax`, `erasableSyntaxOnly`.
 - **E2E runs against the production build** (`build` + `preview`), not the dev
   server, so it exercises what ships.
+- **React Router (data mode)**: routes live in `src/app/routes.tsx`; areas
+  are `lazy` routes so each feature becomes its own chunk. Until a feature's
+  phase lands, its route points at the shared `PlaceholderPage` chunk.
+- **Boundaries**: the root route's `errorElement` catches shell failures; a
+  pathless content route's `errorElement` keeps the sidebar usable when a page
+  fails. Unknown paths render `NotFoundPage` inside the shell. The first load
+  shows `HydrateFallback`; later navigations show a pending bar and set
+  `aria-busy` on `<main>`.
+- **State boundaries**: the URL is the navigation state. Server state goes
+  through TanStack Query, added at the app root together with the API client
+  (Phase 03/04). Feature and editor state stay inside their feature subtree.
+  There is no global client store.
