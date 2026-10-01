@@ -10,6 +10,7 @@ plugin-removal guard (§143) and backup → destroy → restore → run (§100).
 import asyncio
 import base64
 import gzip
+import io
 import json
 import os
 import signal
@@ -349,6 +350,39 @@ async def test_backup_destroy_restore_run(
     assert await snapshot(uow, project_id, run["id"]) == before
     async with uow() as u:
         assert await u.executions.get(rerun["id"]) is None
+
+
+async def test_migrate_is_idempotent(cli: Cli, database: Database) -> None:
+    for _ in range(2):  # the database is already at head: a no-op
+        migrated = doc(await cli("migrate", "--json"))
+        assert migrated["schema_revision"] == await database.schema_revision()
+    assert migrated["schema_revision"] is not None
+
+
+async def test_backup_and_restore_stream_through_stdio(
+    projects: ProjectService,
+    uow: UowFactory,
+    database: Database,
+    capsysbinary: pytest.CaptureFixture[bytes],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``backup -o -`` / ``restore -``: how Compose operators move backups
+    in and out of containers (docs/deployment.md)."""
+    project_id = await published(projects)
+    code = await asyncio.to_thread(main, ["backup", "-o", "-"])
+    captured = capsysbinary.readouterr()
+    assert code == EXIT_OK, captured.err
+    assert b"wrote -" in captured.err  # the summary stays off stdout
+    document = json.loads(gzip.decompress(captured.out))
+    assert len(document["tables"]["projects"]) == 1
+
+    await truncate_all(database)
+    stdin = io.TextIOWrapper(io.BytesIO(captured.out))
+    monkeypatch.setattr(sys, "stdin", stdin)
+    code = await asyncio.to_thread(main, ["restore", "-"])
+    assert code == EXIT_OK, capsysbinary.readouterr().err
+    async with uow() as u:
+        assert await u.projects.get(project_id) is not None
 
 
 def rewrite(path: Path, change: Callable[[dict[str, Any]], None]) -> Path:

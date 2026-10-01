@@ -1,0 +1,98 @@
+# Self-hosted Akasha backend: PostgreSQL, Redis, a one-shot schema
+# migration, the API (with the trigger scheduler) and a dedicated worker.
+# Operator guide: docs/deployment.md. Copy .env.example to .env first.
+
+name: akasha
+
+x-backend: &backend
+  image: akasha-backend:${AKASHA_IMAGE_TAG:-0.1.0}
+  # Built once, by the migrate service; api and worker run that local image.
+  pull_policy: never
+  # Optional AKASHA_* tuning (limits, providers, metrics token, ...).
+  # AKASHA_ENV_FILE: an alternative file (the deployment test uses one).
+  env_file:
+    - path: ${AKASHA_ENV_FILE:-.env}
+      required: false
+  environment:
+    # Must be URL-safe: use the hex password .env.example shows how to make.
+    AKASHA_DATABASE_URL: postgresql://akasha:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/akasha
+    AKASHA_REDIS_URL: redis://redis:6379/0
+    AKASHA_CREDENTIAL_ENCRYPTION_KEY: ${AKASHA_CREDENTIAL_ENCRYPTION_KEY:?set AKASHA_CREDENTIAL_ENCRYPTION_KEY in .env}
+    # Executions run in the worker service, not in the API process.
+    AKASHA_WORKER_ENABLED: "false"
+  volumes:
+    - plugins:/var/lib/akasha/plugins
+  restart: unless-stopped
+  # Above AKASHA_WORKER_SHUTDOWN_GRACE_SECONDS (30): running executions get
+  # their grace period before Docker sends SIGKILL.
+  stop_grace_period: 60s
+
+services:
+  postgres:
+    image: postgres:17.2
+    environment:
+      POSTGRES_USER: akasha
+      POSTGRES_DB: akasha
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "akasha", "-d", "akasha"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:8.2.1-alpine
+    # The queue survives a Redis restart; lost jobs are also re-dispatched
+    # from PostgreSQL (AKASHA_QUEUE_RECOVERY_SECONDS).
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  migrate:
+    <<: *backend
+    build: ./backend
+    pull_policy: missing
+    command: ["migrate"]
+    restart: "no"
+    healthcheck:
+      disable: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    <<: *backend
+    command: ["serve"]
+    ports:
+      # Loopback by default: put a TLS reverse proxy in front for remote use.
+      - "${AKASHA_BIND_ADDRESS:-127.0.0.1}:${AKASHA_HTTP_PORT:-8000}:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  worker:
+    <<: *backend
+    command: ["worker"]
+    healthcheck:
+      disable: true
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  redisdata:
+  plugins:

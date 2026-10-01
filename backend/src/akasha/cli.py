@@ -475,15 +475,29 @@ async def plugin_remove(args: Args, c: Container) -> int:
 # -- backup / restore -----------------------------------------------------
 
 
+async def migrate(args: Args, c: Container) -> int:
+    """Upgrade the schema to head; already at head is a no-op. Run before
+    the API and workers start (Docker Compose: the ``migrate`` service)."""
+    url = _need(c.settings.database_url, "AKASHA_DATABASE_URL")
+    await _db(c).run_migrations(url)
+    revision = await _db(c).schema_revision()
+    _emit(args, {"schema_revision": revision}, f"database at schema {revision}")
+    return EXIT_OK
+
+
 async def backup(args: Args, c: Container) -> int:
     data, summary = await create_backup(_db(c), plugins=_enabled_plugins(c))
-    await asyncio.to_thread(_write_private, args.output, data)
     rows = ", ".join(f"{name} {n}" for name, n in summary.rows.items())
-    _emit(
-        args,
-        {"path": args.output, "bytes": len(data), **vars(summary)},
-        f"wrote {args.output} (schema {summary.schema_revision}; {rows})",
-    )
+    payload = {"path": args.output, "bytes": len(data), **vars(summary)}
+    text = f"wrote {args.output} (schema {summary.schema_revision}; {rows})"
+    if args.output == "-":
+        # stdout carries the backup (``docker compose exec -T api akasha
+        # backup -o - > file``), so the summary goes to stderr.
+        await asyncio.to_thread(_write_stdout, data)
+        print(json.dumps(payload) if args.json else text, file=sys.stderr)
+        return EXIT_OK
+    await asyncio.to_thread(_write_private, args.output, data)
+    _emit(args, payload, text)
     return EXIT_OK
 
 
@@ -514,7 +528,15 @@ async def restore(args: Args, c: Container) -> int:
 
 
 async def _read_file(path: str) -> bytes:
+    """``-`` reads stdin: files can be piped into a container."""
+    if path == "-":
+        return await asyncio.to_thread(sys.stdin.buffer.read)
     return await asyncio.to_thread(Path(path).read_bytes)
+
+
+def _write_stdout(data: bytes) -> None:
+    sys.stdout.buffer.write(data)
+    sys.stdout.buffer.flush()
 
 
 def _write_private(path: str, data: bytes) -> None:
@@ -628,10 +650,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--reason", default="cancelled from the CLI")
 
     command(groups, "worker", worker, "take queued executions until stopped")
+    command(groups, "migrate", migrate, "upgrade the database schema to head")
     p = command(groups, "backup", backup, "write a backup of the installation")
-    p.add_argument("-o", "--output", required=True, help="new file (mode 0600)")
+    p.add_argument(
+        "-o", "--output", required=True, help="new file (mode 0600), or - for stdout"
+    )
     p = command(groups, "restore", restore, "restore a backup")
-    p.add_argument("file")
+    p.add_argument("file", help="backup file, or - for stdin")
     p.add_argument(
         "--replace", action="store_true", help="overwrite existing installation data"
     )

@@ -734,9 +734,11 @@ async def unsigned_post(
     signature: str | bytes | None = None,
 ) -> httpx.Response:
     """Bypasses the signing hook: what an attacker without the secret sends."""
-    headers: dict[str, str | bytes] = {"content-type": "application/json"}
+    # bytes keys/values: httpx accepts a signature that is not valid ASCII.
+    headers = {b"content-type": b"application/json"}
     if signature is not None:
-        headers["x-akasha-signature"] = signature
+        raw = signature if isinstance(signature, bytes) else signature.encode()
+        headers[b"x-akasha-signature"] = raw
     async with httpx.AsyncClient(
         transport=api._transport, base_url="http://test"
     ) as anonymous:

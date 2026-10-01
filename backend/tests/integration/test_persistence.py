@@ -381,6 +381,38 @@ async def test_readiness_check_reports_unreachable_database() -> None:
     assert reason is not None and "unreachable" in reason
 
 
+async def test_readiness_requires_the_schema_at_head(db_url: str) -> None:
+    """A new engine on an unmigrated database must not report ready (Phase
+    26): the API serves only once ``akasha migrate`` has run."""
+    admin = Database(normalize_async_url(db_url))
+    scratch = "akasha_readiness_schema"
+    async with admin.engine.connect() as conn:
+        await conn.execution_options(isolation_level="AUTOCOMMIT")
+        await conn.execute(text(f"DROP DATABASE IF EXISTS {scratch}"))
+        await conn.execute(text(f"CREATE DATABASE {scratch}"))
+    scratch_url = f"{db_url.rpartition('/')[0]}/{scratch}"
+    db = Database(normalize_async_url(scratch_url))
+    try:
+        assert await db.schema_revision() is None
+        reason = await db.check_schema()
+        assert reason is not None and "akasha migrate" in reason
+        await asyncio.to_thread(
+            _alembic_command, "upgrade", scratch_url, "0009_queued_executions_index"
+        )
+        reason = await db.check_schema()
+        assert reason is not None and "0009_queued_executions_index" in reason
+
+        await db.run_migrations(scratch_url)
+        assert await db.schema_revision() == _HEAD
+        assert await db.check_schema() is None
+    finally:
+        await db.dispose()
+        async with admin.engine.connect() as conn:
+            await conn.execution_options(isolation_level="AUTOCOMMIT")
+            await conn.execute(text(f"DROP DATABASE IF EXISTS {scratch}"))
+        await admin.dispose()
+
+
 async def test_migrations_upgrade_downgrade_upgrade_on_empty_database(
     db_url: str,
 ) -> None:

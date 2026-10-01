@@ -199,7 +199,10 @@ def create_container(settings: Settings) -> Container:
             stale_seconds=settings.execution_stale_seconds,
         )
     )
-    ready_checks: dict[str, ReadyCheck] = {"database": database.check}
+    ready_checks: dict[str, ReadyCheck] = {
+        "database": database.check,
+        "schema": database.check_schema,
+    }
     if queue is not None:
         ready_checks["queue"] = queue.ping
     auth = AuthenticationService(

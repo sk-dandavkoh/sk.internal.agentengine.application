@@ -2929,6 +2929,14 @@ A standard self-hosted deployment may consist of:
 
 Docker Compose should be sufficient for the initial deployment model.
 
+Implementation (Phase 26, `docker-compose.yml`, `backend/Dockerfile`,
+operator guide `docs/deployment.md`): one backend image in three roles —
+a one-shot `migrate` service that must complete before `api` (HTTP +
+trigger scheduler, exactly one replica) and `worker` (scalable) start —
+plus PostgreSQL and Redis (AOF) on named volumes, and a `plugins` volume
+shared by api and worker. Pinned images, non-root runtime user, API
+published on loopback only. No frontend or reverse proxy service yet.
+
 ----------
 
 # 69. Local Development
@@ -2972,6 +2980,10 @@ application is ready to serve requests
 ```
 
 Readiness may verify critical dependencies.
+
+Implementation: `/ready` checks the database round-trip, that the schema
+is at the engine's Alembic head (so a new engine never serves an
+unmigrated database; `akasha migrate` fixes it) and, with a queue, Redis.
 
 ----------
 

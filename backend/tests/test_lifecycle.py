@@ -40,7 +40,7 @@ async def test_container_wires_project_service_with_database() -> None:
         assert container.triggers is not None
         assert container.trigger_registry is not None
         assert container.scheduler is not None
-        assert set(container.ready_checks) == {"database"}
+        assert set(container.ready_checks) == {"database", "schema"}
         # One shared publisher: subscribing to container.events reaches
         # every producer.
         assert container.executions is not None

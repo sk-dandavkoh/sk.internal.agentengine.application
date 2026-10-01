@@ -6,12 +6,19 @@ never held across idle request boundaries. Session/transaction ownership
 belongs to the Unit of Work — this module only manages the engine.
 """
 
+from functools import cache
+from pathlib import Path
+from typing import TYPE_CHECKING
+
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
+
+if TYPE_CHECKING:
+    from alembic.config import Config
 
 
 class Database:
@@ -45,6 +52,33 @@ class Database:
             return f"database unreachable: {type(exc).__name__}"
         return None
 
+    async def schema_revision(self) -> str | None:
+        """The applied Alembic revision; None before the first migration."""
+        from sqlalchemy import inspect, text
+
+        async with self._engine.connect() as conn:
+            exists = await conn.run_sync(
+                lambda sync: inspect(sync).has_table("alembic_version")
+            )
+            if not exists:
+                return None
+            revision: str | None = await conn.scalar(
+                text("SELECT version_num FROM alembic_version")
+            )
+            return revision
+
+    async def check_schema(self) -> str | None:
+        """Readiness probe: None when the schema is at this engine's head
+        (a new engine on an unmigrated database must not serve)."""
+        try:
+            revision = await self.schema_revision()
+        except Exception as exc:
+            return f"database unreachable: {type(exc).__name__}"
+        head = _alembic_head()
+        if revision != head:
+            return f"schema at {revision}, engine needs {head}: run akasha migrate"
+        return None
+
     async def run_migrations(self, url: str) -> None:
         """Apply Alembic migrations against this database.
 
@@ -54,19 +88,8 @@ class Database:
         import asyncio
 
         from alembic import command
-        from alembic.config import Config
 
-        def _upgrade() -> None:
-            from pathlib import Path
-
-            # backend/src/akasha/infrastructure/database.py -> backend/
-            package_root = Path(__file__).resolve().parents[3]
-            cfg = Config(str(package_root / "alembic.ini"))
-            cfg.set_main_option("script_location", str(package_root / "migrations"))
-            cfg.set_main_option("sqlalchemy.url", normalize_sync_url(url))
-            command.upgrade(cfg, "head")
-
-        await asyncio.to_thread(_upgrade)
+        await asyncio.to_thread(command.upgrade, _alembic_config(url), "head")
 
     async def dispose(self) -> None:
         await self._engine.dispose()
@@ -93,3 +116,23 @@ def normalize_sync_url(url: str) -> str:
     if sep and "+" not in scheme and scheme in ("postgresql", "postgres"):
         return f"postgresql+psycopg://{rest}"
     return url
+
+
+def _alembic_config(url: str | None = None) -> "Config":
+    from alembic.config import Config
+
+    # backend/src/akasha/infrastructure/database.py -> backend/ (the image
+    # installs the project editable, so this holds there too).
+    package_root = Path(__file__).resolve().parents[3]
+    cfg = Config(str(package_root / "alembic.ini"))
+    cfg.set_main_option("script_location", str(package_root / "migrations"))
+    if url is not None:
+        cfg.set_main_option("sqlalchemy.url", normalize_sync_url(url))
+    return cfg
+
+
+@cache
+def _alembic_head() -> str | None:
+    from alembic.script import ScriptDirectory
+
+    return ScriptDirectory.from_config(_alembic_config()).get_current_head()

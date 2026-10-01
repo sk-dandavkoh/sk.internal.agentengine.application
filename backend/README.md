@@ -16,9 +16,13 @@ uv sync
 ## Run
 
 ```bash
+uv run akasha migrate  # upgrade the database schema (AKASHA_DATABASE_URL)
 uv run akasha serve    # serves http://127.0.0.1:8000
 AKASHA_PORT=9000 uv run akasha serve
 ```
+
+Self-hosted deployment (Docker image, Compose with PostgreSQL and Redis,
+backup/restore, upgrades, recovery): [`docs/deployment.md`](../docs/deployment.md).
 
 Configuration is loaded from `AKASHA_*` environment variables
 (`src/akasha/config.py`) and validated at startup — invalid config fails fast.
@@ -87,7 +91,10 @@ uv run pytest
 (Testcontainers starts throwaway `postgres:17.2` and `axllent/mailpit:v1.21.8`;
 unix socket, Windows named pipe and `DOCKER_HOST` all work). Without Docker
 those tests are skipped, not faked. Set `AKASHA_TESTS_REQUIRE_DOCKER=1` (CI)
-to make an unreachable daemon fail the run instead of skipping them. HTTP and web-search tests use an
+to make an unreachable daemon fail the run instead of skipping them.
+`AKASHA_TESTS_DEPLOYMENT=1 uv run pytest tests/deployment` runs the full
+operator lifecycle on the real image and `docker-compose.yml` (opt-in:
+builds the image, ~2 minutes). HTTP and web-search tests use an
 in-process loopback server; no test touches the public internet.
 
 ## CLI
@@ -109,8 +116,9 @@ for machine-readable output.
 | `plugin list` / `plugin install PATH` / `plugin remove ID [--force]` | needs `AKASHA_PLUGINS_DIR`; remove is blocked while projects use the plugin |
 | `execution get ID` / `execution cancel ID [--reason]` | inspect / cancel |
 | `worker` | take queued executions until SIGTERM/SIGINT, then stop gracefully; needs `AKASHA_REDIS_URL` |
-| `backup -o FILE` | snapshot the installation (new file, mode 0600) |
-| `restore FILE [--replace]` | restore into an empty installation, or replace one |
+| `migrate` | upgrade the schema to head (no-op when already there); `/ready` fails until it has run |
+| `backup -o FILE` | snapshot the installation (new file, mode 0600); `-o -` streams it to stdout |
+| `restore FILE [--replace]` | restore into an empty installation, or replace one; `-` reads stdin |
 
 A backup holds password hashes and encrypted credentials; store it like a
 database dump. It does **not** contain `AKASHA_CREDENTIAL_ENCRYPTION_KEY`
