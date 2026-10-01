@@ -5,6 +5,7 @@ import socket
 from typing import Any
 from urllib.parse import quote
 
+import httpcore
 import pytest
 
 from akasha.domain.node import NodeError, NodeErrorKind
@@ -381,3 +382,78 @@ async def test_secrets_in_headers_never_reach_errors(
     for url in (f"{http_server.base_url}/status/500", "http://127.0.0.1:1/"):
         error = await failure(run_node, local_node(), url=url, headers=headers)
         assert CANARY not in f"{error.message} {error.details} {error!r}"
+
+
+# -- DNS pinning and redirect credential scoping (Phase 25) -----------------------
+
+
+async def test_connection_uses_the_addresses_the_guard_vetted(
+    run_node: RunNode, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A rebinding resolver answers public first, loopback afterwards. The
+    name is resolved once; the client connects only to vetted addresses,
+    in resolver order, and never to a second answer."""
+    public = ["93.184.215.14", "93.184.215.15"]
+    lookups: list[str] = []
+
+    async def rebinding(host: str, port: int, **_: Any) -> list[Any]:
+        lookups.append(host)
+        answer = public if len(lookups) == 1 else ["127.0.0.1"]
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (a, port)) for a in answer]
+
+    connected: list[str] = []
+
+    async def no_network(self: Any, host: str, port: int, *_: Any, **__: Any) -> Any:
+        connected.append(host)
+        raise httpcore.ConnectError("test: no network")
+
+    monkeypatch.setattr(asyncio.get_running_loop(), "getaddrinfo", rebinding)
+    monkeypatch.setattr(httpcore.AnyIOBackend, "connect_tcp", no_network)
+
+    error = await failure(run_node, HttpNode(), url="http://rebind.test/")
+    assert error.code == "HTTP_CONNECTION_ERROR"
+    assert lookups == ["rebind.test"]
+    assert connected == public
+
+
+async def test_one_private_answer_blocks_the_whole_name(
+    run_node: RunNode, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def mixed(host: str, port: int, **_: Any) -> list[Any]:
+        return [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", (a, port))
+            for a in ("93.184.215.14", "10.0.0.1")
+        ]
+
+    monkeypatch.setattr(asyncio.get_running_loop(), "getaddrinfo", mixed)
+    error = await failure(run_node, HttpNode(), url="http://mixed.test/")
+    assert error.code == "DESTINATION_BLOCKED"
+
+
+class OneCredential:
+    async def resolve(self, reference: str) -> str:
+        assert reference == "credential:crm"
+        return CANARY
+
+
+async def test_credential_headers_do_not_follow_cross_origin_redirects(
+    run_node: RunNode, http_server: LocalHttpServer
+) -> None:
+    """``localhost`` and ``127.0.0.1`` are different origins (same server)."""
+    for target, kept in (
+        (f"{http_server.base_url}/echo", True),
+        (f"http://localhost:{http_server.port}/echo", False),
+    ):
+        result = await run_node(
+            local_node(),
+            config={
+                "url": f"{http_server.base_url}/redirect?to={quote(target)}",
+                "follow_redirects": True,
+                "header_credentials": {"X-Api-Key": "credential:crm"},
+                "headers": {"X-Trace": "t1"},
+            },
+            credentials=OneCredential(),
+        )
+        echoed = result.outputs["body"]["headers"]
+        assert ("x-api-key" in echoed) is kept, target
+        assert echoed["x-trace"] == "t1"  # ordinary headers still follow

@@ -34,9 +34,13 @@ from akasha.domain.node import NodeDefinition
 from akasha.domain.primitives import new_id
 from akasha.infrastructure.database import Database
 from akasha.infrastructure.persistence import SqlAlchemyUnitOfWork
-from akasha.security.crypto import SecretCipher
 from tests.integration.conftest import PASSWORD, AuthKit, make_auth_kit
-from tests.integration.test_triggers_api import draft_with
+from tests.integration.test_triggers_api import (
+    HOOK_CIPHER,
+    add_hook_credential,
+    draft_with,
+    sign_webhooks,
+)
 from tests.support import capture_json_logs
 
 pytestmark = pytest.mark.usefixtures("clean_db")
@@ -91,7 +95,7 @@ async def env(
         reports=ReportService(uow),
         triggers=TriggerService(executions),
         trigger_registry=TriggerRegistry(uow),
-        credentials=CredentialService(uow, SecretCipher(b"k" * 32)),
+        credentials=CredentialService(uow, HOOK_CIPHER),
         **kit.container_fields(),
     )
     app = create_app(settings=settings, container=container)
@@ -717,7 +721,12 @@ async def test_ownerless_projects_are_admin_only(
 async def test_webhooks_stay_public(env: Env) -> None:
     admin = await env.admin()
     owned = await owned_project(env, admin)
-    response = await env.client.post(
-        f"/api/v1/webhooks/{owned.project_id}/{owned.webhook_id}", json={"a": 1}
-    )
+    await add_hook_credential(env.app.state.container.credentials)
+    url = f"/api/v1/webhooks/{owned.project_id}/{owned.webhook_id}"
+    unsigned = await env.client.post(url, json={"a": 1})
+    assert unsigned.status_code == 401, unsigned.text
+    # No session, only the signature: public, but authenticated.
+    signed = env.client.build_request("POST", url, json={"a": 1})
+    await sign_webhooks(signed)
+    response = await env.client.send(signed)
     assert response.status_code == 202, response.text

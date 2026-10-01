@@ -33,7 +33,7 @@ from akasha.api.project_schemas import (
     UpdateProjectRequest,
     ValidationResponse,
 )
-from akasha.api.schemas import ErrorResponse
+from akasha.api.schemas import ErrorResponse, read_limited_body
 from akasha.application.auth import AuthorizationService
 from akasha.application.packages import ProjectPackageService
 from akasha.application.project_package import (
@@ -68,14 +68,13 @@ async def _package_body(request: Request) -> bytes:
             status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
             f"A project package must be sent as {MEDIA_TYPE}.",
         )
-    body = bytearray()
-    async for chunk in request.stream():
-        body += chunk
-        if len(body) > MAX_PACKAGE_BYTES:
-            raise ProjectPackageTooLargeError(
-                f"A project package must not exceed {MAX_PACKAGE_BYTES} bytes."
-            )
-    return bytes(body)
+    return await read_limited_body(
+        request,
+        MAX_PACKAGE_BYTES,
+        ProjectPackageTooLargeError(
+            f"A project package must not exceed {MAX_PACKAGE_BYTES} bytes."
+        ),
+    )
 
 
 Service = Annotated[ProjectService, Depends(_service)]

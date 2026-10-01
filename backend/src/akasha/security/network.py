@@ -9,10 +9,9 @@ multicast, reserved and unspecified addresses are therefore blocked by
 default — also when reached through a DNS name or an IPv4-mapped IPv6
 address.
 
-ponytail: check-then-connect — the HTTP/SMTP client resolves the name again,
-so a DNS-rebinding server can answer differently the second time. Upgrade
-path (security hardening, Phase 25): connect to the checked IP itself
-(custom transport with SNI/Host preserved).
+The name is resolved once: ``check_destination`` returns the vetted
+addresses and callers connect to exactly those (TLS still verifies the
+name), so a DNS-rebinding server cannot answer differently at connect time.
 """
 
 import asyncio
@@ -42,8 +41,11 @@ def _blocked(address: str) -> bool:
     return not ip.is_global or ip.is_multicast
 
 
-async def check_destination(host: str, port: int, policy: NetworkPolicy) -> None:
-    """Raise ``NodeError`` unless ``host:port`` may be contacted.
+async def check_destination(
+    host: str, port: int, policy: NetworkPolicy
+) -> tuple[str, ...]:
+    """The addresses ``host:port`` may be contacted at, in resolver order;
+    raise ``NodeError`` unless every one of them is allowed.
 
     The error names the host but never the resolved addresses, so the guard
     cannot be used to map internal DNS.
@@ -66,14 +68,16 @@ async def check_destination(host: str, port: int, policy: NetworkPolicy) -> None
             code="DNS_ERROR",
             details={"host": host},
         ) from None
+    addresses = tuple(dict.fromkeys(str(info[4][0]) for info in infos))
     if policy.allow_private_networks or host.lower() in {
         h.lower() for h in policy.allowed_hosts
     }:
-        return
-    if any(_blocked(str(info[4][0])) for info in infos):
+        return addresses
+    if any(_blocked(address) for address in addresses):
         raise NodeError(
             f"destination {host!r} is not a public address",
             kind=NodeErrorKind.PERMANENT,
             code="DESTINATION_BLOCKED",
             details={"host": host},
         )
+    return addresses

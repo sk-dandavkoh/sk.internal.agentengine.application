@@ -29,6 +29,10 @@ MAX_INTERVAL_SECONDS = 365 * 24 * 60 * 60
 # RecursionError (about 300 levels) and is never a sane trigger payload.
 # ponytail: fixed cap; make it configurable with the Phase 24 resource limits.
 MAX_PAYLOAD_DEPTH = 64
+# WEBHOOK config key: the credential reference (``credential:<name>``) whose
+# value signs requests (HMAC-SHA256 of the raw body, ``X-Akasha-Signature:
+# sha256=<hex>``). Publishing requires it; firing verifies it.
+WEBHOOK_SIGNING_FIELD = "secret_credential"
 
 
 class TriggerType(StrEnum):

@@ -1,20 +1,24 @@
 """Web built-ins: core.http and core.web_search.
 
 Both go through ``fetch``: one bounded HTTP exchange with explicit timeouts,
-a response-size cap, manual redirect handling (so every hop passes the
-destination guard) and a stable error classification (backend AGENTS
-§35/§36/§73/§74). No environment proxies (``trust_env=False``): a proxy
-would turn the destination check into a check of the proxy.
+a response-size cap, manual redirect handling and a stable error
+classification (backend AGENTS §35/§36/§73/§74). Every connection the client
+opens, on every redirect hop, passes the destination guard and connects to
+the address the guard vetted (``_GuardedBackend``), never to a second DNS
+answer. No environment proxies (``trust_env=False``): a proxy would turn the
+destination check into a check of the proxy.
 """
 
 import asyncio
 import functools
 import json
 import ssl
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlsplit
 
+import httpcore
 import httpx
 
 from akasha.nodes.core import VERSION, closed_schema
@@ -54,7 +58,56 @@ def _error(message: str, kind: NodeErrorKind, code: str, **details: str) -> Node
     return NodeError(message, kind=kind, code=code, details=details or None)
 
 
-async def _check_url(url: httpx.URL, policy: NetworkPolicy) -> None:
+class _GuardedBackend(httpcore.AsyncNetworkBackend):
+    """Resolves each destination once, through the guard, and connects to
+    the vetted addresses in resolver order. TLS still verifies the host
+    name: httpcore takes the SNI/certificate name from the URL, not from the
+    socket address."""
+
+    def __init__(self, policy: NetworkPolicy) -> None:
+        self._policy = policy
+        self._inner = httpcore.AnyIOBackend()
+
+    async def connect_tcp(
+        self,
+        host: str,
+        port: int,
+        timeout: float | None = None,  # noqa: ASYNC109 - httpcore passes it by name
+        local_address: str | None = None,
+        socket_options: Iterable[httpcore.SOCKET_OPTION] | None = None,
+    ) -> httpcore.AsyncNetworkStream:
+        *fallbacks, last = await check_destination(host, port, self._policy)
+        for address in fallbacks:
+            try:
+                return await self._inner.connect_tcp(
+                    address, port, timeout, local_address, socket_options
+                )
+            except httpcore.ConnectError:
+                continue  # the next address, like socket.create_connection
+        return await self._inner.connect_tcp(
+            last, port, timeout, local_address, socket_options
+        )
+
+    async def sleep(self, seconds: float) -> None:
+        await self._inner.sleep(seconds)
+
+
+def _transport(policy: NetworkPolicy) -> httpx.AsyncHTTPTransport:
+    transport = httpx.AsyncHTTPTransport(verify=_tls(), trust_env=False)
+    # ponytail: httpx has no public hook for the network backend, so the
+    # pool is replaced; tests/nodes/test_http_node.py proves connections
+    # still go through the guard after an httpx/httpcore upgrade.
+    transport._pool = httpcore.AsyncConnectionPool(
+        ssl_context=_tls(), network_backend=_GuardedBackend(policy)
+    )
+    return transport
+
+
+def _origin(url: httpx.URL) -> tuple[str, str, int | None]:
+    return url.scheme, url.host, url.port or _DEFAULT_PORTS.get(url.scheme)
+
+
+def _check_url(url: httpx.URL) -> None:
     if url.scheme not in _DEFAULT_PORTS:
         raise _error(
             "only http and https URLs are allowed",
@@ -68,7 +121,6 @@ async def _check_url(url: httpx.URL, policy: NetworkPolicy) -> None:
             NodeErrorKind.CONFIGURATION,
             "HTTP_INVALID_URL",
         )
-    await check_destination(url.host, url.port or _DEFAULT_PORTS[url.scheme], policy)
 
 
 async def _read_limited(response: httpx.Response, limit: int) -> bytes:
@@ -105,9 +157,14 @@ async def fetch(
     content: bytes | None = None,
     params: dict[str, str] | None = None,
     follow_redirects: bool = False,
+    secret_headers: frozenset[str] = frozenset(),
 ) -> FetchedResponse:
     """One HTTP exchange, bounded in time (whole exchange, all hops) and
-    size. Raises only ``NodeError`` (or ``CancelledError``)."""
+    size. Raises only ``NodeError`` (or ``CancelledError``).
+
+    ``secret_headers`` (names, any case) are dropped when a redirect leaves
+    the original origin: a credential is meant for the configured host,
+    not for wherever that host redirects to."""
     try:
         async with asyncio.timeout(time_limit):
             return await _exchange(
@@ -120,6 +177,7 @@ async def fetch(
                 content=content,
                 params=params,
                 follow_redirects=follow_redirects,
+                secret_headers=secret_headers,
             )
     except (TimeoutError, httpx.TimeoutException):
         raise _error(
@@ -158,15 +216,23 @@ async def _exchange(
     content: bytes | None,
     params: dict[str, str] | None,
     follow_redirects: bool,
+    secret_headers: frozenset[str],
 ) -> FetchedResponse:
     async with httpx.AsyncClient(
-        timeout=time_limit, follow_redirects=False, trust_env=False, verify=_tls()
+        timeout=time_limit,
+        follow_redirects=False,
+        trust_env=False,
+        transport=_transport(policy),
     ) as client:
         request = client.build_request(
             method, url, headers=headers, content=content, params=params
         )
+        origin = _origin(request.url)
         for _ in range(MAX_REDIRECTS + 1):
-            await _check_url(request.url, policy)
+            _check_url(request.url)
+            if _origin(request.url) != origin:
+                for name in secret_headers:
+                    request.headers.pop(name, None)
             response = await client.send(request, stream=True)
             try:
                 next_request = response.next_request if follow_redirects else None
@@ -310,6 +376,7 @@ class HttpNode(Node):
             headers=headers,
             content=content,
             follow_redirects=cfg.get("follow_redirects", False),
+            secret_headers=frozenset(secret_headers),
         )
         if response.status >= 400 and cfg.get("fail_on_error_status", True):
             raise status_error(response.status, "HTTP_STATUS_ERROR")

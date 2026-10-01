@@ -5,10 +5,11 @@ import time
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from akasha.api.routes import create_api_v1_router, create_operational_router
 from akasha.api.schemas import ErrorResponse, accept_request_id, request_id
@@ -45,9 +46,43 @@ def create_app(
     app.include_router(create_operational_router())
     app.include_router(create_api_v1_router())
 
+    # Innermost (added first): BaseHTTPMiddleware would wrap its 413 into an
+    # ExceptionGroup, and the access log should record the rejection.
+    app.add_middleware(RequestSizeLimit, max_bytes=settings.api_max_request_bytes)
     register_request_observability(app)
     register_error_handlers(app)
     return app
+
+
+class RequestSizeLimit:
+    """Caps every request body (architecture §107), counted as it streams
+    in, so no route can be made to buffer an unbounded body. Routes with a
+    smaller limit (webhooks, packages) enforce theirs on top."""
+
+    def __init__(self, app: ASGIApp, max_bytes: int) -> None:
+        self.app = app
+        self.max_bytes = max_bytes
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        received = 0
+
+        async def limited() -> Message:
+            nonlocal received
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > self.max_bytes:
+                    # HTTPException: FastAPI re-raises it from body parsing
+                    # (any other exception there becomes a generic 400).
+                    raise HTTPException(
+                        413, f"The request body exceeds {self.max_bytes} bytes."
+                    )
+            return message
+
+        await self.app(scope, limited, send)
 
 
 def register_request_observability(app: FastAPI) -> None:
@@ -77,6 +112,10 @@ def register_request_observability(app: FastAPI) -> None:
                     },
                 )
         response.headers["X-Request-ID"] = rid
+        # API bodies carry session tokens and workflow data: never cached by
+        # browsers or proxies, never content-sniffed into something active.
+        response.headers.setdefault("Cache-Control", "no-store")
+        response.headers["X-Content-Type-Options"] = "nosniff"
         return response
 
 
@@ -109,6 +148,7 @@ _HTTP_CODES = {
     401: "AUTHENTICATION_ERROR",
     403: "AUTHORIZATION_ERROR",
     409: "CONFLICT",
+    413: "PAYLOAD_TOO_LARGE",
     415: "UNSUPPORTED_MEDIA_TYPE",
 }
 

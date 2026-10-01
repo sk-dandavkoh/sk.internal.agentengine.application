@@ -13,17 +13,27 @@ only within a project (DUPLICATE_TRIGGER_ID blocks publish), so resolution
 is always scoped by project id.
 """
 
+import hashlib
+import hmac
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from akasha.application.credentials import CredentialNotFoundError, CredentialService
 from akasha.application.executions import ExecutionService
 from akasha.application.projects import UowFactory
+from akasha.domain.credentials import is_credential_reference
 from akasha.domain.execution import Execution, ExecutionMetadata
 from akasha.domain.primitives import new_id
-from akasha.domain.trigger import Trigger, TriggerContext, TriggerType
-from akasha.errors import AkashaError, DomainValidationError
+from akasha.domain.trigger import (
+    WEBHOOK_SIGNING_FIELD,
+    Trigger,
+    TriggerContext,
+    TriggerType,
+)
+from akasha.errors import AkashaError, ConfigurationError, DomainValidationError
+from akasha.security.crypto import SecretDecryptionError
 
 logger = logging.getLogger("akasha.application.triggers")
 
@@ -41,6 +51,60 @@ class TriggerNotFoundError(AkashaError):
 class TriggerDisabledError(AkashaError):
     code = "TRIGGER_DISABLED"
     http_status = 409
+
+
+class WebhookSignatureError(AkashaError):
+    """Missing or wrong request signature. One answer for every cause, so a
+    caller learns nothing about the trigger's secret configuration."""
+
+    code = "WEBHOOK_SIGNATURE_INVALID"
+    http_status = 401
+
+
+SIGNATURE_PREFIX = "sha256="
+
+
+def webhook_signature(secret: str, body: bytes) -> str:
+    """The ``X-Akasha-Signature`` value a caller sends for ``body``."""
+    digest = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+    return SIGNATURE_PREFIX + digest
+
+
+async def verify_webhook(
+    trigger: Trigger,
+    body: bytes,
+    signature: str | None,
+    credentials: CredentialService | None,
+) -> None:
+    """Raise ``WebhookSignatureError`` unless ``signature`` is the HMAC of
+    the raw ``body`` under the trigger's secret credential.
+
+    Fail-closed: a trigger without a valid secret reference (published
+    before Phase 25) or with a deleted credential refuses every call.
+    ponytail: no replay protection; a captured request can be resent. Add a
+    signed timestamp to the scheme when callers can provide one.
+    """
+    reference = trigger.config.get(WEBHOOK_SIGNING_FIELD)
+    if signature is None or not is_credential_reference(reference):
+        raise _signature_error(trigger, "missing")
+    if credentials is None:
+        raise ConfigurationError("The credential store is not configured.")
+    try:
+        secret = await credentials.resolve(reference)
+    except (CredentialNotFoundError, SecretDecryptionError):
+        raise _signature_error(trigger, "secret_unavailable") from None
+    expected = webhook_signature(secret.reveal(), body)
+    if not hmac.compare_digest(expected.encode(), signature.encode()):
+        raise _signature_error(trigger, "mismatch")
+
+
+def _signature_error(trigger: Trigger, reason: str) -> WebhookSignatureError:
+    # The reason goes to the operator's log only.
+    logger.warning(
+        "webhook_rejected",
+        extra={"event": "webhook_rejected", "trigger_id": trigger.id, "reason": reason},
+    )
+    return WebhookSignatureError("Webhook signature missing or invalid.")
 
 
 @dataclass(frozen=True)

@@ -2717,9 +2717,9 @@ Implementation (Phase 20):
   Per-credential grants need owner-aware resolution in the runtime; that is
   future work.
 - Public by design: `/health`, `/ready`, the OpenAPI docs and webhooks.
-  Webhooks are fired by external systems; they are protected only by
-  knowing the project and trigger ids until per-trigger webhook secrets
-  exist (Phase 25).
+  Webhooks are fired by external systems without a session; since Phase 25
+  each request must carry an HMAC signature under the trigger's secret
+  credential (§127).
 
 ----------
 
@@ -2810,8 +2810,15 @@ Implementation (Phase 09, `security/network.py`, `nodes/http.py`):
 - One total time limit per exchange, response cap
   `AKASHA_HTTP_MAX_RESPONSE_BYTES` (Content-Length and streamed), stable
   error codes: 429/5xx transient, other 4xx permanent.
-- Known gap: the guard resolves, then the client resolves again (DNS
-  rebinding window); pinning the checked IP is security-hardening scope.
+- DNS pinning (Phase 25): a name is resolved once, by the guard, and the
+  client connects only to the vetted addresses (`core.http`: a guarded
+  httpcore network backend, used for every redirect hop; `core.smtp`:
+  connect to the address, TLS name kept). TLS still verifies the host name.
+- Credentials are scoped to their origin: `header_credentials` headers are
+  dropped when a redirect leaves the configured scheme/host/port.
+- `core.smtp` never sends a password unencrypted (`security: none` plus a
+  username) to a destination the operator has not trusted
+  (`SMTP_INSECURE_AUTH`).
 
 ----------
 
@@ -3870,6 +3877,13 @@ report generation
 
 Large payloads should use artifact storage where appropriate.
 
+Implementation (Phase 25): `RequestSizeLimit` (`api/app.py`) caps every
+request body at `AKASHA_API_MAX_REQUEST_BYTES` (default 20 MiB), counted
+while streaming, so no route can be made to buffer an unbounded body.
+Routes with smaller caps enforce theirs on top, also while streaming:
+webhooks (`AKASHA_WEBHOOK_MAX_PAYLOAD_BYTES`) and project packages (16 MiB).
+Over the cap: 413 `PAYLOAD_TOO_LARGE`.
+
 ----------
 
 # 108. Rate Limiting
@@ -3885,6 +3899,12 @@ resource-intensive operations
 ```
 
 Rate limits must be configurable.
+
+Implementation status (Phase 25): logins and password changes are
+throttled per username (Phase 20). Webhooks require a valid signature and
+their executions count against the per-project active-execution limit
+(Phase 24); there is no request-rate limit yet. Request rates are left to the
+reverse proxy in front of the engine (deployment, Phase 26).
 
 ----------
 
@@ -4316,6 +4336,22 @@ Runtime
 ```
 
 The webhook endpoint should not perform arbitrary long-running graph execution synchronously.
+
+Implementation (Phase 25), authentication:
+
+- A WEBHOOK trigger names its signing secret in its config:
+  `{"secret_credential": "credential:<name>"}`. Publishing without one is
+  the validation issue `WEBHOOK_SECRET_REQUIRED`; a plaintext value is
+  `PLAINTEXT_SECRET`. Projects stay secret-free and portable.
+- Callers send `X-Akasha-Signature: sha256=<hex>`, the HMAC-SHA256 of the raw
+  request body under the credential's value. The body is read with its cap
+  first, then verified (constant-time) before it is parsed.
+- Fail-closed: a missing or wrong signature, a trigger published before
+  Phase 25 without a secret, or a deleted credential all answer 401
+  `WEBHOOK_SIGNATURE_INVALID`, with the same message. The reason goes only
+  to the server log (`webhook_rejected`).
+- No replay protection: a captured request can be resent. A signed
+  timestamp would close this when callers can provide one.
 
 ----------
 

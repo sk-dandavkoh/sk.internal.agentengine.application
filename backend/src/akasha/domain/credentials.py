@@ -15,7 +15,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
-from typing import NoReturn
+from typing import NoReturn, TypeGuard
 
 from akasha.domain.primitives import Timestamps, utcnow, validate_text
 from akasha.errors import AkashaError, DomainValidationError
@@ -71,7 +71,7 @@ class CredentialReference:
         return cls(REFERENCE_PREFIX + name)
 
 
-def is_credential_reference(value: object) -> bool:
+def is_credential_reference(value: object) -> TypeGuard[str]:
     return (
         isinstance(value, str)
         and value.startswith(REFERENCE_PREFIX)

@@ -11,6 +11,13 @@ socket timeout) — a mail can still go out after cancellation. Hence
 ``supports_cancellation=False``. Upgrade path: an asyncio SMTP client when
 hard cancellation of in-flight sends is required.
 
+Network: the host is resolved once by the destination guard and the client
+connects to a vetted address (no DNS-rebinding window); TLS still verifies
+the configured host name. A password is never sent over an unencrypted
+connection to an untrusted network: ``security="none"`` with a username is
+refused unless the operator trusts the destination (private networks
+allowed, or the host is on the allowlist).
+
 Idempotency: the Message-ID is derived from the node execution id, which a
 retry reuses, so receivers can recognise a duplicate delivery.
 """
@@ -100,13 +107,21 @@ class SmtpNode(Node):
             )
         security = cfg.get("security", "starttls")
         host, port = cfg["host"], cfg.get("port", _DEFAULT_PORTS[security])
+        # Destination first: nothing is decrypted for a host never contacted.
+        addresses = await check_destination(host, port, self._policy)
+        if security == "none" and "username" in cfg and not self._trusted(host):
+            raise _error(
+                "SMTP authentication requires TLS (security 'starttls' or 'tls')",
+                NodeErrorKind.CONFIGURATION,
+                "SMTP_INSECURE_AUTH",
+            )
         password = await self._password(context)
         message = self._message(context)
-        await check_destination(host, port, self._policy)
         refused = await asyncio.to_thread(
             _send,
             message,
             host=host,
+            addresses=addresses,
             port=port,
             security=security,
             username=cfg.get("username"),
@@ -119,6 +134,11 @@ class SmtpNode(Node):
                 "rejected_recipients": sorted(refused),
             }
         )
+
+    def _trusted(self, host: str) -> bool:
+        return self._policy.allow_private_networks or host.lower() in {
+            h.lower() for h in self._policy.allowed_hosts
+        }
 
     @staticmethod
     async def _password(context: NodeExecutionContext) -> str | None:
@@ -158,6 +178,7 @@ def _send(
     message: EmailMessage,
     *,
     host: str,
+    addresses: tuple[str, ...],
     port: int,
     security: str,
     username: str | None,
@@ -169,11 +190,7 @@ def _send(
     echo credentials or addresses back)."""
     tls = ssl.create_default_context()
     try:
-        smtp = (
-            smtplib.SMTP_SSL(host, port, timeout=timeout, context=tls)
-            if security == "tls"
-            else smtplib.SMTP(host, port, timeout=timeout)
-        )
+        smtp = _connect(host, addresses, port, security, timeout, tls)
         with smtp:
             if security == "starttls":
                 # Never fall back to plaintext when STARTTLS is unavailable.
@@ -225,6 +242,42 @@ def _send(
             NodeErrorKind.TRANSIENT,
             "SMTP_CONNECTION_ERROR",
         ) from None
+
+
+def _connect(
+    host: str,
+    addresses: tuple[str, ...],
+    port: int,
+    security: str,
+    timeout: float,
+    tls: ssl.SSLContext,
+) -> smtplib.SMTP:
+    """Connect to the first reachable vetted address."""
+
+    def attempt(address: str) -> smtplib.SMTP:
+        smtp = (
+            smtplib.SMTP_SSL(timeout=timeout, context=tls)
+            if security == "tls"
+            else smtplib.SMTP(timeout=timeout)
+        )
+        # ponytail: smtplib takes the TLS server name (SMTPS and STARTTLS)
+        # from ``_host``, which only its constructor sets; connecting to the
+        # address while verifying the name needs this private attribute.
+        smtp._host = host  # type: ignore[attr-defined]  # see ponytail above
+        try:
+            smtp.connect(address, port)
+        except BaseException:
+            smtp.close()
+            raise
+        return smtp
+
+    *fallbacks, last = addresses
+    for address in fallbacks:
+        try:
+            return attempt(address)
+        except OSError:
+            continue  # the next address, like socket.create_connection
+    return attempt(last)
 
 
 def _timeout(seconds: float) -> NodeError:

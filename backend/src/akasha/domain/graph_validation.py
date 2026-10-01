@@ -47,6 +47,7 @@ class ValidationCode(StrEnum):
     # Triggers (architecture §125): publish gates, not construction errors.
     DUPLICATE_TRIGGER_ID = auto()
     INVALID_TRIGGER_SCHEDULE = auto()
+    WEBHOOK_SECRET_REQUIRED = auto()
 
 
 @dataclass(frozen=True)

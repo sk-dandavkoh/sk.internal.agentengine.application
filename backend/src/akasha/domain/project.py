@@ -13,7 +13,11 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum, auto
 
-from akasha.domain.credentials import PlaintextSecretError, plaintext_secret_paths
+from akasha.domain.credentials import (
+    PlaintextSecretError,
+    is_credential_reference,
+    plaintext_secret_paths,
+)
 from akasha.domain.graph import Graph
 from akasha.domain.graph_validation import (
     ValidationCode,
@@ -33,7 +37,12 @@ from akasha.domain.primitives import (
     validate_text,
     version_satisfies,
 )
-from akasha.domain.trigger import Trigger, schedule_problem
+from akasha.domain.trigger import (
+    WEBHOOK_SIGNING_FIELD,
+    Trigger,
+    TriggerType,
+    schedule_problem,
+)
 from akasha.errors import DomainValidationError
 from akasha.security.redaction import redact_text
 
@@ -232,9 +241,10 @@ def validate_triggers(triggers: Iterable[Trigger]) -> tuple[ValidationIssue, ...
 
     Trigger ids must be unique within a project: webhook and invoke calls
     address a trigger by (project, trigger id). Schedules must be
-    evaluable (``schedule_problem``). Both are validation issues, not
-    construction errors, for the same reason as dependency constraints:
-    persisted drafts must stay loadable so they can be fixed.
+    evaluable (``schedule_problem``). Webhooks are public URLs, so they
+    must name the credential that signs their requests. All are validation
+    issues, not construction errors, for the same reason as dependency
+    constraints: persisted drafts must stay loadable so they can be fixed.
     """
     issues: list[ValidationIssue] = []
     seen: set[str] = set()
@@ -254,6 +264,17 @@ def validate_triggers(triggers: Iterable[Trigger]) -> tuple[ValidationIssue, ...
                 ValidationIssue(
                     ValidationCode.INVALID_TRIGGER_SCHEDULE,
                     problem,
+                    trigger_id=trigger.id,
+                )
+            )
+        if trigger.trigger_type is TriggerType.WEBHOOK and not (
+            is_credential_reference(trigger.config.get(WEBHOOK_SIGNING_FIELD))
+        ):
+            issues.append(
+                ValidationIssue(
+                    ValidationCode.WEBHOOK_SECRET_REQUIRED,
+                    f"webhook trigger requires '{WEBHOOK_SIGNING_FIELD}', the"
+                    " credential reference that signs its requests",
                     trigger_id=trigger.id,
                 )
             )

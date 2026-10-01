@@ -270,3 +270,66 @@ async def test_cancellation_stops_waiting_for_the_server(
     async with asyncio.timeout(1):  # far below the 5 s socket timeout
         with pytest.raises(asyncio.CancelledError):
             await task
+
+
+# -- Phase 25: plaintext AUTH and DNS pinning --------------------------------------
+
+
+def resolver_for(name: str, infos: list[Any]) -> Any:
+    real = asyncio.get_running_loop().getaddrinfo
+
+    async def resolve(host: str, port: int, **kwargs: Any) -> list[Any]:
+        return infos if host == name else await real(host, port, **kwargs)
+
+    return resolve
+
+
+async def test_password_is_never_sent_in_plaintext_to_public_hosts(
+    run_node: RunNode, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    public = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.215.14", 25))]
+    monkeypatch.setattr(
+        asyncio.get_running_loop(),
+        "getaddrinfo",
+        resolver_for("mail.example.test", public),
+    )
+    resolved: list[str] = []
+
+    class Recording(FakeCredentials):
+        async def resolve(self, reference: str) -> str:
+            resolved.append(reference)
+            return PASSWORD
+
+    cfg = {
+        "host": "mail.example.test",
+        "port": 25,
+        "security": "none",
+        "username": USER,
+        "password_credential": REF,
+        "sender": "engine@akasha.test",
+        "recipients": ["ada@example.test"],
+    }
+    error = await failure(run_node, cfg, node=SmtpNode(), credentials=Recording({}))
+    assert (error.code, error.kind) == (
+        "SMTP_INSECURE_AUTH",
+        NodeErrorKind.CONFIGURATION,
+    )
+    assert resolved == []  # the secret was never even decrypted
+
+
+async def test_smtp_connects_to_the_vetted_address(
+    run_node: RunNode, mailbox: Mailpit, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``mail.rebind.test`` exists only for the guard's single lookup; a
+    client that resolved the name again could not connect at all."""
+    infos = await asyncio.get_running_loop().getaddrinfo(
+        mailbox.smtp_host, mailbox.smtp_port, type=socket.SOCK_STREAM
+    )
+    monkeypatch.setattr(
+        asyncio.get_running_loop(),
+        "getaddrinfo",
+        resolver_for("mail.rebind.test", infos),
+    )
+    out = await send(run_node, config(mailbox, host="mail.rebind.test"))
+    assert out["rejected_recipients"] == []
+    assert len(mailbox.messages()) == 1

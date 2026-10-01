@@ -3,7 +3,10 @@
 - POST /projects/{project_id}/versions/{version}/execute : manual run (§126)
 - POST /projects/{project_id}/triggers/{trigger_id}/invoke : configured
   MANUAL/API triggers
-- POST /webhooks/{project_id}/{trigger_id} : external webhook call (§127)
+- POST /webhooks/{project_id}/{trigger_id} : external webhook call (§127),
+  authenticated by an HMAC-SHA256 signature of the raw body
+  (``X-Akasha-Signature: sha256=<hex>``) under the trigger's secret
+  credential
 - GET  /executions/{execution_id} : observe the created execution
 
 Webhooks are the one public route (their own router): external systems
@@ -24,7 +27,12 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Body, Depends, Path, Request, status
 from pydantic import JsonValue
 
-from akasha.api.schemas import ErrorResponse, request_id
+from akasha.api.schemas import (
+    ErrorResponse,
+    PayloadTooLargeError,
+    read_limited_body,
+    request_id,
+)
 from akasha.api.trigger_schemas import ExecutionDetail
 from akasha.application.executions import ExecutionService
 from akasha.application.triggers import (
@@ -32,14 +40,12 @@ from akasha.application.triggers import (
     TriggerNotFoundError,
     TriggerRegistry,
     TriggerService,
+    verify_webhook,
 )
 from akasha.domain.trigger import TriggerContext, TriggerType
-from akasha.errors import AkashaError, ConfigurationError, DomainValidationError
+from akasha.errors import ConfigurationError, DomainValidationError
 
-
-class PayloadTooLargeError(AkashaError):
-    code = "PAYLOAD_TOO_LARGE"
-    http_status = 413
+SIGNATURE_HEADER = "x-akasha-signature"
 
 
 def _triggers(request: Request) -> TriggerService:
@@ -152,14 +158,10 @@ def create_triggers_router() -> APIRouter:
 
 
 def create_webhooks_router() -> APIRouter:
-    """Public: webhook callers are external systems, not users.
-
-    ponytail: anyone who knows a project id and webhook trigger id can fire
-    it, the same as before accounts existed. Per-trigger webhook secrets
-    belong to security hardening (Phase 25).
-    """
+    """Public: webhook callers are external systems, not users. They prove
+    knowledge of the trigger's secret by signing the body (Phase 25)."""
     errors: dict[int | str, dict[str, Any]] = {
-        code: {"model": ErrorResponse} for code in (404, 409, 413, 422, 500)
+        code: {"model": ErrorResponse} for code in (401, 404, 409, 413, 422, 500)
     }
     router = APIRouter(tags=["triggers"], responses=errors)
 
@@ -178,13 +180,22 @@ def create_webhooks_router() -> APIRouter:
         )
         if resolved is None:
             raise _not_found(project_id, trigger_id)
-        raw = await request.body()
         limit = request.app.state.container.settings.webhook_max_payload_bytes
-        if len(raw) > limit:
-            raise PayloadTooLargeError(
+        raw = await read_limited_body(
+            request,
+            limit,
+            PayloadTooLargeError(
                 "Webhook payload exceeds the size limit.",
                 details={"max_bytes": limit},
-            )
+            ),
+        )
+        # Before parsing: an unsigned body is never interpreted.
+        await verify_webhook(
+            resolved.trigger,
+            raw,
+            request.headers.get(SIGNATURE_HEADER),
+            request.app.state.container.credentials,
+        )
         try:
             payload: Any = json.loads(raw) if raw else {}
         except (ValueError, RecursionError):

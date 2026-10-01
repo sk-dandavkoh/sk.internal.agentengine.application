@@ -63,6 +63,9 @@ class Settings(BaseSettings):
     # in-process scheduler task per API process.
     scheduler_enabled: bool = True
     scheduler_poll_seconds: float = Field(default=1.0, gt=0)
+    # Cap on every API request body, streamed or declared (Phase 25). Keep
+    # it above the 16 MiB project package limit, or imports fail first.
+    api_max_request_bytes: int = Field(default=20 * 1024 * 1024, gt=0)
     # Inbound webhook body cap; the payload becomes the execution input.
     webhook_max_payload_bytes: int = Field(default=1024 * 1024, gt=0)
 

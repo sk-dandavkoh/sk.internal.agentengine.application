@@ -106,6 +106,14 @@ def test_error_messages_and_details_are_redacted(app_client: TestClient) -> None
     assert body["details"] == {"password": MASK, "url": f"https://{MASK}@h/x"}
 
 
+def test_responses_are_never_cached_or_sniffed(app_client: TestClient) -> None:
+    with app_client:
+        responses = [app_client.get("/_test/logs"), app_client.get("/nope")]
+    for response in responses:
+        assert response.headers["cache-control"] == "no-store"
+        assert response.headers["x-content-type-options"] == "nosniff"
+
+
 METRICS_TOKEN = SecretStr("m" * 32)
 
 

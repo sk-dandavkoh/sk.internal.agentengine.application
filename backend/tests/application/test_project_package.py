@@ -290,7 +290,8 @@ def test_oversized_package_rejected_before_parsing() -> None:
 def test_unexpected_or_traversal_entries_rejected(name: str) -> None:
     with pytest.raises(ProjectPackageInvalidError) as info:
         read(rezip(valid_entries() | {name: b"x"}))
-    assert info.value.details["path"] == name
+    # zipfile stores os.sep as "/" (Windows: "docs\..\x" -> "docs/../x").
+    assert info.value.details["path"] == zipfile.ZipInfo(name).filename
 
 
 def test_duplicate_entry_rejected() -> None:

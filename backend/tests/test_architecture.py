@@ -114,3 +114,34 @@ def test_builtin_nodes_use_the_sdk_for_the_node_contract() -> None:
                     f"{py_file.name}: {a.name}" for a in node.names if a.name in public
                 ]
     assert not violations, "import these from akasha.sdk:\n" + "\n".join(violations)
+
+
+# Arbitrary-code paths (AGENTS §38/§64): user data is never evaluated,
+# unpickled or handed to a shell. Plugin code is loaded in one place only.
+_FORBIDDEN_CALLS = {"eval", "exec", "compile", "__import__"}
+_FORBIDDEN_MODULES = {"pickle", "marshal", "shelve", "dill", "yaml", "subprocess"}
+_CODE_LOADERS = {"plugins/registry.py", "cli.py"}  # trusted, operator-chosen code
+
+
+def test_no_arbitrary_code_execution_primitives() -> None:
+    offenders: list[str] = []
+    for path in SRC.rglob("*.py"):
+        rel = path.relative_to(SRC).as_posix()
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for imported in _imports(path):
+            root = imported.split(".")[0]
+            if root in _FORBIDDEN_MODULES:
+                offenders.append(f"{rel}: imports {imported}")
+            if root == "importlib" and rel not in _CODE_LOADERS:
+                offenders.append(f"{rel}: loads code via {imported}")
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if isinstance(node.func, ast.Name) and node.func.id in _FORBIDDEN_CALLS:
+                offenders.append(f"{rel}:{node.lineno}: {node.func.id}()")
+            if isinstance(node.func, ast.Attribute) and node.func.attr == "system":
+                offenders.append(f"{rel}:{node.lineno}: .system()")
+            for kw in node.keywords:
+                if kw.arg == "shell":
+                    offenders.append(f"{rel}:{node.lineno}: shell=")
+    assert offenders == []

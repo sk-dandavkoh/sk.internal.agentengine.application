@@ -196,7 +196,11 @@ class TestTriggerValidation:
         tid = new_id("trig")
         draft = ProjectDraft(
             triggers=[
-                Trigger(id=tid, trigger_type=TriggerType.WEBHOOK),
+                Trigger(
+                    id=tid,
+                    trigger_type=TriggerType.WEBHOOK,
+                    config={"secret_credential": "credential:hook"},
+                ),
                 Trigger(id=tid, trigger_type=TriggerType.API),
             ]
         )
@@ -205,6 +209,18 @@ class TestTriggerValidation:
             (ValidationCode.DUPLICATE_TRIGGER_ID, tid)
         ]
         assert draft.validate(_DEFS).by_code(ValidationCode.DUPLICATE_TRIGGER_ID)
+
+    def test_webhooks_must_name_their_signing_credential(self) -> None:
+        unsigned = Trigger.create(TriggerType.WEBHOOK)
+        not_a_ref = Trigger.create(TriggerType.WEBHOOK, {"secret_credential": 42})
+        signed = Trigger.create(
+            TriggerType.WEBHOOK, {"secret_credential": "credential:hook"}
+        )
+        issues = validate_triggers([unsigned, signed, not_a_ref])
+        assert [(i.code, i.trigger_id) for i in issues] == [
+            (ValidationCode.WEBHOOK_SECRET_REQUIRED, unsigned.id),
+            (ValidationCode.WEBHOOK_SECRET_REQUIRED, not_a_ref.id),
+        ]
 
     def test_unschedulable_triggers_are_issues_with_location(self) -> None:
         never = Trigger.create(TriggerType.CRON, {"cron": "0 0 31 2 *"})

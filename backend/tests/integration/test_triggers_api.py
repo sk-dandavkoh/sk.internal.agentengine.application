@@ -18,11 +18,17 @@ import pytest
 from sqlalchemy import text
 
 from akasha.api.app import create_app
+from akasha.application.credentials import CredentialService
 from akasha.application.executions import ExecutionService
 from akasha.application.projects import ProjectService
-from akasha.application.triggers import TriggerRegistry, TriggerService
+from akasha.application.triggers import (
+    TriggerRegistry,
+    TriggerService,
+    webhook_signature,
+)
 from akasha.bootstrap import Container
 from akasha.config import Settings
+from akasha.domain.credentials import CredentialKind, Secret
 from akasha.domain.execution import ExecutionStatus
 from akasha.domain.node import Node, NodeExecutionContext, NodeResult
 from akasha.domain.primitives import new_id
@@ -31,6 +37,7 @@ from akasha.infrastructure.persistence import SqlAlchemyUnitOfWork
 from akasha.runtime.plan import NodeCatalog
 from akasha.runtime.runtime import ExecutionRuntime
 from akasha.runtime.scheduler import TriggerScheduler
+from akasha.security.crypto import SecretCipher
 from tests.integration.conftest import SINK, SOURCE, make_auth_kit
 
 pytestmark = pytest.mark.usefixtures("clean_db")
@@ -38,6 +45,24 @@ pytestmark = pytest.mark.usefixtures("clean_db")
 ERROR_KEYS = {"code", "message", "details", "request_id"}
 UNKNOWN_ID = "trig_" + "0" * 32
 UNKNOWN_PROJECT = "proj_" + "0" * 32
+# Every webhook trigger in these tests is signed with this credential.
+HOOK_REF, HOOK_SECRET = "credential:hook", "whsec-test-0123456789"
+HOOK_CIPHER = SecretCipher(b"h" * 32)
+
+
+async def add_hook_credential(credentials: CredentialService) -> None:
+    await credentials.create(
+        "hook", kind=CredentialKind.GENERIC, value=Secret(HOOK_SECRET)
+    )
+
+
+async def sign_webhooks(request: httpx.Request) -> None:
+    """httpx request hook: what a correctly configured caller sends. A test
+    that sets the header itself keeps its own value."""
+    if request.url.path.startswith("/api/v1/webhooks/"):
+        request.headers.setdefault(
+            "x-akasha-signature", webhook_signature(HOOK_SECRET, request.content)
+        )
 
 
 def invoke_url(project_id: str, trigger_id: str) -> str:
@@ -71,6 +96,8 @@ async def trigger_client(
     executions = ExecutionService(
         lambda: uow_of(database), limits=settings.resource_limits()
     )
+    credentials = CredentialService(lambda: uow_of(database), HOOK_CIPHER)
+    await add_hook_credential(credentials)
     container = Container(
         settings=settings,
         database=database,
@@ -78,6 +105,7 @@ async def trigger_client(
         executions=executions,
         triggers=TriggerService(executions),
         trigger_registry=TriggerRegistry(lambda: uow_of(database)),
+        credentials=credentials,
         **auth_kit.container_fields(),
     )
     app = create_app(settings=settings, container=container)
@@ -86,11 +114,19 @@ async def trigger_client(
         transport=transport,
         base_url="http://test",
         headers=await auth_kit.admin_headers(),
+        event_hooks={"request": [sign_webhooks]},
     ) as client:
         yield client
 
 
 def draft_with(triggers: list[dict[str, Any]]) -> dict[str, Any]:
+    """Webhook triggers without a config get the test signing secret."""
+    triggers = [
+        {"config": {"secret_credential": HOOK_REF}, **t}
+        if t["trigger_type"] == "webhook"
+        else t
+        for t in triggers
+    ]
     source, sink = new_id("node"), new_id("node")
     return {
         "graph": {
@@ -686,3 +722,137 @@ async def test_scheduler_cron_fires_at_boundary(
     assert await scheduler.tick() == 1
 
     assert len(await db_executions(database)) == 2
+
+
+# -- webhook authentication and request limits (Phase 25) ----------------------
+
+
+async def unsigned_post(
+    api: httpx.AsyncClient,
+    url: str,
+    content: bytes,
+    signature: str | bytes | None = None,
+) -> httpx.Response:
+    """Bypasses the signing hook: what an attacker without the secret sends."""
+    headers: dict[str, str | bytes] = {"content-type": "application/json"}
+    if signature is not None:
+        headers["x-akasha-signature"] = signature
+    async with httpx.AsyncClient(
+        transport=api._transport, base_url="http://test"
+    ) as anonymous:
+        return await anonymous.post(url, content=content, headers=headers)
+
+
+async def test_webhook_requires_a_valid_signature(
+    api: httpx.AsyncClient, database: Database
+) -> None:
+    trigger_id = new_id("trig")
+    pid, _, _ = await publish_with(api, [{"id": trigger_id, "trigger_type": "webhook"}])
+    url, body = webhook_url(pid, trigger_id), b'{"amount": 1}'
+    forged = [
+        None,  # unsigned
+        "",
+        "sha256=" + "0" * 64,
+        webhook_signature("guessed-secret", body),
+        webhook_signature(HOOK_SECRET, b'{"amount": 1000}'),  # tampered body
+        webhook_signature(HOOK_SECRET, body).removeprefix("sha256="),
+        b"sha256=\xe9",  # non-ASCII must not crash the comparison
+    ]
+    for signature in forged:
+        response = await unsigned_post(api, url, body, signature)
+        assert_error(response, 401, "WEBHOOK_SIGNATURE_INVALID")
+    assert await db_executions(database) == []  # nothing fired
+
+    good = await unsigned_post(api, url, body, webhook_signature(HOOK_SECRET, body))
+    assert good.status_code == 202, good.text
+
+
+async def test_webhook_with_deleted_secret_refuses_every_call(
+    api: httpx.AsyncClient, database: Database
+) -> None:
+    trigger_id = new_id("trig")
+    pid, _, _ = await publish_with(api, [{"id": trigger_id, "trigger_type": "webhook"}])
+    await CredentialService(lambda: uow_of(database), HOOK_CIPHER).delete("hook")
+
+    response = await api.post(webhook_url(pid, trigger_id), json={})
+    assert_error(response, 401, "WEBHOOK_SIGNATURE_INVALID")
+
+
+async def test_webhook_without_a_secret_cannot_be_published(
+    api: httpx.AsyncClient,
+) -> None:
+    pid = (await api.post("/api/v1/projects", json={"name": "t"})).json()["id"]
+    draft = draft_with([{"id": new_id("trig"), "trigger_type": "webhook"}])
+    draft["triggers"][0]["config"] = {}
+    updated = await api.put(
+        f"/api/v1/projects/{pid}",
+        json={"expected_revision": 1, "name": "t", "draft": draft},
+    )
+    assert updated.status_code == 200, updated.text
+    validation = await api.post(f"/api/v1/projects/{pid}/validate")
+    codes = [i["code"] for i in validation.json()["issues"]]
+    assert codes == ["webhook_secret_required"], validation.text
+    published = await api.post(
+        f"/api/v1/projects/{pid}/publish", json={"expected_revision": 2}
+    )
+    assert published.status_code == 422, published.text
+
+
+async def test_webhook_secret_must_be_a_reference(api: httpx.AsyncClient) -> None:
+    pid = (await api.post("/api/v1/projects", json={"name": "t"})).json()["id"]
+    draft = draft_with([{"id": new_id("trig"), "trigger_type": "webhook"}])
+    draft["triggers"][0]["config"] = {"secret_credential": HOOK_SECRET}
+    response = await api.put(
+        f"/api/v1/projects/{pid}",
+        json={"expected_revision": 1, "name": "t", "draft": draft},
+    )
+    assert_error(response, 422, "PLAINTEXT_SECRET")
+    assert HOOK_SECRET not in response.text
+
+
+async def test_oversized_webhook_body_is_rejected_while_streaming(
+    database: Database, project_service: ProjectService
+) -> None:
+    """A body with no Content-Length (chunked) is cut off at the cap, before
+    the signature is even checked."""
+    async with trigger_client(
+        database, project_service, webhook_max_payload_bytes=1024
+    ) as api:
+        trigger_id = new_id("trig")
+        pid, _, _ = await publish_with(
+            api, [{"id": trigger_id, "trigger_type": "webhook"}]
+        )
+        sent = 0
+
+        async def endless() -> AsyncIterator[bytes]:
+            nonlocal sent
+            while sent < 10 * 1024 * 1024:
+                sent += 4096
+                yield b" " * 4096
+
+        response = await unsigned_post(api, webhook_url(pid, trigger_id), b"")
+        assert_error(response, 401, "WEBHOOK_SIGNATURE_INVALID")
+        async with httpx.AsyncClient(
+            transport=api._transport, base_url="http://test"
+        ) as anonymous:
+            response = await anonymous.post(
+                webhook_url(pid, trigger_id), content=endless()
+            )
+        assert_error(response, 413, "PAYLOAD_TOO_LARGE")
+        assert sent < 64 * 1024  # stopped reading early
+
+
+async def test_every_request_body_is_capped(
+    database: Database, project_service: ProjectService
+) -> None:
+    async with trigger_client(
+        database, project_service, api_max_request_bytes=4096
+    ) as api:
+        pid = (await api.post("/api/v1/projects", json={"name": "t"})).json()["id"]
+        big = {"expected_revision": 1, "name": "t", "description": "x" * 8192}
+        response = await api.put(f"/api/v1/projects/{pid}", json=big)
+        assert_error(response, 413, "PAYLOAD_TOO_LARGE")
+        within = {"expected_revision": 1, "name": "t", "draft": draft_with([])}
+        assert (
+            await api.put(f"/api/v1/projects/{pid}", json=within)
+        ).status_code == 200

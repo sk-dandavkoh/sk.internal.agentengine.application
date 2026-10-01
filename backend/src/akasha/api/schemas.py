@@ -6,6 +6,13 @@ from typing import Any
 from fastapi import Request
 from pydantic import BaseModel, Field
 
+from akasha.errors import AkashaError
+
+
+class PayloadTooLargeError(AkashaError):
+    code = "PAYLOAD_TOO_LARGE"
+    http_status = 413
+
 
 class ErrorResponse(BaseModel):
     code: str
@@ -26,3 +33,14 @@ def request_id(request: Request) -> str:
     """The id the request middleware assigned (one id per request)."""
     rid: str | None = getattr(request.state, "request_id", None)
     return rid or accept_request_id(request.headers.get("x-request-id"))
+
+
+async def read_limited_body(request: Request, limit: int, error: AkashaError) -> bytes:
+    """The raw body, read with a cap: an oversized body raises ``error``
+    while streaming, before it is buffered whole."""
+    body = bytearray()
+    async for chunk in request.stream():
+        body += chunk
+        if len(body) > limit:
+            raise error
+    return bytes(body)
