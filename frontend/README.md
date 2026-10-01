@@ -1,24 +1,83 @@
-# Ecme - The Ultimate React, Vite & TypeScript Web Template
+# Akasha Frontend
 
-Ecme  is a modern and responsive admin dashboard template built with React and TypeScript. Designed to provide a highly customizable and easy-to-use platform for building admin interfaces, it includes a variety of reusable components, pre-designed pages, and dynamic features. 
+React + TypeScript single-page app for the Akasha Agent Engine. Rules live in
+[`AGENTS.md`](AGENTS.md); the phase plan in
+[`../docs/roadmap-frontend.md`](../docs/roadmap-frontend.md).
 
-This template is perfect for developing dashboards, web applications, CRM systems, e-commerce backends, and more. Whether you're building a small-scale admin panel or a large-scale enterprise application, Ecme is designed to be flexible and scalable.
+## Requirements
 
-Key Features:
-- **Responsive Layout**: Optimized for all screen sizes and devices.
-- **Dark/Light Mode**: Easily switch between light and dark themes.
-- **Configurable Themes**: Personalize colors, layouts, and more to fit your needs.
-- **Built with React + TypeScript**: Ensures robust type-checking and fast development.
-- **Multi-Locale Support**: Easily add and manage multiple languages.
-- **RTL Support**: Full Right-to-Left support for languages like Arabic or Hebrew.
-- **Tailwind Component-Based Architecture**: Reusable components to streamline your development process.
-- **API Ready**: Simple integration with any RESTful API.
+- Node.js `^22.13.0 || >=24` (`.nvmrc` pins 24)
+- npm (the committed `package-lock.json` is authoritative; `.npmrc` saves exact versions)
 
----
-### Demo
-Check out the [Live Demo](https://ecme-react.themenate.net/) to explore the template in action.
+## Setup
 
+```bash
+npm ci
+npx playwright install chromium   # once, only for E2E tests
+```
 
-### Guide
-Please visit our [Online documentation](https://ecme-react.themenate.net/guide/documentation/introduction) for detailed guides, setup instructions, and customization options.
+## Commands
 
+| Command                | Purpose                                              |
+| ---------------------- | ---------------------------------------------------- |
+| `npm run dev`          | Dev server on http://localhost:5173                  |
+| `npm run build`        | Typecheck, then production bundle into `dist/`       |
+| `npm run preview`      | Serve `dist/` locally                                |
+| `npm run typecheck`    | `tsc -b` over app and tooling configs                |
+| `npm run lint`         | ESLint (type-checked `typescript-eslint` strict set) |
+| `npm run format`       | Prettier write                                       |
+| `npm run format:check` | Prettier check (CI)                                  |
+| `npm test`             | Vitest unit/component tests (jsdom)                  |
+| `npm run test:e2e`     | Playwright against a fresh production build          |
+
+Quality gate before finishing a phase:
+
+```bash
+npm run format:check && npm run lint && npm run typecheck && npm test && npm run build && npm run test:e2e
+```
+
+## Configuration
+
+Copy `.env.example` to `.env.local` (git-ignored).
+
+- `AKASHA_API_PROXY_TARGET` (default `http://127.0.0.1:8000`): backend the dev
+  and preview servers proxy `/api` to. It is read only by `vite.config.ts` and
+  never enters the bundle.
+- Only `VITE_*` variables are exposed to browser code. Never put secrets in them.
+
+The browser always calls the backend on the same origin (`/api/v1/...`). In
+development Vite proxies it; in production a reverse proxy must do the same.
+This keeps the backend free of CORS configuration.
+
+## Structure
+
+```text
+frontend/
+├── src/
+│   ├── main.tsx        entry point: mounts <App/>
+│   ├── app/            app root (shell, routing, providers from Phase 01 on)
+│   ├── styles/         global CSS (Tailwind v4 entry)
+│   └── test/           Vitest setup (jest-dom matchers, RTL cleanup)
+├── tests/e2e/          Playwright specs
+├── index.html
+├── vite.config.ts      Vite + Vitest config
+├── playwright.config.ts
+├── eslint.config.js
+├── tsconfig.app.json   browser code (src/)
+└── tsconfig.node.json  tooling configs and e2e tests
+```
+
+Later phases add directories as they gain content, following `AGENTS.md` §6:
+`components/` (shared UI), `features/<domain>/`, `api/`, `hooks/`, `lib/`,
+`schemas/`, `types/`. Unit and component tests sit next to the code as
+`*.test.ts(x)`.
+
+## Decisions
+
+- **Tailwind v4 via `@tailwindcss/vite`**: no `tailwind.config` or PostCSS
+  config; theme tokens go in CSS when Phase 02 needs them.
+- **TypeScript strict plus** `noUncheckedIndexedAccess`,
+  `exactOptionalPropertyTypes`, `noPropertyAccessFromIndexSignature`,
+  `verbatimModuleSyntax`, `erasableSyntaxOnly`.
+- **E2E runs against the production build** (`build` + `preview`), not the dev
+  server, so it exercises what ships.

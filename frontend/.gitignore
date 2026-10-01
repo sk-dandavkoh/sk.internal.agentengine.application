@@ -25,3 +25,7 @@ build
 *.sln
 *.sw?
 .vite-cache/
+# Test output
+coverage
+playwright-report
+test-results
