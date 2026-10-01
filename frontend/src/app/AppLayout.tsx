@@ -1,18 +1,31 @@
-import { NavLink, Outlet, useNavigation } from 'react-router'
+import { useEffect, useRef } from 'react'
+import { NavLink, Outlet, useLocation, useNavigation } from 'react-router'
+import { cx } from '../lib/cx'
 import { navItems } from './navigation'
 
 export function AppLayout() {
     const isNavigating = useNavigation().state === 'loading'
+    const { pathname } = useLocation()
+    const mainRef = useRef<HTMLElement>(null)
+    const previousPath = useRef(pathname)
+
+    // After a client-side navigation, move focus to the new content so
+    // keyboard and screen-reader users land on the page, not the old link.
+    useEffect(() => {
+        if (previousPath.current === pathname) return
+        previousPath.current = pathname
+        mainRef.current?.focus()
+    }, [pathname])
 
     return (
-        <div className="flex min-h-screen flex-col bg-slate-50 text-slate-900 md:flex-row">
+        <div className="flex min-h-screen flex-col md:flex-row">
             <a
                 href="#main-content"
-                className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:rounded focus:bg-white focus:px-3 focus:py-2"
+                className="focus-ring sr-only rounded-md bg-surface px-3 py-2 shadow focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-50"
             >
                 Skip to content
             </a>
-            <header className="border-b border-slate-200 bg-white md:w-56 md:shrink-0 md:border-r md:border-b-0">
+            <header className="border-b border-border bg-surface md:w-56 md:shrink-0 md:border-r md:border-b-0">
                 <p className="px-4 py-3 text-lg font-semibold">
                     Akasha Agent Engine
                 </p>
@@ -23,11 +36,12 @@ export function AppLayout() {
                                 <NavLink
                                     to={item.path}
                                     className={({ isActive }) =>
-                                        `block rounded px-3 py-2 whitespace-nowrap focus-visible:outline-2 focus-visible:outline-indigo-600 ${
+                                        cx(
+                                            'focus-ring block rounded-md px-3 py-2 text-sm whitespace-nowrap',
                                             isActive
-                                                ? 'bg-indigo-50 font-semibold text-indigo-800'
-                                                : 'text-slate-700 hover:bg-slate-100'
-                                        }`
+                                                ? 'bg-surface-muted font-semibold text-fg'
+                                                : 'text-muted hover:bg-surface-muted hover:text-fg',
+                                        )
                                     }
                                 >
                                     {item.label}
@@ -37,20 +51,21 @@ export function AppLayout() {
                     </ul>
                 </nav>
             </header>
-            <div className="relative flex-1">
+            <div className="relative min-w-0 flex-1">
                 {isNavigating && (
                     <div
                         role="status"
-                        className="absolute inset-x-0 top-0 h-1 animate-pulse bg-indigo-600 motion-reduce:animate-none"
+                        className="absolute inset-x-0 top-0 h-1 animate-pulse bg-primary motion-reduce:animate-none"
                     >
                         <span className="sr-only">Loading page…</span>
                     </div>
                 )}
                 <main
+                    ref={mainRef}
                     id="main-content"
                     tabIndex={-1}
                     aria-busy={isNavigating}
-                    className="p-6 focus:outline-none"
+                    className="mx-auto max-w-6xl p-4 focus:outline-none sm:p-6"
                 >
                     <Outlet />
                 </main>

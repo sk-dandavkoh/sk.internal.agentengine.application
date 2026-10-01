@@ -42,4 +42,30 @@ describe('AppLayout', () => {
         expect(screen.queryByRole('status')).not.toBeInTheDocument()
         expect(screen.getByRole('main')).toHaveAttribute('aria-busy', 'false')
     })
+
+    it('moves focus to the main content after navigation, not on first load', async () => {
+        const router = createMemoryRouter(
+            [
+                {
+                    element: <AppLayout />,
+                    children: [
+                        { path: '/', element: <Link to="/next">Next</Link> },
+                        { path: '/next', element: <h1>Next page</h1> },
+                    ],
+                },
+            ],
+            { initialEntries: ['/'] },
+        )
+        render(<RouterProvider router={router} />)
+        const link = await screen.findByRole('link', { name: 'Next' })
+        expect(screen.getByRole('main')).not.toHaveFocus()
+
+        link.focus()
+        fireEvent.click(link)
+
+        expect(
+            await screen.findByRole('heading', { name: 'Next page' }),
+        ).toBeInTheDocument()
+        expect(screen.getByRole('main')).toHaveFocus()
+    })
 })

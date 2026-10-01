@@ -1,4 +1,5 @@
 import { createBrowserRouter, RouterProvider } from 'react-router'
+import { ToastProvider } from '../components/ui'
 import { routes } from './routes'
 
 // State boundaries: the URL (router) is application/navigation state.
@@ -7,5 +8,9 @@ import { routes } from './routes'
 const router = createBrowserRouter(routes)
 
 export function App() {
-    return <RouterProvider router={router} />
+    return (
+        <ToastProvider>
+            <RouterProvider router={router} />
+        </ToastProvider>
+    )
 }

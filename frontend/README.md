@@ -56,7 +56,9 @@ frontend/
 ├── src/
 │   ├── main.tsx        entry point: mounts <App/>
 │   ├── app/            app root: router, shell layout, route boundaries
-│   ├── styles/         global CSS (Tailwind v4 entry)
+│   ├── components/ui/  design system primitives (import from the index)
+│   ├── lib/            small framework-free helpers (cx)
+│   ├── styles/         global CSS: Tailwind v4 entry and design tokens
 │   └── test/           Vitest setup (jest-dom matchers, RTL cleanup)
 ├── tests/e2e/          Playwright specs
 ├── index.html
@@ -68,14 +70,13 @@ frontend/
 ```
 
 Later phases add directories as they gain content, following `AGENTS.md` §6:
-`components/` (shared UI), `features/<domain>/`, `api/`, `hooks/`, `lib/`,
-`schemas/`, `types/`. Unit and component tests sit next to the code as
+`features/<domain>/`, `api/`, `hooks/`, `schemas/`, `types/`. Unit and component tests sit next to the code as
 `*.test.ts(x)`.
 
 ## Decisions
 
 - **Tailwind v4 via `@tailwindcss/vite`**: no `tailwind.config` or PostCSS
-  config; theme tokens go in CSS when Phase 02 needs them.
+  config; design tokens live in `src/styles/index.css` (`@theme`).
 - **TypeScript strict plus** `noUncheckedIndexedAccess`,
   `exactOptionalPropertyTypes`, `noPropertyAccessFromIndexSignature`,
   `verbatimModuleSyntax`, `erasableSyntaxOnly`.
@@ -93,3 +94,49 @@ Later phases add directories as they gain content, following `AGENTS.md` §6:
   through TanStack Query, added at the app root together with the API client
   (Phase 03/04). Feature and editor state stay inside their feature subtree.
   There is no global client store.
+
+## Design system
+
+All UI is composed from `src/components/ui` (`import { Button, Dialog } from
+'../components/ui'`). Features do not restyle primitives; a `className` prop,
+where offered, is for layout only (margin, width, grid placement). The live
+reference is the unlisted route **`/dev/ui`** (catalog of every primitive and
+state, both themes); it is also the E2E target for native browser behavior.
+
+**Tokens** (`src/styles/index.css`): components use semantic colors only —
+`canvas`, `surface`, `surface-muted`, `border`, `border-strong`, `fg`, `muted`,
+`focus`, `primary`/`on-primary`, `danger`/`on-danger`, and per-tone
+`{neutral,info,success,warning,danger}-{soft,text}` — never raw palette
+classes. Dark theme follows `prefers-color-scheme`; `data-theme="light"` on
+`<html>` opts out. Every interactive element uses the `focus-ring` utility.
+
+**Conventions**
+
+| Concern        | Convention                                                                    |
+| -------------- | ----------------------------------------------------------------------------- |
+| Page structure | `PageHeader` renders the page's single `h1` (+ description, actions)          |
+| Sections       | `Card` (title `h2` by default, `titleAs="h3"` when nested)                    |
+| Typography     | system sans; `text-2xl` page title, `text-base` section title, `text-sm` body |
+| Spacing        | 4 px grid: `gap-2` inside controls, `gap-4` in forms, `gap-6` between cards   |
+| Controls       | 40 px (`md`) / 32 px (`sm`) height, `rounded-md`                              |
+| Content width  | `<main>` caps at `max-w-6xl`, `p-4` mobile / `p-6` from `sm`                  |
+| Status         | `Badge` with `dot`; tone plus text, never color alone                         |
+
+**Primitives**
+
+- Actions: `Button` (`primary`/`secondary`/`ghost`/`danger`, `sm`/`md`,
+  `loading` keeps focus and blocks activation), `TextLink` (navigation).
+- Forms: `Input`, `Textarea`, `Select` (native, children are `<option>`s),
+  `Checkbox`, `Switch`. Each takes `label`, `description`, `error`; the error
+  sets `aria-invalid` and is linked via `aria-describedby`. Show submit
+  progress with `Button loading`; it cannot be submitted twice.
+- Overlays: `Dialog` (native modal `<dialog>`; `data-autofocus` picks the
+  initial focus), `ConfirmDialog` (names the consequence, `irreversible`,
+  `pending`, `error`; focus starts on Cancel), `DropdownMenu`, `Tooltip`
+  (supplementary text only; never the sole label).
+- Structure: `Card`, `Tabs` (controlled via `value`/`onValueChange` for URL
+  state), `Table` (captioned, `empty` slot; paginate server-side).
+- Feedback: `Alert` (inline), `useToast().notify()` (transient; success/info
+  time out after 5 s, warnings/errors stay), `Badge`.
+- Async states: `LoadingState`, `Skeleton` (decorative; pair with
+  `aria-busy`), `EmptyState`, `ErrorState` (user-facing text only).
