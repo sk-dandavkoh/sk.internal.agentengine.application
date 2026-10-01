@@ -84,6 +84,13 @@ class FakeExecutions(ExecutionRepository):
     ) -> Sequence[str]:
         return []
 
+    async def count_unfinished(self, project_id: str) -> int:
+        return sum(
+            1
+            for e in self.items.values()
+            if e.project_id == project_id and not e.is_terminal
+        )
+
     async def heartbeat(self, execution_id: str, *, revision: int) -> bool:
         return True
 

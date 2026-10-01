@@ -101,6 +101,14 @@ class EngineMetrics:
             "Stale executions taken over and queued to resume.",
             registry=registry,
         )
+        self.resource_limit_exceeded = Counter(
+            "akasha_resource_limit_exceeded",
+            "Requests rejected and nodes failed for exceeding a resource limit"
+            " (``akasha.domain.limits.Limit``). Timeouts are counted as"
+            " timed-out executions and nodes.",
+            ["limit"],
+            registry=registry,
+        )
         self.node_metric = Counter(
             "akasha_node_metric",
             "Counters incremented by node code (context.metrics).",

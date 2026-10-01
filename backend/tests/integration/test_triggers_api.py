@@ -68,12 +68,15 @@ async def trigger_client(
 ) -> AsyncIterator[httpx.AsyncClient]:
     settings = Settings(environment="test", log_level="CRITICAL", **setting_overrides)
     auth_kit = make_auth_kit(database)
+    executions = ExecutionService(
+        lambda: uow_of(database), limits=settings.resource_limits()
+    )
     container = Container(
         settings=settings,
         database=database,
         projects=project_service,
-        executions=ExecutionService(lambda: uow_of(database)),
-        triggers=TriggerService(ExecutionService(lambda: uow_of(database))),
+        executions=executions,
+        triggers=TriggerService(executions),
         trigger_registry=TriggerRegistry(lambda: uow_of(database)),
         **auth_kit.container_fields(),
     )
@@ -201,6 +204,24 @@ async def test_manual_execute_unknown_version(api: httpx.AsyncClient) -> None:
     pid, _, _ = await publish_with(api, [])
     response = await api.post(f"/api/v1/projects/{pid}/versions/99/execute", json={})
     assert_error(response, 404, "PROJECT_VERSION_NOT_FOUND")
+
+
+async def test_manual_execute_over_project_capacity_is_429(
+    database: Database, project_service: ProjectService
+) -> None:
+    async with trigger_client(
+        database, project_service, limit_active_executions_per_project=1
+    ) as api:
+        pid, version, _ = await publish_with(api, [])
+        url = f"/api/v1/projects/{pid}/versions/{version}/execute"
+        assert (await api.post(url, json={})).status_code == 201
+        response = await api.post(url, json={})
+    assert_error(response, 429, "EXECUTION_CAPACITY_EXCEEDED")
+    assert response.json()["details"] == {
+        "limit": "active_executions",
+        "maximum": 1,
+        "requested": 2,
+    }
 
 
 async def test_get_unknown_execution(api: httpx.AsyncClient) -> None:

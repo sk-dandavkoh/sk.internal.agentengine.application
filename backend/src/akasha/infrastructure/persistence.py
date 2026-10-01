@@ -32,6 +32,7 @@ from akasha.application.persistence import (
 from akasha.domain.credentials import Credential, CredentialKind
 from akasha.domain.event import Event, EventType
 from akasha.domain.execution import (
+    TERMINAL_EXECUTION_STATUSES,
     CancellationState,
     Execution,
     ExecutionError,
@@ -401,6 +402,26 @@ class SqlAlchemyExecutionRepository(ExecutionRepository):
             .limit(limit)
         )
         return list(rows.scalars())
+
+    async def count_unfinished(self, project_id: str) -> int:
+        # NO KEY UPDATE: serializes admissions without blocking the key-share
+        # locks taken by inserts that reference the project.
+        await self._session.execute(
+            select(m.projects.c.id)
+            .where(m.projects.c.id == project_id)
+            .with_for_update(key_share=True)
+        )
+        count = await self._session.scalar(
+            select(func.count())
+            .select_from(m.executions)
+            .where(
+                m.executions.c.project_id == project_id,
+                m.executions.c.status.notin_(
+                    [s.value for s in TERMINAL_EXECUTION_STATUSES]
+                ),
+            )
+        )
+        return int(count or 0)
 
     async def heartbeat(self, execution_id: str, *, revision: int) -> bool:
         result = cast(

@@ -167,7 +167,8 @@ def create_container(settings: Settings) -> Container:
             redis_url.get_secret_value(), prefix=settings.queue_prefix
         )
     )
-    executions = ExecutionService(uow, events, metrics, queue=queue)
+    limits = settings.resource_limits()
+    executions = ExecutionService(uow, events, metrics, queue=queue, limits=limits)
     credentials = None if cipher is None else CredentialService(uow, cipher)
     runtime = ExecutionRuntime(
         uow,
@@ -176,6 +177,8 @@ def create_container(settings: Settings) -> Container:
         metrics=metrics,
         credentials=credentials,
         heartbeat_seconds=settings.worker_heartbeat_seconds,
+        max_concurrency=settings.limit_execution_concurrency,
+        limits=limits,
     )
     workers = (
         None
@@ -282,4 +285,4 @@ def create_ai_service(settings: Settings) -> AIService:
             )
         )
     # A name clashing with a built-in provider fails startup (ConfigurationError).
-    return AIService(providers)
+    return AIService(providers, max_output_tokens=settings.limit_llm_output_tokens)

@@ -53,6 +53,22 @@ Workers and queue (Phase 22):
 | `AKASHA_QUEUE_RECOVERY_SECONDS` | `30.0` | recovery pass interval, and how long an execution may stay QUEUED before re-dispatch |
 | `AKASHA_EXECUTION_STALE_SECONDS` | `60.0` | a started execution without an owner heartbeat this long is recovered (≥ 3 heartbeats) |
 
+Resource limits (architecture §75). Timeouts are both the default and the
+maximum a request may ask for:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `AKASHA_LIMIT_EXECUTION_TIMEOUT_SECONDS` | `3600` | execution duration |
+| `AKASHA_LIMIT_NODE_TIMEOUT_SECONDS` | `900` | node attempt duration (≤ execution timeout) |
+| `AKASHA_LIMIT_NODE_ATTEMPTS` | `5` | attempts per node, first one included |
+| `AKASHA_LIMIT_GRAPH_NODES` | `500` | nodes per executed graph |
+| `AKASHA_LIMIT_GRAPH_DEPTH` | `100` | nodes on the longest dependency chain |
+| `AKASHA_LIMIT_ACTIVE_EXECUTIONS_PER_PROJECT` | `100` | unfinished executions per project (more → HTTP 429) |
+| `AKASHA_LIMIT_EXECUTION_CONCURRENCY` | `8` | nodes running at once per execution |
+| `AKASHA_LIMIT_NODE_OUTPUT_BYTES` | `1048576` | one node's outputs, as UTF-8 JSON |
+| `AKASHA_LIMIT_EXECUTION_OUTPUT_BYTES` | `16777216` | all outputs of one execution (≥ node limit) |
+| `AKASHA_LIMIT_LLM_OUTPUT_TOKENS` | `16384` | `max_tokens` per LLM request (unset → this) |
+
 First run: `POST /api/v1/auth/setup` with `{"username", "password"}` creates
 the initial admin. It works only while no account exists, so complete it
 before exposing the engine to a network. Then `POST /api/v1/auth/login` and

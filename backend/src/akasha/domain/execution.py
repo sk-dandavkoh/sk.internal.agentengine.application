@@ -303,7 +303,9 @@ class RetryPolicy:
 
 @dataclass(frozen=True)
 class TimeoutPolicy:
-    """Wall-clock limits; ``None`` means unlimited (resource caps: Phase 24).
+    """Wall-clock limits; ``None`` means unlimited here. Executions admitted
+    through ``ExecutionService`` never keep ``None``: it is replaced by the
+    engine cap (``akasha.domain.limits.ResourceLimits``).
 
     The node timeout applies per attempt; the execution timeout from the
     first start, including paused/waiting time.

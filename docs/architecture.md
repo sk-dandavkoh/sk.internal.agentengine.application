@@ -2386,8 +2386,9 @@ Implementation (Phase 08, migration `0003_executions`):
   attempt, failures (JSONB), outputs (JSONB) and timestamps.
 - Outputs are stored as JSON; values PostgreSQL cannot store (bytes, NaN,
   NUL characters, unpaired surrogates) are stored as a
-  `{"$unpersisted": ...}` stub. Size limits (Phase 24) and
-  redaction (Phase 13) are not applied yet. Inputs are not stored; they are
+  `{"$unpersisted": ...}` stub. Size limits apply since Phase 24 (§75):
+  an oversized output fails its node and is never stored. Redaction
+  applies since Phase 13. Inputs are not stored; they are
   derivable from upstream outputs and the pinned graph.
 - Loading takes a share lock on the execution row, so the execution and
   its node rows always come from the same committed state.
@@ -3122,6 +3123,43 @@ LLM token limits
 ```
 
 Limits should be explicit and observable.
+
+Implementation (Phase 24, `akasha.domain.limits.ResourceLimits`, settings
+`AKASHA_LIMIT_*`). There is one value object, built once from `Settings`.
+Each cap is enforced by the layer that owns the resource:
+
+| Limit | Default | Enforced by | Over the limit |
+| --- | --- | --- | --- |
+| execution duration | 3600 s | admission + runtime deadline | request rejected (422); at run time `TIMEOUT` |
+| node duration (per attempt) | 900 s | admission + `execute_node` | request rejected (422); at run time node `NODE_TIMEOUT` |
+| attempts (retries + 1) | 5 | admission | request rejected (422) |
+| graph nodes / depth (longest path) | 500 / 100 | admission | request rejected (422) |
+| unfinished executions per project | 100 | admission (project row locked) | request rejected (429 `EXECUTION_CAPACITY_EXCEEDED`) |
+| nodes in flight per execution | 8 | runtime scheduler | waits for a slot |
+| executions per worker | 4 (`AKASHA_WORKER_CONCURRENCY`) | worker | job waits in the queue |
+| node output (UTF-8 JSON bytes) | 1 MiB | runtime, before the output is stored | node `NODE_OUTPUT_TOO_LARGE` (PERMANENT) |
+| outputs per execution | 16 MiB | runtime (recounted on resume) | node `EXECUTION_OUTPUT_TOO_LARGE` (PERMANENT) |
+| HTTP response | 5 MiB | `core.http` / `core.web_search` while streaming | node `HTTP_RESPONSE_TOO_LARGE` |
+| LLM output tokens per request | 16384 | `AIService`, before the provider call | `PROVIDER_CONFIGURATION`; unset `max_tokens` gets the cap |
+
+- Admission (`ExecutionService.create_execution`) replaces a missing
+  timeout with the cap and rejects a requested value above it. Every
+  persisted execution therefore carries finite limits. A resumed run keeps
+  the limits it was admitted with, even if the operator lowered them
+  since. Output caps are the running engine's.
+- A request rejected at admission stores nothing.
+- Observability: `akasha_resource_limit_exceeded_total{limit}`, where
+  `limit` is the bounded `Limit` enum. There are also the structured log
+  events `execution_rejected` and `node_output_limit_exceeded`. Timeouts
+  keep their existing `timeout` status and error-kind metrics.
+- Loops and nested executions: the engine has no loop, subgraph or
+  sub-execution construct. Graphs are DAGs (cycles are a validation error),
+  so one execution runs at most `nodes × attempts` node attempts. Graph
+  size, depth and attempts bound that number. Iteration and nesting limits
+  belong to those constructs when they are introduced (§130/§131).
+- Artifacts: there is no artifact store yet. Node outputs are the stored
+  results and are capped above. Project files are capped by the domain
+  (`MAX_PROJECT_FILE_BYTES` etc., Phase 18).
 
 ----------
 
@@ -4015,6 +4053,8 @@ exposition at `GET /metrics`; since Phase 20 it needs the
 - Phase 23: `akasha_node_retries_total{node_type, error_kind}` (attempts
   scheduled again, by the retry policy or by recovery) and
   `akasha_executions_recovered_total` (stale executions requeued).
+- Phase 24: `akasha_resource_limit_exceeded_total{limit}` (admissions
+  rejected and nodes failed by a resource limit, §75).
 - Not yet emitted: `llm_tokens_total`/`llm_cost`
   (token usage and cost estimates are persisted in `core.llm` outputs and
   logged by `AIService`; the metrics need the runtime's `EngineMetrics` to

@@ -22,6 +22,7 @@ from akasha.domain.execution import (
     RetryPolicy,
     TimeoutPolicy,
 )
+from akasha.domain.limits import ResourceLimitError, ResourceLimits
 from akasha.domain.primitives import utcnow
 from akasha.errors import AkashaError
 from akasha.observability.execution import observe_execution
@@ -61,8 +62,10 @@ class ExecutionService:
         events: EventPublisher | None = None,
         metrics: EngineMetrics | None = None,
         queue: ExecutionQueue | None = None,
+        limits: ResourceLimits | None = None,
     ) -> None:
         self._uow = uow
+        self._limits = limits or ResourceLimits()
         self._events = events or EventPublisher()
         self._metrics = metrics or EngineMetrics()
         # None: nothing dispatches; whoever creates an execution runs it
@@ -88,7 +91,50 @@ class ExecutionService:
         Never reads the draft: later draft edits or publishes cannot change
         what this execution runs. The retry policy defaults to no retries:
         repeating side effects must be opted into (AGENTS §47).
+
+        Admission control (Phase 24): unset timeouts take the engine's
+        limits. A policy above a limit, a graph that is too large or too
+        deep, or a project at its active-execution cap raises
+        ``ResourceLimitError`` and nothing is stored.
         """
+        try:
+            return await self._create(
+                project_id,
+                version,
+                input=input,
+                metadata=metadata,
+                timeout_policy=timeout_policy,
+                retry_policy=retry_policy,
+                dispatch=dispatch,
+            )
+        except ResourceLimitError as exc:
+            self._metrics.resource_limit_exceeded.labels(exc.limit.value).inc()
+            logger.warning(
+                "execution_rejected",
+                extra={
+                    "event": "execution_rejected",
+                    "project_id": project_id,
+                    "project_version": version,
+                    "reason": exc.code,
+                    "limit": exc.limit.value,
+                },
+            )
+            raise
+
+    async def _create(
+        self,
+        project_id: str,
+        version: int,
+        *,
+        input: Mapping[str, Any] | None,
+        metadata: ExecutionMetadata | None,
+        timeout_policy: TimeoutPolicy | None,
+        retry_policy: RetryPolicy | None,
+        dispatch: bool,
+    ) -> Execution:
+        timeout_policy, retry_policy = self._limits.policies(
+            timeout_policy, retry_policy
+        )
         async with self._uow() as uow:
             snapshot = await uow.versions.get(project_id, version)
             if snapshot is None:
@@ -96,6 +142,10 @@ class ExecutionService:
                     "Project version not found.",
                     details={"project_id": project_id, "version": version},
                 )
+            self._limits.check_graph(snapshot.graph)
+            self._limits.check_capacity(
+                await uow.executions.count_unfinished(project_id)
+            )
             execution = Execution.create(
                 project_id,
                 snapshot,

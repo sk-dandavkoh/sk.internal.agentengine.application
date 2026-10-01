@@ -253,3 +253,42 @@ async def test_ai_service_is_the_nodes_llm_port() -> None:
     )
     response = await client.complete(request("local"))
     assert response.content == "port"
+
+
+# -- output-token limit (Phase 24) ------------------------------------------------
+
+
+async def test_missing_max_tokens_gets_the_engine_limit() -> None:
+    adapter = FakeAdapter()
+    service = AIService(
+        [LLMProvider("local", adapter, requires_credential=False)],
+        max_output_tokens=100,
+    )
+    await service.complete(request("local"))
+    ((sent, _, _),) = adapter.calls
+    assert sent.max_tokens == 100
+
+
+async def test_max_tokens_at_and_beyond_the_limit() -> None:
+    adapter = FakeAdapter()
+    service = AIService(
+        [LLMProvider("local", adapter, requires_credential=False)],
+        max_output_tokens=100,
+    )
+    await service.complete(request("local", max_tokens=100))
+    assert adapter.calls[0][0].max_tokens == 100
+
+    with pytest.raises(ProviderError) as caught:
+        await service.complete(request("local", max_tokens=101))
+    assert caught.value.kind is ProviderErrorKind.CONFIGURATION
+    assert len(adapter.calls) == 1  # rejected before any provider call
+
+
+async def test_output_token_limit_from_settings_and_validated() -> None:
+    service = create_ai_service(Settings(limit_llm_output_tokens=123))
+    # Rejected before credentials or the network are touched.
+    with pytest.raises(ProviderError, match="engine limit of 123"):
+        await service.complete(request("openai", max_tokens=124))
+    adapter = FakeAdapter()
+    with pytest.raises(ConfigurationError):
+        AIService([LLMProvider("local", adapter)], max_output_tokens=0)

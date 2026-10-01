@@ -5,10 +5,13 @@ Missing or invalid critical configuration fails fast at startup (see
 ``Settings.model_validate`` in the bootstrap path).
 """
 
+from datetime import timedelta
 from pathlib import Path
 
 from pydantic import AnyHttpUrl, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from akasha.domain.limits import ResourceLimits
 
 
 class Settings(BaseSettings):
@@ -94,13 +97,42 @@ class Settings(BaseSettings):
     # operators may write here.
     plugins_dir: Path | None = None
 
+    # Resource limits (Phase 24, ``akasha.domain.limits``). Execution and
+    # node timeouts are both the default and the ceiling a request may lower.
+    # Attempts include the first one, so 5 allows 4 retries.
+    limit_execution_timeout_seconds: float = Field(default=3600.0, gt=0)
+    limit_node_timeout_seconds: float = Field(default=900.0, gt=0)
+    limit_node_attempts: int = Field(default=5, ge=1, le=100)
+    limit_graph_nodes: int = Field(default=500, ge=1, le=100_000)
+    limit_graph_depth: int = Field(default=100, ge=1, le=100_000)
+    limit_active_executions_per_project: int = Field(default=100, ge=1)
+    limit_node_output_bytes: int = Field(default=1024 * 1024, gt=0)
+    limit_execution_output_bytes: int = Field(default=16 * 1024 * 1024, gt=0)
+    # Nodes in flight per execution; executions per worker: worker_concurrency.
+    limit_execution_concurrency: int = Field(default=8, ge=1, le=256)
+    # Per LLM request; requests without max_tokens get this many.
+    limit_llm_output_tokens: int = Field(default=16_384, ge=1, le=1_000_000)
+
     @model_validator(mode="after")
     def _stale_after_heartbeats(self) -> "Settings":
         if self.execution_stale_seconds < 3 * self.worker_heartbeat_seconds:
             raise ValueError(
                 "execution_stale_seconds must be at least 3 worker heartbeats"
             )
+        self.resource_limits()  # fail fast on contradictory limits
         return self
+
+    def resource_limits(self) -> ResourceLimits:
+        return ResourceLimits(
+            execution_timeout=timedelta(seconds=self.limit_execution_timeout_seconds),
+            node_timeout=timedelta(seconds=self.limit_node_timeout_seconds),
+            max_node_attempts=self.limit_node_attempts,
+            max_graph_nodes=self.limit_graph_nodes,
+            max_graph_depth=self.limit_graph_depth,
+            max_active_executions_per_project=self.limit_active_executions_per_project,
+            max_node_output_bytes=self.limit_node_output_bytes,
+            max_execution_output_bytes=self.limit_execution_output_bytes,
+        )
 
 
 def load_settings() -> Settings:

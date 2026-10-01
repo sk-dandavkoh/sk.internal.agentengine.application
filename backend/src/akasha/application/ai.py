@@ -8,7 +8,10 @@
   adapter behind it and its operating limits.
 - The service picks the provider, resolves the credential reference through
   the caller's ``CredentialResolver`` (a node's resolver enforces that the
-  reference is in its own config), and bounds the call with the timeout.
+  reference is in its own config), and bounds the call with the timeout
+  and the output-token limit (Phase 24): a request without ``max_tokens``
+  gets the limit, and one above it is rejected before any provider is
+  called.
 
 Adding a provider means adding an ``LLMProvider``; nothing above changes.
 Nodes never import this module: they depend on the domain port
@@ -19,7 +22,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Protocol
 
 from akasha.domain.ai import LLMRequest, LLMResponse, ProviderError, ProviderErrorKind
@@ -46,7 +49,12 @@ class LLMProvider:
 
 
 class AIService:
-    def __init__(self, providers: Iterable[LLMProvider]) -> None:
+    def __init__(
+        self, providers: Iterable[LLMProvider], *, max_output_tokens: int = 16_384
+    ) -> None:
+        if max_output_tokens < 1:
+            raise ConfigurationError("max_output_tokens must be >= 1")
+        self._max_tokens = max_output_tokens
         self._providers: dict[str, LLMProvider] = {}
         for provider in providers:
             if provider.name in self._providers:
@@ -71,6 +79,17 @@ class AIService:
                 kind=ProviderErrorKind.CONFIGURATION,
                 provider=request.provider,
             )
+        if request.max_tokens is None:
+            request = replace(request, max_tokens=self._max_tokens)
+        elif request.max_tokens > self._max_tokens:
+            error = ProviderError(
+                f"max_tokens {request.max_tokens} exceeds the engine limit of "
+                f"{self._max_tokens}",
+                kind=ProviderErrorKind.CONFIGURATION,
+                provider=provider.name,
+            )
+            _log_failure(request, error, time.monotonic())
+            raise error
         api_key = await _api_key(provider, request, credentials)
         timeout = min(
             request.timeout_seconds or provider.timeout_seconds,

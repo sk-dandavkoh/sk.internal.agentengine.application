@@ -35,6 +35,12 @@ Reliability (Phase 23):
   recovered execution is QUEUED again and ``run`` resumes it where it
   stopped — finished nodes never run again.
 
+Resource limits (Phase 24): the timeouts and attempts an execution was
+admitted with are on the aggregate (``ExecutionService`` caps them). This
+loop enforces the rest of ``ResourceLimits``: nodes in flight per execution
+(``max_concurrency``) and node/execution output size. Output that breaks a
+cap never reaches the aggregate: the node fails instead.
+
 Workers (``akasha.workers``) call ``run`` and ``recover_stale``; the queue
 never reaches in here. Control flow is generic (``ExecutionPlan.readiness``):
 the loop never inspects node types.
@@ -58,6 +64,7 @@ from akasha.domain.execution import (
     ExecutionStatus,
     NodeExecutionStatus,
 )
+from akasha.domain.limits import ResourceLimits, json_size
 from akasha.domain.node import (
     NodeErrorKind,
     NodeEvents,
@@ -174,6 +181,9 @@ class _CancelRequest:
     # Set when the runtime stops the run for any reason (cancel, timeout,
     # failure): what ``NodeExecutionContext.is_cancelled`` reports.
     stopping: bool = False
+    # Serialized size of the outputs completed nodes produced so far; checked
+    # against ResourceLimits.max_execution_output_bytes.
+    output_bytes: int = 0
 
     def should_stop(self) -> bool:
         return self.stopping or self.event.is_set()
@@ -224,12 +234,14 @@ class ExecutionRuntime:
         metrics: EngineMetrics | None = None,
         credentials: SecretSource | None = None,
         heartbeat_seconds: float = 5.0,
+        limits: ResourceLimits | None = None,
     ) -> None:
         if max_concurrency < 1:
             raise ConfigurationError("max_concurrency must be >= 1")
         if heartbeat_seconds <= 0:
             raise ConfigurationError("heartbeat_seconds must be > 0")
         self._heartbeat = heartbeat_seconds
+        self._limits = limits or ResourceLimits()
         self._metrics = metrics or EngineMetrics()
         self._state = StateManager(uow, events or EventPublisher(), self._metrics)
         self._catalog = catalog
@@ -376,6 +388,11 @@ class ExecutionRuntime:
                 return execution
             started = execution.started_at or now  # set: is_resumed
             elapsed = max(0.0, (now - started).total_seconds())
+            request.output_bytes = sum(
+                json_size(ne.outputs)
+                for ne in execution.node_executions.values()
+                if ne.status is NodeExecutionStatus.COMPLETED
+            )
         execution.start(now=now, node_versions=plan.node_versions)
         # Fresh: marks the roots READY. Resumed: re-derives readiness from
         # what finished, so no persisted progress can leave a node stranded.
@@ -437,7 +454,7 @@ class ExecutionRuntime:
                 )
                 finished = [t for t in running if t in done]
                 completed, failure = self._record(
-                    execution, running, finished, retry=True
+                    execution, running, finished, request, retry=True
                 )
                 dirty = bool(finished)
                 if failure is None:
@@ -466,7 +483,7 @@ class ExecutionRuntime:
         if verdict == "cancel":
             execution.request_cancellation(reason=request.reason, now=self._clock())
         request.stopping = True
-        await self._stop(execution, running)
+        await self._stop(execution, running, request)
         now = self._clock()
         if verdict == "cancel":
             execution.cancel(now=now)
@@ -586,6 +603,7 @@ class ExecutionRuntime:
         execution: Execution,
         running: _Running,
         finished: list[asyncio.Task[NodeOutcome]],
+        request: _CancelRequest,
         *,
         retry: bool,
     ) -> tuple[list[str], ExecutionError | None]:
@@ -599,7 +617,7 @@ class ExecutionRuntime:
         for task in finished:
             attempt = running.pop(task)
             node_id = attempt.node_id
-            outcome = task.result()
+            outcome = self._limit_output(task.result(), node_id, attempt, request)
             now = self._clock()
             self._flush(execution, attempt, now)
             if isinstance(outcome, NodeResult):
@@ -611,6 +629,35 @@ class ExecutionRuntime:
                 execution.fail_node(node_id, outcome, now=now)
                 first_failure = first_failure or outcome
         return completed, first_failure
+
+    def _limit_output(
+        self,
+        outcome: NodeOutcome,
+        node_id: str,
+        attempt: _Attempt,
+        request: _CancelRequest,
+    ) -> NodeOutcome:
+        """The outcome, or the output-limit failure that replaces it."""
+        if not isinstance(outcome, NodeResult):
+            return outcome
+        size = json_size(dict(outcome.outputs))
+        exceeded = self._limits.check_output(node_id, size, request.output_bytes)
+        if exceeded is None:
+            request.output_bytes += size
+            return outcome
+        limit, error = exceeded
+        self._metrics.resource_limit_exceeded.labels(limit.value).inc()
+        logger.warning(
+            "node_output_limit_exceeded",
+            extra={
+                "event": "node_output_limit_exceeded",
+                "node_id": node_id,
+                "node_type": attempt.node_type,
+                "limit": limit.value,
+                "size": size,
+            },
+        )
+        return error
 
     def _flush(self, execution: Execution, attempt: _Attempt, now: datetime) -> None:
         """Record what the node emitted through ``context.events`` /
@@ -629,7 +676,9 @@ class ExecutionRuntime:
         for name, amount in attempt.context.metrics.totals.items():
             self._metrics.node_metric.labels(attempt.node_type, name).inc(amount)
 
-    async def _stop(self, execution: Execution, running: _Running) -> None:
+    async def _stop(
+        self, execution: Execution, running: _Running, request: _CancelRequest
+    ) -> None:
         """Cancel in-flight attempts and wait until each really ended.
 
         Cancellation reaches node code as ``CancelledError`` at its next
@@ -648,6 +697,7 @@ class ExecutionRuntime:
             execution,
             running,
             [t for t in running if not t.cancelled()],
+            request,
             retry=False,
         )
         now = self._clock()

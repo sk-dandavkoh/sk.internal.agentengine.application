@@ -114,6 +114,12 @@ class ExecutionRepository(Protocol):
         oldest first."""
         ...
 
+    async def count_unfinished(self, project_id: str) -> int:
+        """Non-terminal executions of the project. Locks the project row
+        for the transaction, so concurrent admissions to one project
+        serialize and cannot both pass a capacity check (Phase 24)."""
+        ...
+
     # Owner liveness (Phase 23). Every ``save`` also refreshes the
     # heartbeat. Times come from the database clock, one clock for all
     # hosts, so stale detection does not depend on their clocks agreeing.

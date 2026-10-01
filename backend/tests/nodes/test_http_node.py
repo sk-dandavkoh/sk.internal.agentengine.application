@@ -210,13 +210,20 @@ async def test_redirect_to_a_non_http_scheme_is_refused(
 # -- limits and failures ---------------------------------------------------------
 
 
-@pytest.mark.parametrize("path", ["/big", "/stream-big"])
+# Body sizes of the local server's endpoints.
+_BIG = {"/big": 2048, "/stream-big": 4096}
+
+
+@pytest.mark.parametrize("short", [1024, 1])  # 1: one byte below the body
+@pytest.mark.parametrize("path", sorted(_BIG))
 async def test_oversized_responses_are_rejected(
-    run_node: RunNode, http_server: LocalHttpServer, path: str
+    run_node: RunNode, http_server: LocalHttpServer, path: str, short: int
 ) -> None:
     """Both a declared Content-Length and a close-delimited body."""
     error = await failure(
-        run_node, local_node(max_response_bytes=1024), url=http_server.base_url + path
+        run_node,
+        local_node(max_response_bytes=_BIG[path] - short),
+        url=http_server.base_url + path,
     )
     assert (error.code, error.kind) == (
         "HTTP_RESPONSE_TOO_LARGE",
@@ -224,14 +231,15 @@ async def test_oversized_responses_are_rejected(
     )
 
 
-async def test_response_within_the_limit_is_accepted(
-    run_node: RunNode, http_server: LocalHttpServer
+@pytest.mark.parametrize("path", sorted(_BIG))
+async def test_response_exactly_at_the_limit_is_accepted(
+    run_node: RunNode, http_server: LocalHttpServer, path: str
 ) -> None:
     result = await run_node(
-        local_node(max_response_bytes=2048),
-        config={"url": f"{http_server.base_url}/big"},
+        local_node(max_response_bytes=_BIG[path]),
+        config={"url": f"{http_server.base_url}{path}"},
     )
-    assert len(result.outputs["body"]) == 2048
+    assert len(result.outputs["body"]) == _BIG[path]
 
 
 async def test_malformed_json_is_a_permanent_error(
