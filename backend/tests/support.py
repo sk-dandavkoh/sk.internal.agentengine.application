@@ -35,6 +35,12 @@ from akasha.observability.logging import JsonFormatter
 
 RunNode = Callable[..., Coroutine[Any, Any, NodeResult]]
 
+# File modes and POSIX signals are what the production image (Linux) relies
+# on; Windows has neither, so these tests cannot say anything there.
+posix_only = pytest.mark.skipif(
+    os.name != "posix", reason="POSIX file modes / signals only"
+)
+
 
 class _JsonLines(logging.Handler):
     def __init__(self) -> None:

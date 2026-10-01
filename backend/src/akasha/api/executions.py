@@ -1,0 +1,158 @@
+"""Execution inspection and control: thin HTTP adapters (architecture §22).
+
+- GET  /projects/{project_id}/executions : the project's runs, newest first
+- GET  /executions/{execution_id} : one run's state
+- GET  /executions/{execution_id}/events?after=&limit= : its event history
+- POST /executions/{execution_id}/cancel : request cooperative cancellation
+
+The path carries the project or execution id, so ``authorize_path`` limits
+every route to callers who may see that project. Full node-level detail
+(outputs, errors, usage, cost) is the report: GET /reports/executions/{id}.
+"""
+
+from datetime import datetime
+from typing import Annotated, Any
+
+from fastapi import APIRouter, Body, Depends, Query, Request, status
+from pydantic import BaseModel, Field, JsonValue
+
+from akasha.api.project_schemas import PageInfo
+from akasha.api.projects import Limit, Offset
+from akasha.api.schemas import ErrorResponse
+from akasha.api.trigger_schemas import ExecutionDetail
+from akasha.application.executions import ExecutionService
+from akasha.application.persistence import ExecutionSummary
+from akasha.application.projects import MAX_PAGE_SIZE, Page
+from akasha.domain.event import Event
+from akasha.errors import ConfigurationError
+from akasha.runtime.runtime import ExecutionRuntime
+from akasha.security.redaction import redact
+
+
+def _executions(request: Request) -> ExecutionService:
+    service: ExecutionService | None = request.app.state.container.executions
+    if service is None:
+        raise ConfigurationError("Execution persistence is not configured.")
+    return service
+
+
+def _runtime(request: Request) -> ExecutionRuntime:
+    runtime: ExecutionRuntime | None = request.app.state.container.runtime
+    if runtime is None:
+        raise ConfigurationError("Execution persistence is not configured.")
+    return runtime
+
+
+Executions = Annotated[ExecutionService, Depends(_executions)]
+Runtime = Annotated[ExecutionRuntime, Depends(_runtime)]
+
+
+class ExecutionPage(BaseModel):
+    items: list[ExecutionDetail]
+    page: PageInfo
+
+    @classmethod
+    def from_page(cls, page: Page[ExecutionSummary]) -> "ExecutionPage":
+        return cls(
+            items=[ExecutionDetail.from_summary(s) for s in page.items],
+            page=PageInfo(offset=page.offset, limit=page.limit, has_more=page.has_more),
+        )
+
+
+class EventOut(BaseModel):
+    """The stored event (architecture §18), payload redacted on the way out
+    like every output channel (observability §12)."""
+
+    event_id: str
+    event_type: str
+    schema_version: int
+    position: int
+    occurred_at: datetime
+    project_id: str
+    project_version: int | None
+    execution_id: str | None
+    node_id: str | None
+    correlation_id: str | None
+    payload: dict[str, JsonValue]
+
+    @classmethod
+    def from_domain(cls, event: Event) -> "EventOut":
+        payload: Any = redact(dict(event.payload))
+        return cls(
+            event_id=event.event_id,
+            event_type=event.event_type.value,
+            schema_version=event.schema_version,
+            # Stored events always carry their position.
+            position=event.position or 0,
+            occurred_at=event.occurred_at,
+            project_id=event.project_id,
+            project_version=event.project_version,
+            execution_id=event.execution_id,
+            node_id=event.node_id,
+            correlation_id=event.correlation_id,
+            payload=payload,
+        )
+
+
+class EventPage(BaseModel):
+    """Pass ``next_after`` as ``after`` to continue: the next page while
+    ``has_more``, later events of a running execution otherwise."""
+
+    items: list[EventOut]
+    next_after: int
+    has_more: bool
+
+
+class CancelRequest(BaseModel):
+    reason: str = Field(default="cancelled through the API", max_length=500)
+
+
+def create_executions_router() -> APIRouter:
+    errors: dict[int | str, dict[str, Any]] = {
+        code: {"model": ErrorResponse} for code in (404, 409, 422, 500)
+    }
+    router = APIRouter(tags=["executions"], responses=errors)
+
+    @router.get("/projects/{project_id}/executions")
+    async def list_executions(
+        project_id: str, svc: Executions, offset: Offset = 0, limit: Limit = 50
+    ) -> ExecutionPage:
+        page = await svc.list_executions(project_id, offset=offset, limit=limit)
+        return ExecutionPage.from_page(page)
+
+    @router.get("/executions/{execution_id}")
+    async def get_execution(execution_id: str, svc: Executions) -> ExecutionDetail:
+        return ExecutionDetail.from_domain(await svc.get_execution(execution_id))
+
+    @router.get("/executions/{execution_id}/events")
+    async def list_events(
+        execution_id: str,
+        svc: Executions,
+        after: Annotated[int, Query(ge=0)] = 0,
+        limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = 100,
+    ) -> EventPage:
+        page = await svc.list_events(execution_id, after=after, limit=limit)
+        items = [EventOut.from_domain(e) for e in page.items]
+        return EventPage(
+            items=items,
+            next_after=items[-1].position if items else after,
+            has_more=page.has_more,
+        )
+
+    @router.post(
+        "/executions/{execution_id}/cancel", status_code=status.HTTP_202_ACCEPTED
+    )
+    async def cancel_execution(
+        execution_id: str,
+        svc: Executions,
+        runtime: Runtime,
+        body: Annotated[CancelRequest | None, Body()] = None,
+    ) -> ExecutionDetail:
+        """Accepted, not finished: the owning worker stops cooperatively at
+        its next heartbeat. A finished execution answers 409
+        INVALID_STATE_TRANSITION."""
+        reason = (body or CancelRequest()).reason
+        await runtime.cancel(execution_id, reason=reason)
+        return ExecutionDetail.from_domain(await svc.get_execution(execution_id))
+
+    return router

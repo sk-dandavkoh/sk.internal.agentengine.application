@@ -620,7 +620,10 @@ def scoped_requests(o: Owned) -> list[tuple[str, str, dict[str, Any]]]:
         ("GET", f"{p}/versions/1", {}),
         ("POST", f"{p}/versions/1/execute", {"json": {}}),
         ("POST", f"{p}/triggers/{o.trigger_id}/invoke", {"json": {}}),
+        ("GET", f"{p}/executions", {}),
         ("GET", f"/api/v1/executions/{o.execution_id}", {}),
+        ("GET", f"/api/v1/executions/{o.execution_id}/events", {}),
+        ("POST", f"/api/v1/executions/{o.execution_id}/cancel", {"json": {}}),
         ("GET", f"/api/v1/reports/executions/{o.execution_id}", {}),
     ]
 

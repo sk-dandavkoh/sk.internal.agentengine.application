@@ -279,6 +279,33 @@ async def test_backoff_is_exponential_and_recorded(h: Harness) -> None:
     assert retries == [20, 40]
 
 
+async def test_backoff_ending_between_clock_reads_still_runs_the_retry(
+    h: Harness,
+) -> None:
+    """Regression (Phase 27): the scheduler read the clock once to launch
+    and again to compute the next backoff. A backoff that ended between the
+    two reads left a READY node with nothing to wait for, so the loop ended
+    and tried to complete the execution (INVALID_STATE_TRANSITION). A clock
+    that moves on every read makes that window certain."""
+    probe = Probe()
+    catalog = base_catalog(probe)
+    catalog["test.flaky"] = flaky("test.flaky", probe, [NodeErrorKind.TRANSIENT])
+    graph, _ = a_b_c(catalog, "test.flaky")
+    policy = RetryPolicy(max_attempts=2, initial_backoff=timedelta(milliseconds=20))
+    queued = await queue(h, catalog, graph, retry_policy=policy)
+    now = datetime.now(UTC)
+
+    def stepping() -> datetime:
+        nonlocal now
+        now += timedelta(milliseconds=15)
+        return now
+
+    async with asyncio.timeout(GUARD):
+        result = await ExecutionRuntime(h.uow, catalog, clock=stepping).run(queued.id)
+
+    assert result.status is _E.COMPLETED
+
+
 async def test_node_timeout_is_retried(h: Harness) -> None:
     probe = Probe()
     catalog = base_catalog(probe)

@@ -1,4 +1,5 @@
-"""core.input, core.output, core.log, core.delay, core.merge."""
+"""core.input, core.output, core.log, core.delay, core.merge, core.set,
+core.pick."""
 
 import asyncio
 import logging
@@ -7,7 +8,15 @@ import pytest
 
 from akasha.domain.node import NodeError, NodeErrorKind
 from akasha.errors import NodeConfigurationError, NodeValidationError
-from akasha.nodes.core import DelayNode, InputNode, LogNode, MergeNode, OutputNode
+from akasha.nodes.core import (
+    DelayNode,
+    InputNode,
+    LogNode,
+    MergeNode,
+    OutputNode,
+    PickNode,
+    SetNode,
+)
 from tests.support import RunNode
 
 # -- core.input -----------------------------------------------------------------
@@ -146,3 +155,76 @@ async def test_merge_collects_values_in_order(run_node: RunNode) -> None:
 async def test_merge_requires_a_list(run_node: RunNode) -> None:
     with pytest.raises(NodeValidationError):
         await run_node(MergeNode(), inputs={"items": "not-a-list"})
+
+
+# -- core.set -------------------------------------------------------------------
+
+
+async def test_set_emits_static_fields_without_an_input(run_node: RunNode) -> None:
+    result = await run_node(SetNode(), config={"fields": {"query": "q", "n": 2}})
+    assert result.outputs == {"value": {"query": "q", "n": 2}}
+
+
+async def test_set_wraps_the_input_under_key(run_node: RunNode) -> None:
+    result = await run_node(
+        SetNode(),
+        config={"fields": {"topic": "t", "results": "static"}, "key": "results"},
+        inputs={"value": [{"url": "u"}]},
+    )
+    # The input wins over a static field of the same name.
+    assert result.outputs == {"value": {"topic": "t", "results": [{"url": "u"}]}}
+
+
+async def test_set_rejects_a_value_without_key(run_node: RunNode) -> None:
+    with pytest.raises(NodeError) as exc:
+        await run_node(SetNode(), inputs={"value": 1})
+    assert (exc.value.kind, exc.value.code) == (
+        NodeErrorKind.CONFIGURATION,
+        "SET_KEY_MISSING",
+    )
+
+
+@pytest.mark.parametrize("config", [{"fields": []}, {"key": ""}, {"other": 1}])
+async def test_set_rejects_invalid_config(
+    run_node: RunNode, config: dict[str, object]
+) -> None:
+    with pytest.raises(NodeConfigurationError):
+        await run_node(SetNode(), config=config)
+
+
+# -- core.pick ------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [("score", 8), ("lead.contacts.1", "b"), ("lead.none", None)],
+)
+async def test_pick_follows_the_path(
+    run_node: RunNode, path: str, expected: object
+) -> None:
+    value = {"score": 8, "lead": {"contacts": ["a", "b"], "none": None}}
+    result = await run_node(PickNode(), config={"path": path}, inputs={"value": value})
+    assert result.outputs == {"value": expected}
+
+
+@pytest.mark.parametrize("path", ["missing", "score.x", "lead.contacts.2"])
+async def test_pick_missing_path_is_a_validation_error(
+    run_node: RunNode, path: str
+) -> None:
+    value = {"score": 8, "lead": {"contacts": ["a", "b"]}}
+    with pytest.raises(NodeError) as exc:
+        await run_node(PickNode(), config={"path": path}, inputs={"value": value})
+    assert (exc.value.kind, exc.value.code) == (
+        NodeErrorKind.VALIDATION,
+        "PICK_PATH_MISSING",
+    )
+
+
+@pytest.mark.parametrize(
+    "config", [{}, {"path": ""}, {"path": "__class__.x y"}, {"path": "a..b"}]
+)
+async def test_pick_rejects_invalid_paths(
+    run_node: RunNode, config: dict[str, object]
+) -> None:
+    with pytest.raises(NodeConfigurationError):
+        await run_node(PickNode(), config=config, inputs={"value": {}})

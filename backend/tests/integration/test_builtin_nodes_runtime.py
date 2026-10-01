@@ -159,7 +159,7 @@ async def test_if_runs_the_taken_branch_and_skips_the_other_transitively(
     assert execution.node(ids["if"]).outputs == {"true": 0.9}  # no false port
     assert execution.input == {"score": 0.9}
     assert execution.metadata.node_versions == {
-        "core.if": "1.0.0",
+        "core.if": "1.1.0",
         "core.input": "1.0.0",
         "core.log": "1.0.0",
         "core.output": "1.0.0",

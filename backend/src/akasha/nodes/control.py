@@ -14,7 +14,14 @@ from collections.abc import Callable
 from typing import Any
 
 from akasha.domain.node import json_equal
-from akasha.nodes.core import VERSION, closed_schema, value_in
+from akasha.nodes.core import (
+    MISSING,
+    PATH_SCHEMA,
+    VERSION,
+    closed_schema,
+    lookup,
+    value_in,
+)
 from akasha.sdk import (
     Node,
     NodeCapabilities,
@@ -82,12 +89,16 @@ _UNARY = frozenset({"is_null"})
 
 
 class IfNode(Node):
+    """``field`` tests one field of the value (``score``) while routing the
+    whole value, so a branch keeps the data it is about."""
+
     definition = NodeDefinition(
         metadata=NodeMetadata(
             node_id="core.if",
             name="If",
             description="Routes the value to 'true' or 'false' by a condition.",
-            version=VERSION,
+            # 1.1.0 added the optional ``field`` (backward compatible).
+            version="1.1.0",
             category="control_flow",
         ),
         inputs=(value_in(),),
@@ -99,6 +110,7 @@ class IfNode(Node):
             {
                 "operator": {"type": "string", "enum": sorted(_OPERATORS)},
                 "operand": {},  # any JSON value
+                "field": PATH_SCHEMA,
             },
             "operator",
         ),
@@ -114,7 +126,18 @@ class IfNode(Node):
                 code="CONDITION_OPERAND_MISSING",
             )
         value = context.inputs["value"]
-        taken = _OPERATORS[op](value, context.config.get("operand"))
+        tested = value
+        field = context.config.get("field")
+        if field is not None:
+            tested = lookup(value, field)
+            if tested is MISSING:
+                raise NodeError(
+                    f"the value has no field {field!r}",
+                    kind=NodeErrorKind.VALIDATION,
+                    code="CONDITION_FIELD_MISSING",
+                    details={"field": field},
+                )
+        taken = _OPERATORS[op](tested, context.config.get("operand"))
         return NodeResult({"true" if taken else "false": value})
 
 

@@ -36,6 +36,7 @@ from akasha.infrastructure.redis_queue import RedisExecutionQueue
 from akasha.nodes.builtins import create_builtin_registry
 from akasha.security.crypto import SecretCipher
 from tests.integration.conftest import AuthKit, truncate_all
+from tests.support import posix_only
 from tests.test_cli import Result
 from tests.test_plugins import SAMPLE
 
@@ -317,7 +318,8 @@ async def test_backup_destroy_restore_run(
     written = doc(await cli("backup", "-o", str(backup), "--json"))
     assert written["rows"]["projects"] == 1
     assert "sessions" not in written["rows"]
-    assert stat.S_IMODE(backup.stat().st_mode) == 0o600
+    if os.name == "posix":  # Windows has no POSIX modes (ACLs instead)
+        assert stat.S_IMODE(backup.stat().st_mode) == 0o600
     assert b"sk-backup-secret-value" not in gzip.decompress(backup.read_bytes())
     exists = await cli("backup", "-o", str(backup))
     assert (exists.code, "FILE_ERROR" in exists.err) == (EXIT_FAILED, True)
@@ -468,6 +470,7 @@ async def test_restore_checks_file_and_key(
     assert (missing.code, "FILE_ERROR" in missing.err) == (EXIT_FAILED, True)
 
 
+@posix_only
 async def test_ctrl_c_cancels_the_run_cooperatively(
     projects: ProjectService, uow: UowFactory
 ) -> None:
@@ -516,6 +519,7 @@ async def test_worker_needs_redis(cli: Cli) -> None:
     assert "AKASHA_REDIS_URL" in result.err
 
 
+@posix_only
 async def test_worker_process_registers_and_stops_gracefully_on_sigterm(
     redis_url: str,
 ) -> None:

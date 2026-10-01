@@ -193,7 +193,9 @@ def test_secret_refuses_serialization() -> None:
         vars(secret)
 
 
-@pytest.mark.parametrize("value", ["", "x" * (MAX_SECRET_LENGTH + 1)])
+@pytest.mark.parametrize(
+    "value", ["", "x" * (MAX_SECRET_LENGTH + 1)], ids=["empty", "too-long"]
+)
 def test_secret_bounds(value: str) -> None:
     with pytest.raises(DomainValidationError) as exc:
         Secret(value)

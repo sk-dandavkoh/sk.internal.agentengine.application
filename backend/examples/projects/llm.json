@@ -1,0 +1,57 @@
+{
+  "name": "LLM",
+  "description": "Answers a question with a language model: Input → LLM → Output. Run with {\"question\": \"...\"}. Needs the credential 'openai' (or reconfigure provider/model).",
+  "graph": {
+    "nodes": [
+      {
+        "id": "node_02000000000000000000000000000001",
+        "node_type": "core.input",
+        "label": "input",
+        "config": {}
+      },
+      {
+        "id": "node_02000000000000000000000000000002",
+        "node_type": "core.llm",
+        "label": "answer",
+        "config": {
+          "provider": "openai",
+          "model": "gpt-4o-mini",
+          "credential": "credential:openai",
+          "system_prompt": "You answer in at most three sentences.",
+          "user_prompt": "{{ question }}",
+          "temperature": 0,
+          "max_tokens": 300
+        }
+      },
+      {
+        "id": "node_02000000000000000000000000000003",
+        "node_type": "core.output",
+        "label": "result",
+        "config": {}
+      }
+    ],
+    "edges": [
+      {
+        "source_node_id": "node_02000000000000000000000000000001",
+        "source_port": "value",
+        "target_node_id": "node_02000000000000000000000000000002",
+        "target_port": "variables"
+      },
+      {
+        "source_node_id": "node_02000000000000000000000000000002",
+        "source_port": "text",
+        "target_node_id": "node_02000000000000000000000000000003",
+        "target_port": "value"
+      }
+    ]
+  },
+  "triggers": [
+    {
+      "id": "trig_02000000000000000000000000000000",
+      "trigger_type": "manual",
+      "config": {},
+      "enabled": true
+    }
+  ],
+  "dependencies": []
+}

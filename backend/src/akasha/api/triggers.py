@@ -7,14 +7,15 @@
   authenticated by an HMAC-SHA256 signature of the raw body
   (``X-Akasha-Signature: sha256=<hex>``) under the trigger's secret
   credential
-- GET  /executions/{execution_id} : observe the created execution
+
+Observing the created execution: ``akasha.api.executions``.
 
 Webhooks are the one public route (their own router): external systems
 call them without a user session. Everything else needs a session with
 access to the project or execution in the path.
 
 Trigger ids are unique only within a project, so every trigger URL carries
-the project id. All four endpoints end in ``TriggerService`` →
+the project id. All three endpoints end in ``TriggerService`` →
 ``ExecutionService`` (§32). Nothing here runs a graph; webhooks in particular
 never execute synchronously (§127). The execution is recorded as QUEUED
 and dispatched to the workers (Phase 22): the response never waits for the
@@ -34,7 +35,6 @@ from akasha.api.schemas import (
     request_id,
 )
 from akasha.api.trigger_schemas import ExecutionDetail
-from akasha.application.executions import ExecutionService
 from akasha.application.triggers import (
     INVOCABLE_TYPES,
     TriggerNotFoundError,
@@ -62,16 +62,8 @@ def _registry(request: Request) -> TriggerRegistry:
     return registry
 
 
-def _executions(request: Request) -> ExecutionService:
-    service: ExecutionService | None = request.app.state.container.executions
-    if service is None:
-        raise ConfigurationError("Execution persistence is not configured.")
-    return service
-
-
 Triggers = Annotated[TriggerService, Depends(_triggers)]
 Registry = Annotated[TriggerRegistry, Depends(_registry)]
-Executions = Annotated[ExecutionService, Depends(_executions)]
 VersionNumber = Annotated[int, Path(ge=1)]
 JsonObject = Annotated[dict[str, JsonValue] | None, Body()]
 
@@ -147,12 +139,6 @@ def create_triggers_router() -> APIRouter:
             raise _not_found(project_id, trigger_id)
         context = _context(request, resolved.trigger.trigger_type, dict(body or {}))
         return ExecutionDetail.from_domain(await svc.fire(resolved, context))
-
-    @router.get("/executions/{execution_id}")
-    async def get_execution(
-        execution_id: str, executions: Executions
-    ) -> ExecutionDetail:
-        return ExecutionDetail.from_domain(await executions.get_execution(execution_id))
 
     return router
 

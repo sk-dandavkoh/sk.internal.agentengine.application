@@ -23,6 +23,7 @@ from akasha.application.persistence import (
     CredentialRepository,
     EventRepository,
     ExecutionRepository,
+    ExecutionSummary,
     ProjectRepository,
     ProjectVersionRepository,
     SessionRepository,
@@ -388,6 +389,41 @@ class SqlAlchemyExecutionRepository(ExecutionRepository):
             revision=row["revision"],
             input=dict(row["input"]),
         )
+
+    async def list_summaries(
+        self, project_id: str, *, offset: int = 0, limit: int = 100
+    ) -> Sequence[ExecutionSummary]:
+        e = m.executions.c
+        rows = (
+            await self._session.execute(
+                select(
+                    e.id,
+                    e.project_version,
+                    e.status,
+                    e.metadata,
+                    e.created_at,
+                    e.started_at,
+                    e.finished_at,
+                )
+                .where(e.project_id == project_id)
+                .order_by(e.created_at.desc(), e.id.desc())
+                .offset(offset)
+                .limit(limit)
+            )
+        ).mappings()
+        return [
+            ExecutionSummary(
+                id=r["id"],
+                project_id=project_id,
+                project_version=r["project_version"],
+                status=ExecutionStatus(r["status"]),
+                metadata=_metadata(r["metadata"]),
+                created_at=_ensure_utc(r["created_at"]),
+                started_at=_opt_utc(r["started_at"]),
+                finished_at=_opt_utc(r["finished_at"]),
+            )
+            for r in rows
+        ]
 
     async def list_queued(
         self, *, created_before: datetime, limit: int

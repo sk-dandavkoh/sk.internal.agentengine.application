@@ -1208,6 +1208,25 @@ Example:
 
 Breaking API changes require a new API version.
 
+Implemented in V1 (Phase 27 closed the gaps the frontend needs):
+
+```text
+/api/v1/auth, /api/v1/users                      local accounts, sessions
+/api/v1/projects[/{id}[/validate|/publish|/export|/versions]], /import
+/api/v1/projects/{id}/executions                 execution history (paginated)
+/api/v1/projects/{id}/versions/{n}/execute       manual run
+/api/v1/projects/{id}/triggers/{tid}/invoke      manual/API triggers
+/api/v1/webhooks/{id}/{tid}                      signed webhooks (public)
+/api/v1/executions/{id}[/events|/cancel]         state, event history, cancel
+/api/v1/nodes                                    node catalog (ports, config schema)
+/api/v1/credentials                              admin only, values never returned
+/api/v1/reports/executions/{id}                  execution report
+```
+
+Not over HTTP in V1: plugin management (`/api/v1/plugins`; operator CLI
+only, plugins are trusted code) and live updates (WebSocket, §23; clients
+poll `/executions/{id}/events?after=` with the last seen position).
+
 ----------
 
 # 23. WebSocket Architecture
@@ -1865,8 +1884,15 @@ use the same node set. Duplicate ids are rejected
   a closure. The runtime creates a fresh instance per attempt.
 - Built-ins (`nodes/builtins.py`): core.input, core.output, core.log,
   core.if, core.switch, core.delay, core.merge, core.http, core.web_search
-  (SearXNG JSON API), core.smtp. The composition root builds the registry
-  from settings (`bootstrap.create_node_registry`).
+  (SearXNG JSON API), core.smtp, core.llm, and (Phase 27) core.set and
+  core.pick. The composition root builds the registry from settings
+  (`bootstrap.create_node_registry`).
+- Data shaping (Phase 27) stays declarative, like conditions: `core.set`
+  builds an object from static `fields` plus the input under `key` (the
+  way to get constants into a scheduled run, or to wrap a list for
+  `core.llm`'s `variables`); `core.pick` and `core.if`'s optional `field`
+  (core.if 1.1.0) follow a dotted path (`lead.contacts.0`), the same
+  lookup `core.llm` templates use. No expressions are evaluated.
 
 ----------
 
@@ -3446,6 +3472,12 @@ Lead Generation
 Each should be importable and executable.
 
 Breaking an example project should be treated as a significant regression.
+
+They live in `backend/examples/projects/*.json` (the `project.json` shape
+of a Project Package). `backend/tests/integration/test_e2e_examples.py`
+runs each one through the production composition root: HTTP API →
+validate → publish → trigger (manual invoke; cron on an injected clock) →
+Redis queue → worker → runtime → report → export → import → run again.
 
 ----------
 

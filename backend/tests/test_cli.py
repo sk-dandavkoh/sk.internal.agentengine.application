@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from akasha.cli import EXIT_FAILED, EXIT_INTERNAL, EXIT_OK, main
+from tests.support import posix_only
 from tests.test_plugins import SAMPLE
 
 GREET = """
@@ -356,6 +357,7 @@ def test_plugin_remove_needs_the_database(
     assert (tmp_path / "text_tools").is_dir()
 
 
+@posix_only
 def test_backup_file_mode_helper(tmp_path: Path) -> None:
     from akasha.cli import _write_private
 

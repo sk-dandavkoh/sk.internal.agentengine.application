@@ -147,6 +147,28 @@ Every write is optimistic-concurrency controlled: a stale `expected_revision`
 (or a concurrent writer) yields `409 CONCURRENT_MODIFICATION`. Errors are
 `{code, message, details, request_id}`. Interactive schema: `/docs`.
 
+## Execution and node API
+
+| Method | Path | Use case |
+|---|---|---|
+| POST | `/api/v1/projects/{id}/versions/{n}/execute` | manual run → 201, `queued` |
+| POST | `/api/v1/projects/{id}/triggers/{tid}/invoke` | fire a manual/API trigger |
+| GET | `/api/v1/projects/{id}/executions?offset=&limit=` | the project's executions, newest first |
+| GET | `/api/v1/executions/{id}` | one execution's state |
+| GET | `/api/v1/executions/{id}/events?after=&limit=` | event history; pass `next_after` back as `after` to page or to poll |
+| POST | `/api/v1/executions/{id}/cancel` | `{"reason"?}` → 202; the owner stops cooperatively; finished → 409 |
+| GET | `/api/v1/reports/executions/{id}` | full report: nodes, outputs, errors, tokens, cost, timeline |
+| GET | `/api/v1/nodes` | node catalog: ports, config JSON Schema, capabilities |
+
+## Example projects
+
+`examples/projects/` holds the official examples (Hello World, LLM, Web
+Research, Lead Generation) as `project.json` documents: send their
+`graph`, `triggers` and `dependencies` as the `draft` of
+`PUT /api/v1/projects/{id}`, adjust the provider/model and SMTP settings
+to your installation, then validate and publish. They are regression
+tests: `tests/integration/test_e2e_examples.py`.
+
 ## Layout
 
 ```text

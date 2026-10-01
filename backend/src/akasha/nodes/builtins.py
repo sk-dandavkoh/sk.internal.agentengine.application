@@ -7,7 +7,15 @@ composition root calls ``create_builtin_registry`` once at startup.
 
 from akasha.domain.ai import LLMClient
 from akasha.nodes.control import IfNode, SwitchNode
-from akasha.nodes.core import DelayNode, InputNode, LogNode, MergeNode, OutputNode
+from akasha.nodes.core import (
+    DelayNode,
+    InputNode,
+    LogNode,
+    MergeNode,
+    OutputNode,
+    PickNode,
+    SetNode,
+)
 from akasha.nodes.http import DEFAULT_MAX_RESPONSE_BYTES, HttpNode, WebSearchNode
 from akasha.nodes.llm import LlmNode
 from akasha.nodes.registry import NodeRegistry
@@ -35,6 +43,8 @@ def create_builtin_registry(
         SwitchNode,
         DelayNode,
         MergeNode,
+        SetNode,
+        PickNode,
     ):
         registry.register(node_cls)
     registry.register(

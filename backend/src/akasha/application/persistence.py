@@ -13,13 +13,14 @@ Boundary rules (backend/AGENTS.md §13/§15/§16):
 """
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from types import TracebackType
 from typing import Protocol
 
 from akasha.domain.credentials import Credential
 from akasha.domain.event import Event
-from akasha.domain.execution import Execution
+from akasha.domain.execution import Execution, ExecutionMetadata, ExecutionStatus
 from akasha.domain.identity import User, UserSession
 from akasha.domain.project import Project, ProjectVersion
 from akasha.errors import AkashaError
@@ -95,6 +96,21 @@ class ProjectVersionRepository(Protocol):
         ...
 
 
+@dataclass(frozen=True)
+class ExecutionSummary:
+    """Read model for listings: the execution row without its node
+    executions or version snapshot, so a page costs one query."""
+
+    id: str
+    project_id: str
+    project_version: int
+    status: ExecutionStatus
+    metadata: ExecutionMetadata
+    created_at: datetime
+    started_at: datetime | None
+    finished_at: datetime | None
+
+
 class ExecutionRepository(Protocol):
     """Execution aggregate (execution row + its node executions).
 
@@ -107,6 +123,12 @@ class ExecutionRepository(Protocol):
 
     async def get(self, execution_id: str) -> Execution | None: ...
     async def save(self, execution: Execution) -> None: ...
+    async def list_summaries(
+        self, project_id: str, *, offset: int = 0, limit: int = 100
+    ) -> Sequence[ExecutionSummary]:
+        """The project's executions, newest first."""
+        ...
+
     async def list_queued(
         self, *, created_before: datetime, limit: int
     ) -> Sequence[str]:

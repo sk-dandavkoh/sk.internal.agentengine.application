@@ -25,6 +25,9 @@ ROADMAP_NODES = {
     "core.web_search",
     "core.smtp",
     "core.llm",
+    # Phase 27: needed by the example projects (vision §58).
+    "core.set",
+    "core.pick",
 }
 REGISTRY = create_builtin_registry()
 BUILTINS = REGISTRY.list_nodes()

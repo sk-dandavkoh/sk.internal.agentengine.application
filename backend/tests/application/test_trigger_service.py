@@ -18,6 +18,7 @@ from akasha.application.persistence import (
     CredentialRepository,
     EventRepository,
     ExecutionRepository,
+    ExecutionSummary,
     ProjectRepository,
     ProjectVersionRepository,
     SessionRepository,
@@ -78,6 +79,11 @@ class FakeExecutions(ExecutionRepository):
 
     async def save(self, execution: Execution) -> None:
         self.items[execution.id] = execution
+
+    async def list_summaries(
+        self, project_id: str, *, offset: int = 0, limit: int = 100
+    ) -> Sequence[ExecutionSummary]:
+        return []
 
     async def list_queued(
         self, *, created_before: datetime, limit: int

@@ -43,6 +43,24 @@ async def test_if_operators(
     assert await branch(run_node, value, operator=op, operand=operand) == expected
 
 
+async def test_if_field_tests_one_field_and_routes_the_whole_value(
+    run_node: RunNode,
+) -> None:
+    lead = {"name": "Ada", "score": {"value": 8}}
+    config = {"operator": "greater_or_equal", "operand": 7, "field": "score.value"}
+    assert await branch(run_node, lead, **config) == "true"
+    assert await branch(run_node, lead, **(config | {"operand": 9})) == "false"
+
+
+async def test_if_missing_field_is_a_validation_error(run_node: RunNode) -> None:
+    with pytest.raises(NodeError) as exc:
+        await branch(run_node, {"name": "Ada"}, operator="is_null", field="score")
+    assert (exc.value.kind, exc.value.code) == (
+        NodeErrorKind.VALIDATION,
+        "CONDITION_FIELD_MISSING",
+    )
+
+
 async def test_if_is_null_needs_no_operand(run_node: RunNode) -> None:
     assert await branch(run_node, None, operator="is_null") == "true"
     assert await branch(run_node, 0, operator="is_null") == "false"

@@ -1,5 +1,5 @@
 """Core built-in nodes: core.input, core.output, core.log, core.delay,
-core.merge.
+core.merge, core.set, core.pick.
 
 Pure data plumbing: no I/O besides logging and waiting. Every node here is
 stateless and constructed without arguments.
@@ -7,6 +7,8 @@ stateless and constructed without arguments.
 
 import asyncio
 import logging
+from collections.abc import Mapping
+from typing import Any
 
 from akasha.sdk import (
     Node,
@@ -41,6 +43,25 @@ def closed_schema(properties: dict[str, object], *required: str) -> NodeConfigSc
             "additionalProperties": False,
         }
     )
+
+
+# A dotted path into mappings and lists (``lead.contacts.0.name``): plain
+# lookups only, nothing evaluated (architecture §30/§31).
+PATH = r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)*"
+PATH_SCHEMA = {"type": "string", "pattern": f"^{PATH}$"}
+MISSING = object()
+
+
+def lookup(value: Any, path: str) -> Any:
+    """The value at ``path``, or ``MISSING``. Digits index lists."""
+    for part in path.split("."):
+        if isinstance(value, Mapping) and part in value:
+            value = value[part]
+        elif isinstance(value, list) and part.isdigit() and int(part) < len(value):
+            value = value[int(part)]
+        else:
+            return MISSING
+    return value
 
 
 def value_in(*, required: bool = True) -> NodeInput:
@@ -203,3 +224,70 @@ class MergeNode(Node):
 
     async def execute(self, context: NodeExecutionContext) -> NodeResult:
         return NodeResult({"items": list(context.inputs["items"])})
+
+
+class SetNode(Node):
+    """Builds an object from static ``fields``, optionally placing the
+    incoming value under ``key``. The way to bring constants into a graph
+    (a scheduled run has no input) and to wrap a list or scalar into the
+    object a ``core.llm`` ``variables`` input expects."""
+
+    definition = NodeDefinition(
+        metadata=NodeMetadata(
+            node_id="core.set",
+            name="Set",
+            description="Builds an object from static fields and the input value.",
+            version=VERSION,
+            category="transform",
+        ),
+        inputs=(value_in(required=False),),
+        outputs=(NodeOutput("value", PortType.OBJECT),),
+        config_schema=closed_schema(
+            {"fields": {"type": "object"}, "key": {"type": "string", "minLength": 1}}
+        ),
+    )
+
+    async def execute(self, context: NodeExecutionContext) -> NodeResult:
+        result = dict(context.config.get("fields", {}))
+        key = context.config.get("key")
+        value = context.inputs.get("value")
+        if key is not None:
+            result[key] = value
+        elif value is not None:
+            # Dropping a connected value silently would hide a wiring bug.
+            raise NodeError(
+                "core.set received a value but has no 'key' to store it under",
+                kind=NodeErrorKind.CONFIGURATION,
+                code="SET_KEY_MISSING",
+            )
+        return NodeResult({"value": result})
+
+
+class PickNode(Node):
+    """Emits the value at ``path`` of its input, e.g. one field of an LLM's
+    structured output, so it can feed a typed port (string, number)."""
+
+    definition = NodeDefinition(
+        metadata=NodeMetadata(
+            node_id="core.pick",
+            name="Pick",
+            description="Emits one field of the input value by dotted path.",
+            version=VERSION,
+            category="transform",
+        ),
+        inputs=(value_in(),),
+        outputs=(VALUE_OUT,),
+        config_schema=closed_schema({"path": PATH_SCHEMA}, "path"),
+    )
+
+    async def execute(self, context: NodeExecutionContext) -> NodeResult:
+        path = context.config["path"]
+        value = lookup(context.inputs["value"], path)
+        if value is MISSING:
+            raise NodeError(
+                f"the input has no value at {path!r}",
+                kind=NodeErrorKind.VALIDATION,
+                code="PICK_PATH_MISSING",
+                details={"path": path},
+            )
+        return NodeResult({"value": value})

@@ -1,0 +1,56 @@
+{
+  "name": "Hello World",
+  "description": "Greets the name in the execution input: Manual Trigger → Input → Set (transform) → Output. Run with {\"name\": \"World\"}.",
+  "graph": {
+    "nodes": [
+      {
+        "id": "node_01000000000000000000000000000001",
+        "node_type": "core.input",
+        "label": "name",
+        "config": {
+          "field": "name"
+        }
+      },
+      {
+        "id": "node_01000000000000000000000000000002",
+        "node_type": "core.set",
+        "label": "greet",
+        "config": {
+          "fields": {
+            "greeting": "Hello"
+          },
+          "key": "name"
+        }
+      },
+      {
+        "id": "node_01000000000000000000000000000003",
+        "node_type": "core.output",
+        "label": "result",
+        "config": {}
+      }
+    ],
+    "edges": [
+      {
+        "source_node_id": "node_01000000000000000000000000000001",
+        "source_port": "value",
+        "target_node_id": "node_01000000000000000000000000000002",
+        "target_port": "value"
+      },
+      {
+        "source_node_id": "node_01000000000000000000000000000002",
+        "source_port": "value",
+        "target_node_id": "node_01000000000000000000000000000003",
+        "target_port": "value"
+      }
+    ]
+  },
+  "triggers": [
+    {
+      "id": "trig_01000000000000000000000000000000",
+      "trigger_type": "manual",
+      "config": {},
+      "enabled": true
+    }
+  ],
+  "dependencies": []
+}

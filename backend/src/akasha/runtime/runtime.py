@@ -441,6 +441,14 @@ class ExecutionRuntime:
                     await self._state.save(execution)
                 backoff = self._retry_wait(execution)
                 if not running and backoff is None:
+                    # _launch and _retry_wait read the clock separately: a
+                    # backoff that ended in between leaves a READY node that
+                    # neither launched nor waits. Launch it, never finish.
+                    if any(
+                        ne.status is NodeExecutionStatus.READY
+                        for ne in execution.node_executions.values()
+                    ):
+                        continue
                     break
                 waits = [next_beat - loop.time()]
                 if backoff is not None:

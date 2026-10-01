@@ -382,7 +382,10 @@ def test_symlinks_in_packages_are_rejected(
     source = write_plugin(tmp_path)
     secret = tmp_path / "secret.txt"
     secret.write_text("outside the package")
-    (source / "data.txt").symlink_to(secret)
+    try:
+        (source / "data.txt").symlink_to(secret)
+    except OSError:  # Windows without Developer Mode / admin rights
+        pytest.skip("this OS user cannot create symlinks")
     with pytest.raises(AkashaError) as info:
         plugins.install(source)
     assert info.value.code == "PLUGIN_PACKAGE_INVALID"

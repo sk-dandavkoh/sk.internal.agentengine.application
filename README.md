@@ -388,10 +388,12 @@ core.if
 core.switch
 core.delay
 core.merge
+core.set
+core.pick
 core.http
 core.web_search
 core.smtp
-ai.llm
+core.llm
 ```
 
 Weitere Nodes können durch Python oder Plugins hinzugefügt werden.

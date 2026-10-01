@@ -39,7 +39,7 @@ from akasha.errors import (
     NodeConfigurationError,
     NodeContractError,
 )
-from akasha.nodes.core import VERSION, closed_schema
+from akasha.nodes.core import MISSING, PATH, VERSION, closed_schema, lookup
 from akasha.sdk import (
     Node,
     NodeCapabilities,
@@ -62,7 +62,7 @@ MAX_OUTPUT_TOKENS = 100_000
 MAX_TOOLS = 32
 MAX_TIMEOUT_SECONDS = 600
 
-_PATH = r"[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)*"
+_PATH = PATH
 _PLACEHOLDER = re.compile(r"\{\{(.*?)\}\}", re.DOTALL)
 # A whole template: text, single braces, and well-formed placeholders only,
 # so a malformed ``{{ ... }}`` is rejected when the project is published.
@@ -97,19 +97,14 @@ def render(template: str, variables: Mapping[str, Any]) -> str:
                 NodeErrorKind.CONFIGURATION,
                 "PROMPT_TEMPLATE_INVALID",
             )
-        value: Any = variables
-        for part in path.split("."):
-            if isinstance(value, Mapping) and part in value:
-                value = value[part]
-            elif isinstance(value, list) and part.isdigit() and int(part) < len(value):
-                value = value[int(part)]
-            else:
-                raise _error(
-                    f"prompt variable is missing: {path}",
-                    NodeErrorKind.VALIDATION,
-                    "PROMPT_VARIABLE_MISSING",
-                    variable=path,
-                )
+        value = lookup(variables, path)
+        if value is MISSING:
+            raise _error(
+                f"prompt variable is missing: {path}",
+                NodeErrorKind.VALIDATION,
+                "PROMPT_VARIABLE_MISSING",
+                variable=path,
+            )
         if isinstance(value, str):
             return value
         return json.dumps(value, ensure_ascii=False)

@@ -398,7 +398,11 @@ def test_missing_manifest() -> None:
 
 
 @pytest.mark.parametrize(
-    "content", [b"{", b"[]", b"\xff\xfe", b"null", b"[" * 100_000 + b"]" * 100_000]
+    "content",
+    [b"{", b"[]", b"\xff\xfe", b"null", b"[" * 100_000 + b"]" * 100_000],
+    # Explicit ids: pytest exports the test id via PYTEST_CURRENT_TEST, and a
+    # 200 KB id exceeds the Windows environment-variable limit.
+    ids=["truncated", "array", "not-utf8", "null", "nesting-bomb"],
 )
 def test_manifest_not_a_json_object(content: bytes) -> None:
     entries = valid_entries() | {MANIFEST_FILE: content}

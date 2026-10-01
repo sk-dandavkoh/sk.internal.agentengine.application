@@ -13,9 +13,17 @@ from datetime import timedelta
 from typing import Any
 
 from akasha.application.events import EventPublisher
-from akasha.application.persistence import UnitOfWork
-from akasha.application.projects import ProjectVersionNotFoundError, UowFactory
+from akasha.application.persistence import ExecutionSummary, UnitOfWork
+from akasha.application.projects import (
+    Page,
+    ProjectVersionNotFoundError,
+    UowFactory,
+    check_page,
+    load_project,
+    to_page,
+)
 from akasha.application.queue import ExecutionQueue, Job, QueueUnavailableError
+from akasha.domain.event import Event
 from akasha.domain.execution import (
     Execution,
     ExecutionMetadata,
@@ -200,3 +208,28 @@ class ExecutionService:
     async def get_execution(self, execution_id: str) -> Execution:
         async with self._uow() as uow:
             return await load_execution(uow, execution_id)
+
+    async def list_executions(
+        self, project_id: str, *, offset: int = 0, limit: int = 50
+    ) -> Page[ExecutionSummary]:
+        check_page(offset, limit)
+        async with self._uow() as uow:
+            await load_project(uow, project_id)
+            rows = await uow.executions.list_summaries(
+                project_id, offset=offset, limit=limit + 1
+            )
+        return to_page(rows, offset, limit)
+
+    async def list_events(
+        self, execution_id: str, *, after: int = 0, limit: int = 100
+    ) -> Page[Event]:
+        """Stored events of one execution, ascending by position. Pass the
+        last seen ``position`` as ``after`` to resume (e.g. after a
+        WebSocket reconnect, AGENTS §82). ``Page.offset`` is ``after``."""
+        check_page(after, limit)
+        async with self._uow() as uow:
+            await load_execution(uow, execution_id)
+            rows = await uow.events.list(
+                execution_id=execution_id, after=after, limit=limit + 1
+            )
+        return to_page(rows, after, limit)
