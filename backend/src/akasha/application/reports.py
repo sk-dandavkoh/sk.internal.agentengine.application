@@ -29,6 +29,7 @@ from akasha.domain.event import Event
 from akasha.domain.execution import (
     Execution,
     ExecutionError,
+    ExecutionStatus,
     NodeExecution,
     NodeExecutionStatus,
 )
@@ -83,7 +84,7 @@ class CancellationReport(_Model):
 
 
 class ExecutionSection(_Model):
-    status: str
+    status: ExecutionStatus
     trigger_type: TriggerType
     trigger_id: str | None
     correlation_id: str | None
@@ -102,7 +103,7 @@ class NodeReport(_Model):
     node_id: str
     node_type: str
     label: str
-    status: str
+    status: NodeExecutionStatus
     attempts: int
     retries: int
     started_at: datetime | None  # start of the last attempt
@@ -175,7 +176,7 @@ def build_report(
             published_at=version.published_at,
         ),
         execution=ExecutionSection(
-            status=execution.status.value,
+            status=execution.status,
             trigger_type=execution.metadata.trigger_type,
             trigger_id=execution.metadata.trigger_id,
             correlation_id=execution.metadata.correlation_id,
@@ -228,7 +229,7 @@ def _node(ne: NodeExecution, node_type: str, label: str) -> NodeReport:
         node_id=ne.node_id,
         node_type=node_type,
         label=redact_text(label),
-        status=ne.status.value,
+        status=ne.status,
         attempts=ne.attempt,
         retries=max(ne.attempt - 1, 0),
         started_at=ne.started_at,

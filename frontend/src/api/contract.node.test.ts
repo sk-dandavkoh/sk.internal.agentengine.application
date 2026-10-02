@@ -7,6 +7,12 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
 import * as auth from './auth'
+import * as credentials from './credentials'
+import * as executions from './executions'
+import * as nodes from './nodes'
+import * as plugins from './plugins'
+import * as projects from './projects'
+import * as reports from './reports'
 import {
     ApiClient,
     DEFAULT_BASE_URL,
@@ -203,7 +209,50 @@ const recorder = new RecordingClient()
 void auth.login(recorder, { username: 'u', password: 'p' })
 void auth.logout(recorder)
 void auth.fetchCurrentUser(recorder)
-const serviceFunctions = [auth].flatMap((module) =>
+const draft = projects.projectDraftSchema.parse({})
+void projects.listProjects(recorder, { offset: 0, limit: 10 })
+void projects.getProject(recorder, 'p')
+void projects.createProject(recorder, { name: 'n', description: 'd' })
+void projects.updateProject(recorder, 'p', {
+    name: 'n',
+    description: 'd',
+    draft,
+    expected_revision: 1,
+})
+void projects.deleteProject(recorder, 'p')
+void projects.validateProject(recorder, 'p')
+void projects.publishProject(recorder, 'p', 1)
+void projects.listProjectVersions(recorder, 'p')
+void projects.getProjectVersion(recorder, 'p', 1)
+void executions.listProjectExecutions(recorder, 'p')
+void executions.getExecution(recorder, 'e')
+void executions.listExecutionEvents(recorder, 'e', { after: 3 })
+void executions.cancelExecution(recorder, 'e', 'r')
+void executions.executeProjectVersion(recorder, 'p', 1, { k: 'v' })
+void executions.invokeTrigger(recorder, 'p', 't', { k: 'v' })
+void reports.getExecutionReport(recorder, 'e')
+void nodes.listNodeDefinitions(recorder)
+void credentials.listCredentials(recorder)
+void credentials.getCredential(recorder, 'c')
+void credentials.createCredential(recorder, {
+    name: 'c',
+    kind: 'api_key',
+    description: 'd',
+    value: 'v',
+})
+void credentials.updateCredential(recorder, 'c', { description: 'd' })
+void credentials.deleteCredential(recorder, 'c')
+void plugins.listPlugins(recorder)
+const modules: Record<string, unknown>[] = [
+    auth,
+    projects,
+    executions,
+    reports,
+    nodes,
+    credentials,
+    plugins,
+]
+const serviceFunctions = modules.flatMap((module) =>
     Object.values(module).filter((v) => typeof v === 'function'),
 )
 
@@ -256,10 +305,16 @@ describe('frontend schemas match the backend OpenAPI contract', () => {
                 expect(call.body).toBeUndefined()
                 return
             }
-            const props = normalize(requestSchema).props ?? {}
             const sent = Object.keys(
                 z.record(z.string(), z.unknown()).parse(call.body),
             )
+            // An optional body is `X | null`; compare against X.
+            const request = normalize(requestSchema)
+            const body =
+                request.members?.find((m) => m.type !== 'null') ?? request
+            // A free-form JSON object (execution input) accepts any field.
+            if (body.type === 'record') return
+            const props = body.props ?? {}
             expect(
                 sent.filter((k) => !(k in props)),
                 'fields the backend does not accept',

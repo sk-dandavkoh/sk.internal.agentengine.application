@@ -164,6 +164,7 @@ Every write is optimistic-concurrency controlled: a stale `expected_revision`
 | POST | `/api/v1/executions/{id}/cancel` | `{"reason"?}` → 202; the owner stops cooperatively; finished → 409 |
 | GET | `/api/v1/reports/executions/{id}` | full report: nodes, outputs, errors, tokens, cost, timeline |
 | GET | `/api/v1/nodes` | node catalog: ports, config JSON Schema, capabilities |
+| GET | `/api/v1/plugins` | installed plugins: state, failure code, manifest metadata (admin, read-only) |
 
 ## Example projects
 

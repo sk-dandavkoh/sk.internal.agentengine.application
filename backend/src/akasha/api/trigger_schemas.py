@@ -5,7 +5,7 @@ from datetime import datetime
 from pydantic import BaseModel
 
 from akasha.application.persistence import ExecutionSummary
-from akasha.domain.execution import Execution
+from akasha.domain.execution import Execution, ExecutionStatus
 from akasha.domain.trigger import TriggerType
 
 
@@ -16,7 +16,7 @@ class ExecutionDetail(BaseModel):
     id: str
     project_id: str
     version: int
-    status: str
+    status: ExecutionStatus
     trigger_type: TriggerType
     trigger_id: str | None
     correlation_id: str | None
@@ -30,7 +30,7 @@ class ExecutionDetail(BaseModel):
             id=execution.id,
             project_id=execution.project_id,
             version=execution.project_version.version,
-            status=execution.status.value,
+            status=execution.status,
             trigger_type=execution.metadata.trigger_type,
             trigger_id=execution.metadata.trigger_id,
             correlation_id=execution.metadata.correlation_id,
@@ -45,7 +45,7 @@ class ExecutionDetail(BaseModel):
             id=summary.id,
             project_id=summary.project_id,
             version=summary.project_version,
-            status=summary.status.value,
+            status=summary.status,
             trigger_type=summary.metadata.trigger_type,
             trigger_id=summary.metadata.trigger_id,
             correlation_id=summary.metadata.correlation_id,

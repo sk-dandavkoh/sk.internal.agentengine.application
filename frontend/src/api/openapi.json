@@ -616,8 +616,7 @@
             "title": "Started At"
           },
           "status": {
-            "title": "Status",
-            "type": "string"
+            "$ref": "#/components/schemas/ExecutionStatus"
           },
           "trigger_id": {
             "anyOf": [
@@ -818,8 +817,7 @@
             "title": "Started At"
           },
           "status": {
-            "title": "Status",
-            "type": "string"
+            "$ref": "#/components/schemas/ExecutionStatus"
           },
           "trigger_id": {
             "anyOf": [
@@ -853,6 +851,21 @@
         ],
         "title": "ExecutionSection",
         "type": "object"
+      },
+      "ExecutionStatus": {
+        "enum": [
+          "created",
+          "queued",
+          "running",
+          "paused",
+          "waiting",
+          "completed",
+          "failed",
+          "cancelled",
+          "timeout"
+        ],
+        "title": "ExecutionStatus",
+        "type": "string"
       },
       "GraphBody": {
         "additionalProperties": false,
@@ -1031,6 +1044,19 @@
         "title": "NodeCatalog",
         "type": "object"
       },
+      "NodeExecutionStatus": {
+        "enum": [
+          "pending",
+          "ready",
+          "running",
+          "completed",
+          "failed",
+          "skipped",
+          "cancelled"
+        ],
+        "title": "NodeExecutionStatus",
+        "type": "string"
+      },
       "NodeInstanceBody": {
         "additionalProperties": false,
         "properties": {
@@ -1162,8 +1188,7 @@
             "title": "Started At"
           },
           "status": {
-            "title": "Status",
-            "type": "string"
+            "$ref": "#/components/schemas/NodeExecutionStatus"
           },
           "usage": {
             "anyOf": [
@@ -1294,6 +1319,120 @@
         ],
         "title": "PageInfo",
         "type": "object"
+      },
+      "PluginList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PluginOut"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "PluginList",
+        "type": "object"
+      },
+      "PluginMetadataOut": {
+        "properties": {
+          "dependencies": {
+            "items": {
+              "$ref": "#/components/schemas/DependencyBody"
+            },
+            "title": "Dependencies",
+            "type": "array"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "engine_compatibility": {
+            "title": "Engine Compatibility",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "node_types": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Node Types",
+            "type": "array"
+          },
+          "sdk_compatibility": {
+            "title": "Sdk Compatibility",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "version",
+          "description",
+          "engine_compatibility",
+          "sdk_compatibility",
+          "dependencies",
+          "node_types"
+        ],
+        "title": "PluginMetadataOut",
+        "type": "object"
+      },
+      "PluginOut": {
+        "properties": {
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "metadata": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PluginMetadataOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "plugin_id": {
+            "title": "Plugin Id",
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/PluginState"
+          }
+        },
+        "required": [
+          "plugin_id",
+          "state",
+          "error",
+          "metadata"
+        ],
+        "title": "PluginOut",
+        "type": "object"
+      },
+      "PluginState": {
+        "enum": [
+          "enabled",
+          "disabled",
+          "failed"
+        ],
+        "title": "PluginState",
+        "type": "string"
       },
       "PortOut": {
         "properties": {
@@ -2938,6 +3077,37 @@
         "summary": "List Node Types",
         "tags": [
           "nodes"
+        ]
+      }
+    },
+    "/api/v1/plugins": {
+      "get": {
+        "operationId": "list_plugins_api_v1_plugins_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PluginList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "List Plugins",
+        "tags": [
+          "plugins"
         ]
       }
     },

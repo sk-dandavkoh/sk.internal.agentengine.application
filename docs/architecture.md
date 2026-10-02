@@ -1219,13 +1219,15 @@ Implemented in V1 (Phase 27 closed the gaps the frontend needs):
 /api/v1/webhooks/{id}/{tid}                      signed webhooks (public)
 /api/v1/executions/{id}[/events|/cancel]         state, event history, cancel
 /api/v1/nodes                                    node catalog (ports, config schema)
+/api/v1/plugins                                  installed plugins (admin, read-only)
 /api/v1/credentials                              admin only, values never returned
 /api/v1/reports/executions/{id}                  execution report
 ```
 
-Not over HTTP in V1: plugin management (`/api/v1/plugins`; operator CLI
-only, plugins are trusted code) and live updates (WebSocket, §23; clients
-poll `/executions/{id}/events?after=` with the last seen position).
+Not over HTTP in V1: plugin management (install, enable, disable, remove;
+operator CLI only, plugins are trusted code; `/api/v1/plugins` only lists
+them) and live updates (WebSocket, §23; clients poll
+`/executions/{id}/events?after=` with the last seen position).
 
 ----------
 

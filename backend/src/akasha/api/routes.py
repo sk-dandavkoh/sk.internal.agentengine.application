@@ -6,8 +6,8 @@ Access policy (architecture §149), in one place:
   POST /api/v1/auth/login, POST /api/v1/webhooks/...
 - /metrics: the configured scrape token, else an admin session
 - every other /api/v1 route: a session (``current_identity``) with access to
-  the project/execution in its path (``authorize_path``); credentials and
-  users additionally need an admin (``require_admin``); the node catalog
+  the project/execution in its path (``authorize_path``); credentials,
+  users and plugins additionally need an admin (``require_admin``); the node catalog
   (/api/v1/nodes) needs only a session
 """
 
@@ -31,6 +31,7 @@ from akasha.api.auth import (
 from akasha.api.credentials import create_credentials_router
 from akasha.api.executions import create_executions_router
 from akasha.api.nodes import create_nodes_router
+from akasha.api.plugins import create_plugins_router
 from akasha.api.projects import create_projects_router
 from akasha.api.reports import create_reports_router
 from akasha.api.triggers import create_triggers_router, create_webhooks_router
@@ -109,5 +110,6 @@ def create_api_v1_router() -> APIRouter:
     admin_only = [Depends(require_admin)]
     protected.include_router(create_credentials_router(), dependencies=admin_only)
     protected.include_router(create_users_router(), dependencies=admin_only)
+    protected.include_router(create_plugins_router(), dependencies=admin_only)
     router.include_router(protected)
     return router

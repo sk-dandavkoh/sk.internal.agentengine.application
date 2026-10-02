@@ -122,10 +122,70 @@ Later phases add directories as they gain content, following `AGENTS.md` §6:
 - **`context.ts`**: the `ApiClient` is injected through `ApiClientContext` /
   `useApiClient()`, never imported as a singleton.
 - **Services**: one module per backend router, functions taking the client,
-  e.g. `auth.ts` (`login`, `logout`, `fetchCurrentUser`). Domain services and
-  query hooks follow in Phase 04; session storage and login UI in Phase 21.
+  e.g. `auth.ts` (`login`, `logout`, `fetchCurrentUser`), `projects.ts`,
+  `executions.ts`, `reports.ts`, `nodes.ts`, `credentials.ts`, `plugins.ts`.
+  Session storage and login UI follow in Phase 21.
 - **No WebSocket client**: the V1 backend has no WebSocket endpoint; live
   execution state is polled (`docs/architecture.md` §22).
+
+### Domain types
+
+The domain types are the Zod schemas of the service modules, with the
+TypeScript type inferred from each (`Project = z.infer<typeof projectSchema>`).
+There is no second, hand-written model: what the type promises is what the
+response was checked against. Shared pieces live in `schemas.ts`.
+
+| Backend concept     | Type (module)                                                         |
+| ------------------- | --------------------------------------------------------------------- |
+| Project             | `ProjectSummary` (lists), `Project` (detail) — `projects.ts`          |
+| ProjectDraft        | `ProjectDraft` (`graph`, `triggers`, `dependencies`)                  |
+| ProjectVersion      | `ProjectVersionSummary`, `ProjectVersion` (immutable)                 |
+| Graph / Node / Edge | `Graph`, `NodeInstance`, `Edge`                                       |
+| Trigger             | `Trigger`, `TriggerType`                                              |
+| Validation errors   | `ValidationResult`, `ValidationIssue`, `ValidationCode`               |
+| Node definition     | `NodeDefinition`, `NodePort` — `nodes.ts`                             |
+| Execution / Event   | `Execution`, `ExecutionStatus`, `ExecutionEvent` — `executions.ts`    |
+| NodeExecution       | `NodeExecution`, `ExecutionReport`, `ExecutionMetrics` — `reports.ts` |
+| CredentialReference | `CredentialReference` (metadata only) — `credentials.ts`              |
+| Plugin              | `Plugin`, `PluginState` — `plugins.ts`                                |
+
+Enums (statuses, validation codes, trigger types) mirror the backend's and
+are display data only: transitions, validity and publishability are decided
+by the backend (AGENTS §4). Fields with a backend default are optional on the
+wire and filled in by the schema. Request-only failures (422 on a write)
+arrive as `ApiError` with the backend's `details`.
+
+### Server state
+
+TanStack Query owns all server state; nothing copies it into React state or a
+store.
+
+- **`queries.ts`**: `queryKeys` (the only place keys are spelled) and query
+  options per read endpoint — `projectQueries`, `executionQueries`,
+  `nodeQueries`, `pluginQueries`, `credentialQueries` — used as
+  `useQuery(projectQueries.detail(useApiClient(), id))` or in route loaders
+  via `queryClient.ensureQueryData`. Keys nest by ownership:
+  `['projects', id]` covers the project's versions and executions,
+  `['executions', id]` its events and report.
+- **Freshness**: default stale-immediately (refetch on mount, stale data
+  shown meanwhile); published versions `staleTime: Infinity` (immutable);
+  node catalog and plugins 5 minutes (change only on backend restart).
+- **`mutations.ts`**: one hook per write (`useUpdateProject`,
+  `usePublishProject`, `useExecuteProjectVersion`, `useCancelExecution`,
+  `useCreateCredential`, …). Each declares what it invalidates; the mutation
+  stays pending until that refetch finished. No optimistic updates. Saving a
+  draft writes the returned project into the cache (no refetch); deleting
+  removes the project's queries. Credential mutations use `gcTime: 0` so the
+  secret in their variables leaves the mutation cache once unobserved.
+
+**State boundaries**: server state = the query cache above. UI state
+(dialogs, selection, filters) = component state or the URL. Editor state
+(Phase 07) is initialized from `project.draft`, edited locally and persisted
+only through `useUpdateProject`; it never writes into the query cache.
+
+Not covered: project import/export (binary ZIP bodies; the client speaks
+JSON only), user management (Phase 21). Logs are the execution events; the
+backend has no separate log API.
 
 Tests: `client.node.test.ts` runs the client against a real local HTTP server
 (Vitest `node` environment; typechecked by `tsconfig.node.json`).
