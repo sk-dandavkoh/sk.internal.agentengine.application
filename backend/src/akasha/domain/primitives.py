@@ -108,15 +108,17 @@ def is_storable(value: object) -> bool:
     """JSON-serializable without NaN/Infinity, NUL characters or unpaired
     UTF-16 surrogates: the values PostgreSQL JSONB and text columns cannot
     hold. Every write gate for user or node data checks this, so bad input
-    is a validation error, not a database error. (The substring test also
-    rejects the literal six-character text ``\\u0000``; an accepted false
-    positive.)"""
+    is a validation error, not a database error."""
     try:
         text = json.dumps(value, allow_nan=False, ensure_ascii=False)
         text.encode("utf-8")  # a lone surrogate has no UTF-8 encoding
     except (TypeError, ValueError, RecursionError):  # UnicodeError included
         return False
-    return "\\u0000" not in text  # json escapes NUL even without ensure_ascii
+    # json escapes NUL as ``\\u0000`` even without ensure_ascii. Every
+    # backslash in the dump starts an escape, so dropping the escaped
+    # backslashes (``\\\\``, scanned left to right like a JSON parser) leaves
+    # ``\\u0000`` only where a real NUL was, not for literal text "\\u0000".
+    return "\\u0000" not in text.replace("\\\\", "")
 
 
 def storable_text(text: str) -> str:

@@ -21,6 +21,7 @@ UNSTORABLE: list[Any] = [
     math.inf,
     -math.inf,
     "nul\0",
+    "\\\0",  # literal backslash followed by a real NUL
     {"key\0": 1},
     "lone \ud800 surrogate",
     {"\udfff": 1},
@@ -36,7 +37,20 @@ def test_unstorable_values(value: Any) -> None:
 
 
 @pytest.mark.parametrize(
-    "value", [None, True, 1, 1.5, "ünïcode 😀", {"a": [1, None, "x"]}, []]
+    "value",
+    [
+        None,
+        True,
+        1,
+        1.5,
+        "ünïcode 😀",
+        {"a": [1, None, "x"]},
+        [],
+        # literal backslash text that merely looks like a NUL escape
+        "\\u0000",
+        {"\\u0000": None},
+        "\\\\u0000",
+    ],
 )
 def test_storable_values(value: Any) -> None:
     assert is_storable(value)
