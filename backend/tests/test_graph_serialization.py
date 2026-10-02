@@ -9,7 +9,7 @@ import json
 
 import pytest
 
-from akasha.domain.graph import Edge, Graph, NodeInstance
+from akasha.domain.graph import Edge, Graph, NodeInstance, Position
 from akasha.domain.project import Dependency
 from akasha.domain.trigger import Trigger, TriggerType
 from akasha.errors import DomainValidationError
@@ -24,7 +24,9 @@ from akasha.infrastructure.graph_serialization import (
 
 
 def _graph() -> Graph:
-    a = NodeInstance.create("core.input", config={"q": "ü"}, label="input")
+    a = NodeInstance.create(
+        "core.input", config={"q": "ü"}, label="input", position=Position(1.5, -3)
+    )
     b = NodeInstance.create("core.llm", config={"model": "x", "opts": {"n": 1.5}})
     graph = Graph(nodes={a.id: a, b.id: b})
     graph.add_edge(
@@ -48,6 +50,22 @@ def test_graph_roundtrip_is_exact_and_json_serializable() -> None:
     for node_id, node in graph.nodes.items():
         assert restored.nodes[node_id].label == node.label
         assert restored.nodes[node_id].config == node.config
+        assert restored.nodes[node_id].position == node.position
+
+
+def test_graph_without_positions_loads_unplaced_nodes() -> None:
+    # Graphs persisted before node positions existed carry no "position".
+    document = serialize_graph(_graph())
+    for raw in document["nodes"]:
+        raw.pop("position")
+    assert all(n.position is None for n in deserialize_graph(document).nodes.values())
+
+
+def test_graph_rejects_non_finite_positions() -> None:
+    document = serialize_graph(_graph())
+    document["nodes"][0]["position"] = {"x": float("nan"), "y": 0}
+    with pytest.raises(DomainValidationError, match="finite"):
+        deserialize_graph(document)
 
 
 def test_graph_node_order_is_deterministic() -> None:

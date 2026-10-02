@@ -14,11 +14,18 @@ from dataclasses import asdict
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, StringConstraints
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    FiniteFloat,
+    JsonValue,
+    StringConstraints,
+)
 
 from akasha.application.packages import ImportResult
 from akasha.application.projects import Page, issue_payload
-from akasha.domain.graph import Edge, Graph, NodeInstance
+from akasha.domain.graph import Edge, Graph, NodeInstance, Position
 from akasha.domain.graph_validation import ValidationCode, ValidationResult
 from akasha.domain.project import (
     Dependency,
@@ -40,11 +47,20 @@ class _Request(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class PositionBody(_Request):
+    """Editor canvas coordinates; layout only, ignored at runtime."""
+
+    x: FiniteFloat
+    y: FiniteFloat
+
+
 class NodeInstanceBody(_Request):
     id: str
     node_type: str
     config: dict[str, JsonValue] = Field(default_factory=dict)
     label: str = ""
+    # null: never placed in the editor (created via API or import).
+    position: PositionBody | None = None
 
 
 class EdgeBody(_Request):
@@ -84,7 +100,13 @@ class DraftBody(_Request):
         for n in self.graph.nodes:
             graph.add_node(
                 NodeInstance(
-                    id=n.id, node_type=n.node_type, config=dict(n.config), label=n.label
+                    id=n.id,
+                    node_type=n.node_type,
+                    config=dict(n.config),
+                    label=n.label,
+                    position=None
+                    if n.position is None
+                    else Position(x=n.position.x, y=n.position.y),
                 )
             )
         for e in self.graph.edges:
@@ -110,7 +132,13 @@ def _graph_body(graph: Graph) -> GraphBody:
         # Sorted like the persistence codec: deterministic output (§72).
         nodes=[
             NodeInstanceBody(
-                id=n.id, node_type=n.node_type, config=n.config, label=n.label
+                id=n.id,
+                node_type=n.node_type,
+                config=n.config,
+                label=n.label,
+                position=None
+                if n.position is None
+                else PositionBody(x=n.position.x, y=n.position.y),
             )
             for n in sorted(graph.nodes.values(), key=lambda n: n.id)
         ],

@@ -19,7 +19,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
 from akasha.application.persistence import ConcurrentModificationError
-from akasha.domain.graph import Edge, Graph, NodeInstance
+from akasha.domain.graph import Edge, Graph, NodeInstance, Position
 from akasha.domain.primitives import new_id, utcnow
 from akasha.domain.project import Dependency, Project, ProjectStatus, ProjectVersion
 from akasha.domain.trigger import Trigger, TriggerType
@@ -47,7 +47,9 @@ def _alembic_command(verb: str, db_url: str, target: str) -> None:
 
 
 def sample_graph() -> Graph:
-    input_node = NodeInstance.create("core.input", config={"k": "v"}, label="in")
+    input_node = NodeInstance.create(
+        "core.input", config={"k": "v"}, label="in", position=Position(x=10, y=-2.5)
+    )
     llm_node = NodeInstance.create(
         "core.llm",
         config={
@@ -101,6 +103,9 @@ async def test_project_roundtrip_preserves_full_draft(uow: UowFactory) -> None:
     node = loaded.draft.graph.node(next(iter(project.draft.graph.nodes)))
     assert node.config == project.draft.graph.nodes[node.id].config
     assert loaded.draft.graph.edges == project.draft.graph.edges
+    assert {n.id: n.position for n in loaded.draft.graph.nodes.values()} == {
+        n.id: n.position for n in project.draft.graph.nodes.values()
+    }
     assert loaded.draft.triggers[0].trigger_type is TriggerType.WEBHOOK
     assert loaded.draft.triggers[0].config == {"path": "/hook"}
     assert loaded.draft.dependencies[0].version_constraint == ">=1.0.0"

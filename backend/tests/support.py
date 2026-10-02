@@ -341,7 +341,13 @@ def project_semantics(name: str, draft: ProjectDraft) -> dict[str, Any]:
         "name": name,
         "description": draft.description,
         "nodes": sorted(
-            (n.id, n.node_type, json.dumps(n.config, sort_keys=True), n.label)
+            (
+                n.id,
+                n.node_type,
+                json.dumps(n.config, sort_keys=True),
+                n.label,
+                n.position,
+            )
             for n in draft.graph.nodes.values()
         ),
         "edges": sorted(astuple(e) for e in draft.graph.edges),

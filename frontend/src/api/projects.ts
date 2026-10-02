@@ -14,11 +14,17 @@ export const projectStatusSchema = z.enum([
 ])
 export type ProjectStatus = z.infer<typeof projectStatusSchema>
 
+/** Editor canvas coordinates; layout only, the runtime ignores them. */
+export const nodePositionSchema = z.object({ x: z.number(), y: z.number() })
+export type NodePosition = z.infer<typeof nodePositionSchema>
+
 export const nodeInstanceSchema = z.object({
     id: z.string(),
     node_type: z.string(),
     config: jsonObject.default({}),
     label: z.string().default(''),
+    /** null: never placed in the editor (created via API or import). */
+    position: nodePositionSchema.nullable().default(null),
 })
 export type NodeInstance = z.infer<typeof nodeInstanceSchema>
 

@@ -1,0 +1,516 @@
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import {
+    apiError,
+    ok,
+    renderRoute,
+    stubBackend,
+    type Handler,
+    type Reply,
+} from '../../test/app'
+import { AUTOSAVE_DELAY_MS } from './useDraftEditor'
+
+// -- factories (valid by default, wire-shaped like the backend's) ------------
+
+const AT = '2026-10-02T08:00:00Z'
+const ID_A = `node_${'a'.repeat(32)}`
+const ID_B = `node_${'b'.repeat(32)}`
+
+function project(overrides: object = {}) {
+    return {
+        id: 'p1',
+        name: 'Leads',
+        description: 'Qualifies leads',
+        status: 'published',
+        owner_id: 'user_1',
+        revision: 3,
+        current_version: 2,
+        created_at: AT,
+        updated_at: AT,
+        draft: {
+            graph: {
+                nodes: [
+                    {
+                        id: ID_A,
+                        node_type: 'core.input',
+                        config: {},
+                        label: 'Lead in',
+                        position: { x: 0, y: 0 },
+                    },
+                    {
+                        id: ID_B,
+                        node_type: 'core.log',
+                        config: { level: 'info' },
+                        label: '',
+                        position: null,
+                    },
+                ],
+                edges: [
+                    {
+                        source_node_id: ID_A,
+                        source_port: 'value',
+                        target_node_id: ID_B,
+                        target_port: 'value',
+                    },
+                ],
+            },
+            triggers: [
+                { id: 't1', trigger_type: 'manual', config: {}, enabled: true },
+            ],
+            dependencies: [],
+        },
+        files: [],
+        ...overrides,
+    }
+}
+
+const port = (name: string) => ({
+    name,
+    type: 'any',
+    required: false,
+    nullable: true,
+    multiple: false,
+    description: '',
+})
+
+function definition(node_type: string, name: string) {
+    return {
+        node_type,
+        version: '1.0.0',
+        name,
+        description: '',
+        category: 'core',
+        documentation_url: null,
+        inputs: node_type === 'core.input' ? [] : [port('value')],
+        outputs: [port('value')],
+        config_schema: {},
+        capabilities: {},
+    }
+}
+
+const catalog = ok({ items: [definition('core.input', 'Input')] })
+
+interface PutBody {
+    name: string
+    description: string
+    expected_revision: number
+    draft: {
+        graph: {
+            nodes: { id: string; position: { x: number; y: number } | null }[]
+        }
+        triggers: unknown[]
+    }
+}
+
+/** A backend whose PUT enforces revisions like the real one. */
+function backend(overrides: Record<string, Handler> = {}) {
+    let current = project()
+    const puts: PutBody[] = []
+    const requests = stubBackend({
+        'GET /projects/p1': () => ok(current),
+        'GET /nodes': () => catalog,
+        'PUT /projects/p1': (_url, init) => {
+            const body = JSON.parse(init.body as string) as PutBody
+            puts.push(body)
+            if (body.expected_revision !== current.revision)
+                return apiError(409, 'CONCURRENT_MODIFICATION', 'Changed.')
+            current = {
+                ...current,
+                revision: current.revision + 1,
+                draft: body.draft as typeof current.draft,
+            }
+            return ok(current)
+        },
+        ...overrides,
+    })
+    return {
+        puts,
+        requests,
+        bump: () => {
+            current = { ...current, revision: current.revision + 1 }
+        },
+    }
+}
+
+async function openEditor() {
+    const view = renderRoute('/projects/p1/editor')
+    await screen.findByRole('heading', {
+        level: 1,
+        name: 'Draft editor: Leads',
+    })
+    return view
+}
+
+const nodeList = () => within(screen.getByRole('region', { name: /^Nodes/ }))
+const canvas = () =>
+    within(screen.getByRole('region', { name: 'Graph canvas' }))
+const status = () =>
+    screen.getByText(
+        /^(All changes saved to draft|Saving draft…|Unsaved changes|Changes not saved)$/,
+    )
+const button = (name: string) => screen.getByRole('button', { name })
+
+/** Moves node A one step right with the keyboard, as React Flow allows. */
+async function moveNodeA() {
+    const node = await canvas().findByRole('group', { name: /Lead in/ })
+    fireEvent.click(node)
+    fireEvent.keyDown(node, { key: 'ArrowRight' })
+    await waitFor(() => {
+        expect(status()).toHaveTextContent('Unsaved changes')
+    })
+}
+
+afterEach(() => {
+    vi.useRealTimers()
+})
+
+describe('EditorPage', () => {
+    it('loads the draft graph and says it is the draft, not a version', async () => {
+        backend()
+        await openEditor()
+
+        expect(screen.getByText('Draft', { selector: 'span' })).toBeVisible()
+        expect(
+            screen.getByText(
+                /published versions, the latest being v2, stay unchanged/,
+            ),
+        ).toBeInTheDocument()
+        expect(
+            screen.getByText(/Publishing is a separate step/),
+        ).toBeInTheDocument()
+        expect(status()).toHaveTextContent('All changes saved to draft')
+
+        // Label, catalog name or type, in that order; connections counted.
+        const list = nodeList()
+        expect(list.getByRole('button', { name: /Lead in/ })).toHaveTextContent(
+            'core.input · 0 in, 1 out',
+        )
+        expect(
+            list.getByRole('button', { name: /core\.log/ }),
+        ).toHaveTextContent('core.log · 1 in, 0 out')
+        // Nodes render on the canvas with their ports.
+        const lead = await canvas().findByRole('group', { name: /Lead in/ })
+        expect(
+            within(lead).getByRole('list', { name: 'Outputs' }),
+        ).toHaveTextContent('value')
+        // core.log is not in the catalog: said in text, not only by style.
+        const log = canvas().getByRole('group', { name: /core\.log/ })
+        expect(within(log).getByText('Unknown node type')).toBeInTheDocument()
+        // The edge's ports render even though the type is unknown.
+        expect(
+            within(log).getByRole('list', { name: 'Inputs' }),
+        ).toHaveTextContent('value')
+    })
+
+    it('an unpublished project says nothing has been published', async () => {
+        backend({
+            'GET /projects/p1': () =>
+                ok(project({ status: 'draft', current_version: 0 })),
+        })
+        await openEditor()
+        expect(
+            screen.getByText(/nothing has been published yet/),
+        ).toBeInTheDocument()
+    })
+
+    it('selects nodes from the canvas and from the node list', async () => {
+        backend()
+        await openEditor()
+        const inList = nodeList().getByRole('button', { name: /Lead in/ })
+        expect(inList).toHaveAttribute('aria-pressed', 'false')
+
+        fireEvent.click(await canvas().findByRole('group', { name: /Lead in/ }))
+        await waitFor(() => {
+            expect(inList).toHaveAttribute('aria-pressed', 'true')
+        })
+        expect(button('Copy')).toBeEnabled()
+
+        fireEvent.click(nodeList().getByRole('button', { name: /core\.log/ }))
+        expect(inList).toHaveAttribute('aria-pressed', 'false')
+        expect(
+            nodeList().getByRole('button', { name: /core\.log/ }),
+        ).toHaveAttribute('aria-pressed', 'true')
+        await waitFor(() => {
+            expect(
+                canvas().getByRole('group', { name: /core\.log/ }),
+            ).toHaveClass('selected')
+        })
+        // Selecting is not an edit.
+        expect(status()).toHaveTextContent('All changes saved to draft')
+    })
+
+    it('zooms with the viewport controls', async () => {
+        backend()
+        await openEditor()
+        const zoom = await screen.findByText(/^Zoom \d+%$/)
+        const before = zoom.textContent
+
+        fireEvent.click(screen.getByRole('button', { name: 'Zoom In' }))
+        await waitFor(() => {
+            expect(zoom.textContent).not.toBe(before)
+        })
+        expect(screen.getByRole('button', { name: 'Fit View' })).toBeEnabled()
+    })
+
+    it('moving a node is an unsaved draft change that undo and redo reverse', async () => {
+        backend()
+        await openEditor()
+        expect(button('Undo')).toBeDisabled()
+
+        await moveNodeA()
+        expect(button('Undo')).toBeEnabled()
+        expect(button('Save draft')).toBeEnabled()
+
+        fireEvent.click(button('Undo'))
+        expect(status()).toHaveTextContent('All changes saved to draft')
+        expect(button('Redo')).toBeEnabled()
+
+        fireEvent.click(button('Redo'))
+        expect(status()).toHaveTextContent('Unsaved changes')
+    })
+
+    it('keyboard shortcuts undo and redo, but not inside text fields', async () => {
+        backend()
+        await openEditor()
+        await moveNodeA()
+        const region = screen.getByRole('toolbar', { name: 'Editor' })
+
+        const input = document.createElement('input')
+        region.append(input)
+        fireEvent.keyDown(input, { key: 'z', ctrlKey: true })
+        expect(status()).toHaveTextContent('Unsaved changes')
+        input.remove()
+
+        fireEvent.keyDown(region, { key: 'z', ctrlKey: true })
+        expect(status()).toHaveTextContent('All changes saved to draft')
+        fireEvent.keyDown(region, { key: 'z', metaKey: true, shiftKey: true })
+        expect(status()).toHaveTextContent('Unsaved changes')
+    })
+
+    it('copy shortcut leaves selected page text to the browser', async () => {
+        backend()
+        await openEditor()
+        fireEvent.click(nodeList().getByRole('button', { name: /Lead in/ }))
+        const toolbar = screen.getByRole('toolbar', { name: 'Editor' })
+
+        window
+            .getSelection()
+            ?.selectAllChildren(screen.getByRole('heading', { level: 1 }))
+        fireEvent.keyDown(toolbar, { key: 'c', ctrlKey: true })
+        expect(button('Paste')).toBeDisabled()
+
+        window.getSelection()?.removeAllRanges()
+        fireEvent.keyDown(toolbar, { key: 'c', ctrlKey: true })
+        expect(button('Paste')).toBeEnabled()
+    })
+
+    it('saves the whole draft with positions, pinned to the revision', async () => {
+        const server = backend()
+        await openEditor()
+        await moveNodeA()
+
+        fireEvent.click(button('Save draft'))
+        await waitFor(() => {
+            expect(status()).toHaveTextContent('All changes saved to draft')
+        })
+        const [put] = server.puts
+        expect(put?.expected_revision).toBe(3)
+        expect(put?.name).toBe('Leads')
+        expect(put?.description).toBe('Qualifies leads')
+        // Untouched parts of the draft go back as loaded.
+        expect(put?.draft.triggers).toHaveLength(1)
+        // Every node is saved placed, including the never-placed one.
+        const positions = put?.draft.graph.nodes.map((n) => n.position)
+        expect(positions?.every((p) => p !== null)).toBe(true)
+        expect(positions?.[0]?.x).toBeGreaterThan(0)
+        // The undo stack survives the save.
+        expect(button('Undo')).toBeEnabled()
+        expect(button('Save draft')).toBeDisabled()
+
+        // The next save uses the revision the first one returned.
+        fireEvent.click(button('Undo'))
+        fireEvent.keyDown(screen.getByRole('toolbar', { name: 'Editor' }), {
+            key: 's',
+            ctrlKey: true,
+        })
+        await waitFor(() => {
+            expect(server.puts).toHaveLength(2)
+        })
+        expect(server.puts[1]?.expected_revision).toBe(4)
+    })
+
+    it('autosaves once after a quiet period', async () => {
+        const server = backend()
+        await openEditor()
+        vi.useFakeTimers({ shouldAdvanceTime: true })
+        await moveNodeA()
+        expect(server.puts).toHaveLength(0)
+
+        await act(() => vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS))
+        await waitFor(() => {
+            expect(status()).toHaveTextContent('All changes saved to draft')
+        })
+        await act(() => vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS * 3))
+        expect(server.puts).toHaveLength(1)
+    })
+
+    it('a failed save keeps the changes, pauses autosave and can be retried', async () => {
+        let fail = true
+        const put = vi.fn()
+        backend({
+            'PUT /projects/p1': () => {
+                put()
+                return fail
+                    ? apiError(500, 'INTERNAL_ERROR', 'Database unavailable.')
+                    : ok(project({ revision: 4 }))
+            },
+        })
+        await openEditor()
+        vi.useFakeTimers({ shouldAdvanceTime: true })
+        await moveNodeA()
+
+        fireEvent.click(button('Save draft'))
+        const alert = await screen.findByRole('alert')
+        expect(alert).toHaveTextContent('Could not save the draft')
+        expect(alert).toHaveTextContent('Autosave is paused')
+        expect(status()).toHaveTextContent('Changes not saved')
+
+        await act(() => vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS * 3))
+        expect(put).toHaveBeenCalledTimes(1)
+
+        fail = false
+        fireEvent.click(within(alert).getByRole('button', { name: 'Retry' }))
+        await waitFor(() => {
+            expect(status()).toHaveTextContent('All changes saved to draft')
+        })
+        expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    })
+
+    it('never overwrites a draft changed elsewhere; reload discards local edits', async () => {
+        const server = backend()
+        await openEditor()
+        server.bump() // someone else saved revision 4
+        await moveNodeA()
+
+        fireEvent.click(button('Save draft'))
+        const alert = await screen.findByRole('alert')
+        expect(alert).toHaveTextContent('The draft was changed elsewhere')
+        expect(server.puts).toHaveLength(1)
+
+        fireEvent.click(
+            within(alert).getByRole('button', {
+                name: 'Discard my changes and reload',
+            }),
+        )
+        await waitFor(() => {
+            expect(status()).toHaveTextContent('All changes saved to draft')
+        })
+        expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+        expect(button('Undo')).toBeDisabled()
+        expect(screen.getByText(/revision 4/)).toBeInTheDocument()
+    })
+
+    it('asks before leaving with unsaved changes', async () => {
+        backend()
+        const { router } = await openEditor()
+        await moveNodeA()
+
+        fireEvent.click(screen.getByRole('link', { name: 'Back to project' }))
+        const dialog = await screen.findByRole('dialog', {
+            name: 'Leave with unsaved changes?',
+        })
+        fireEvent.click(
+            within(dialog).getByRole('button', { name: 'Stay in editor' }),
+        )
+        expect(router.state.location.pathname).toBe('/projects/p1/editor')
+
+        fireEvent.click(screen.getByRole('link', { name: 'Back to project' }))
+        fireEvent.click(
+            within(
+                await screen.findByRole('dialog', {
+                    name: 'Leave with unsaved changes?',
+                }),
+            ).getByRole('button', { name: 'Leave without saving' }),
+        )
+        await waitFor(() => {
+            expect(router.state.location.pathname).toBe('/projects/p1')
+        })
+    })
+
+    it('leaves without asking when everything is saved', async () => {
+        backend()
+        const { router } = await openEditor()
+        fireEvent.click(screen.getByRole('link', { name: 'Back to project' }))
+        await waitFor(() => {
+            expect(router.state.location.pathname).toBe('/projects/p1')
+        })
+    })
+
+    it('copies and pastes nodes as an unsaved change with fresh ids', async () => {
+        const server = backend()
+        await openEditor()
+        fireEvent.click(nodeList().getByRole('button', { name: /Lead in/ }))
+        fireEvent.click(button('Copy'))
+        fireEvent.click(button('Paste'))
+
+        expect(
+            screen.getByRole('heading', { name: 'Nodes (3)' }),
+        ).toBeInTheDocument()
+        expect(status()).toHaveTextContent('Unsaved changes')
+        fireEvent.click(button('Save draft'))
+        await waitFor(() => {
+            expect(server.puts).toHaveLength(1)
+        })
+        const ids = server.puts[0]?.draft.graph.nodes.map((n) => n.id) ?? []
+        expect(ids).toHaveLength(3)
+        expect(new Set(ids).size).toBe(3)
+        for (const id of ids) expect(id).toMatch(/^node_[0-9a-f]{32}$/)
+    })
+
+    it('shows the load error with a retry', async () => {
+        let reply: Reply = apiError(
+            500,
+            'INTERNAL_ERROR',
+            'Database unavailable.',
+        )
+        backend({ 'GET /projects/p1': () => reply })
+        renderRoute('/projects/p1/editor')
+
+        expect(
+            await screen.findByRole('heading', {
+                name: 'Could not load the project draft',
+            }),
+        ).toBeInTheDocument()
+        reply = ok(project())
+        fireEvent.click(button('Retry'))
+        expect(
+            await screen.findByRole('heading', { name: 'Draft editor: Leads' }),
+        ).toBeInTheDocument()
+    })
+
+    it('shows not found for an unknown project', async () => {
+        backend({
+            'GET /projects/p1': () =>
+                apiError(404, 'PROJECT_NOT_FOUND', 'Nope.'),
+        })
+        renderRoute('/projects/p1/editor')
+        expect(
+            await screen.findByRole('heading', { name: 'Project not found' }),
+        ).toBeInTheDocument()
+    })
+
+    it('still edits when the node catalog fails to load', async () => {
+        backend({
+            // 500: not retried, unlike a transient 503.
+            'GET /nodes': () =>
+                apiError(500, 'INTERNAL_ERROR', 'Registry down.'),
+        })
+        await openEditor()
+        expect(
+            await screen.findByText(/node catalog could not be loaded/),
+        ).toBeInTheDocument()
+        // Without a catalog nothing is called unknown.
+        expect(screen.queryByText('Unknown node type')).not.toBeInTheDocument()
+        await moveNodeA()
+    })
+})

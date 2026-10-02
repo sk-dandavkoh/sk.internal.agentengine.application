@@ -300,6 +300,33 @@ def _with_node(node: dict[str, Any]) -> dict[str, Any]:
         ({"dependencies": [{"kind": "service", "name": "x"}]}, "VALIDATION_ERROR"),
         (_with_node({"id": new_id("node")}), "VALIDATION_ERROR"),
         ({"graph": {"nodes": [], "edges": [], "extra": 1}}, "VALIDATION_ERROR"),
+        # Positions must be finite {x, y} pairs, nothing else.
+        (
+            _with_node(
+                {
+                    "id": new_id("node"),
+                    "node_type": "test.sink",
+                    "position": {"x": "inf", "y": 0},
+                }
+            ),
+            "VALIDATION_ERROR",
+        ),
+        (
+            _with_node(
+                {"id": new_id("node"), "node_type": "test.sink", "position": {"x": 1}}
+            ),
+            "VALIDATION_ERROR",
+        ),
+        (
+            _with_node(
+                {
+                    "id": new_id("node"),
+                    "node_type": "test.sink",
+                    "position": {"x": 1, "y": 2, "z": 3},
+                }
+            ),
+            "VALIDATION_ERROR",
+        ),
     ],
 )
 async def test_update_rejects_malformed_drafts(
@@ -309,6 +336,25 @@ async def test_update_rejects_malformed_drafts(
     assert_error(await put_draft(api, pid, draft, revision=1), 422, code)
     # Nothing was written.
     assert (await api.get(f"/api/v1/projects/{pid}")).json()["revision"] == 1
+
+
+async def test_node_positions_round_trip_and_survive_publish(
+    api: httpx.AsyncClient,
+) -> None:
+    pid = (await create(api))["id"]
+    draft = valid_draft()
+    placed, unplaced = draft["graph"]["nodes"]
+    placed["position"] = {"x": -12.5, "y": 300}
+    saved = await put_draft(api, pid, draft, revision=1)
+    assert saved.status_code == 200, saved.text
+    nodes = {n["id"]: n for n in saved.json()["draft"]["graph"]["nodes"]}
+    assert nodes[placed["id"]]["position"] == {"x": -12.5, "y": 300.0}
+    assert nodes[unplaced["id"]]["position"] is None
+    # The published version renders with the layout it was published with.
+    published = await api.post(f"/api/v1/projects/{pid}/publish")
+    assert published.status_code == 201, published.text
+    version_nodes = {n["id"]: n for n in published.json()["graph"]["nodes"]}
+    assert version_nodes[placed["id"]]["position"] == {"x": -12.5, "y": 300.0}
 
 
 async def test_duplicate_node_ids_rejected(api: httpx.AsyncClient) -> None:

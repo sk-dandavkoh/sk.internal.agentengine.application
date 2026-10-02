@@ -87,7 +87,7 @@ ignored.
     "nodes": [{"id": "node_<32 hex>", "node_type": "core.llm",
                "config": {"credential": "credential:llm-key",
                           "user_prompt": "Classify {{ lead.name }}"},
-               "label": "llm"}],
+               "label": "llm", "position": {"x": 240.0, "y": 80.0}}],
     "edges": [{"source_node_id": "…", "source_port": "value",
                "target_node_id": "…", "target_port": "variables"}]
   },
@@ -97,6 +97,10 @@ ignored.
                     "version_constraint": ">=1.0.0,<2.0.0"}]
 }
 ```
+
+`graph.nodes[].position` is the editor layout (`{x, y}`, finite numbers) and
+is optional: `null` or absent means the node was never placed. It does not
+change what the project means, so it is part of project schema 1.
 
 Node and trigger ids are project-scoped and kept as they are. Importing the
 same package twice yields two independent projects.

@@ -58,7 +58,8 @@ describe('routes', () => {
     it('serves the per-project editor route', async () => {
         renderAt('/projects/p_1/editor')
 
-        expect(await pageHeading('Editor')).toBeInTheDocument()
+        // The stub backend knows no project p_1.
+        expect(await pageHeading('Project not found')).toBeInTheDocument()
     })
 
     it('shows a not-found page inside the shell for unknown routes', async () => {

@@ -5,11 +5,24 @@ Semantic validation (port types, cycles, required inputs) is Phase 04 and
 deliberately not implemented here.
 """
 
+import math
 from dataclasses import dataclass, field
 from typing import Any
 
 from akasha.domain.primitives import Entity, new_id, validate_id
 from akasha.errors import DomainValidationError
+
+
+@dataclass(frozen=True)
+class Position:
+    """Where the editor draws a node. Layout only: the runtime ignores it."""
+
+    x: float
+    y: float
+
+    def __post_init__(self) -> None:
+        if not (math.isfinite(self.x) and math.isfinite(self.y)):
+            raise DomainValidationError("node position must be finite")
 
 
 @dataclass(eq=False)
@@ -24,6 +37,8 @@ class NodeInstance(Entity):
     node_type: str
     config: dict[str, Any] = field(default_factory=dict)
     label: str = ""
+    # None: never placed (created by API/import); the editor lays it out.
+    position: Position | None = None
 
     def __post_init__(self) -> None:
         self.id = validate_id(self.id)

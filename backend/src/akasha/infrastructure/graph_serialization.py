@@ -12,7 +12,7 @@ import base64
 from collections.abc import Mapping
 from typing import Any
 
-from akasha.domain.graph import Edge, Graph, NodeInstance
+from akasha.domain.graph import Edge, Graph, NodeInstance, Position
 from akasha.domain.project import Dependency
 from akasha.domain.trigger import Trigger, TriggerType
 
@@ -25,6 +25,7 @@ def serialize_graph(graph: Graph) -> dict[str, Any]:
                 "node_type": node.node_type,
                 "config": node.config,
                 "label": node.label,
+                "position": _position(node.position),
             }
             # Deterministic ordering: persistence must not depend on dict
             # iteration order (architecture §72).
@@ -49,11 +50,21 @@ def deserialize_graph(data: dict[str, Any]) -> Graph:
             node_type=raw["node_type"],
             config=dict(raw.get("config", {})),
             label=raw.get("label", ""),
+            # Absent in graphs stored before positions existed.
+            position=_load_position(raw.get("position")),
         )
         for raw in data.get("nodes", [])
     }
     edges = [Edge(**raw) for raw in data.get("edges", [])]
     return Graph(nodes=nodes, edges=edges)
+
+
+def _position(position: Position | None) -> dict[str, float] | None:
+    return None if position is None else {"x": position.x, "y": position.y}
+
+
+def _load_position(data: Mapping[str, Any] | None) -> Position | None:
+    return None if data is None else Position(x=float(data["x"]), y=float(data["y"]))
 
 
 def serialize_trigger(trigger: Trigger) -> dict[str, Any]:

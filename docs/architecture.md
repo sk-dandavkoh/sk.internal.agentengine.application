@@ -656,6 +656,13 @@ Node Instance:
     config = {...}
 ```
 
+A Node Instance may carry an editor `position` (`{x, y}`, finite floats, or
+`null` when it was never placed, e.g. created through the API or an import).
+It is layout only: validation and the runtime ignore it. It is part of the
+draft and therefore of every published version and package, so a version
+renders with the layout it was published with. The editor lays out unplaced
+nodes itself and persists their position on the next save.
+
 ----------
 
 # 8. Node Architecture

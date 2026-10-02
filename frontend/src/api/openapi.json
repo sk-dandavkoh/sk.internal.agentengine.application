@@ -1095,6 +1095,16 @@
           "node_type": {
             "title": "Node Type",
             "type": "string"
+          },
+          "position": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PositionBody"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
@@ -1500,6 +1510,26 @@
           "description"
         ],
         "title": "PortOut",
+        "type": "object"
+      },
+      "PositionBody": {
+        "additionalProperties": false,
+        "description": "Editor canvas coordinates; layout only, ignored at runtime.",
+        "properties": {
+          "x": {
+            "title": "X",
+            "type": "number"
+          },
+          "y": {
+            "title": "Y",
+            "type": "number"
+          }
+        },
+        "required": [
+          "x",
+          "y"
+        ],
+        "title": "PositionBody",
         "type": "object"
       },
       "ProjectDetail": {

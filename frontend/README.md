@@ -257,6 +257,47 @@ asks for confirmation; the backend refuses projects with published
 versions (409 `PROJECT_HAS_VERSIONS`), and the dialog shows that answer.
 Request validation errors (`details["body.name"]`) appear at their field.
 
+## Draft editor
+
+`features/editor/` (`/projects/:projectId/editor`) edits the project
+**draft** only. The page says so: "Draft" badge, the draft revision, and
+that published versions stay unchanged. Saving never publishes.
+
+- `editorState.ts`: the pure editor state and reducer (graph, saved graph,
+  revision, undo/redo stacks, selection, clipboard, drag origin). Graphs are
+  immutable values. Dirty means `graph !== saved`, so undoing back to the
+  saved graph makes the editor clean again. One drag is one undo step, and
+  history keeps 100 steps. Copy/paste is an internal clipboard: pasted nodes
+  get fresh `node_<32 hex>` ids and remapped edges.
+- `useDraftEditor.ts`: persistence. A save is `PUT /projects/{id}` with the
+  whole draft (only the graph changed) and the `expected_revision` the
+  editor last saw. Only one save runs at a time, and a 409 is never
+  overwritten: the user may discard local edits and reload. Autosave runs
+  1.5 s after the last change, not mid-drag and not after a failed save
+  (no retry loop; Save or Retry resumes it). Leaving with unsaved changes asks
+  first (router blocker plus `beforeunload`). A save keeps the undo stack.
+- `GraphCanvas.tsx`: React Flow (`@xyflow/react`), controlled. Positions
+  and selection come from the editor state. Measured node sizes are
+  rendering state and stay local. Pan, zoom (0.2–2×, controls, wheel), grid,
+  minimap, and node selection (click or keyboard; arrow keys move nodes).
+  Connecting and deleting are off until Phase 10. Ports come from the node
+  catalog, plus any port an edge uses, so every stored edge is drawn.
+  Unknown node types are marked in text.
+- Node positions are part of the backend graph (`position: {x, y} | null`,
+  architecture §7.2). Never-placed nodes are laid out on load and saved with
+  the next edit.
+- Shortcuts (on the editor, never in text fields): Ctrl/⌘+Z undo,
+  Ctrl/⌘+Shift+Z or Ctrl+Y redo, Ctrl/⌘+C/V copy/paste, Ctrl/⌘+S save.
+- The node list beside the canvas is the non-visual view of the graph
+  (AGENTS §100): every node with type and connection counts. Selecting a
+  node there selects and centers it on the canvas.
+
+Tests: `editorState.test.ts` covers the reducer. `EditorPage.test.tsx` runs
+the real route against a stub backend that enforces revisions (load, select,
+zoom, move, undo/redo, save, autosave, failures, conflict, leave guard).
+`tests/e2e/editor.spec.ts` covers what needs real layout: drag, pan, edge
+paths, minimap and the saved positions.
+
 ## Design system
 
 All UI is composed from `src/components/ui` (`import { Button, Dialog } from

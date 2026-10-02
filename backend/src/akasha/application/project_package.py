@@ -40,7 +40,7 @@ from typing import Annotated, Any, Final, Literal
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationError
 
 from akasha.domain.credentials import REFERENCE_PREFIX, credential_references
-from akasha.domain.graph import Edge, Graph, NodeInstance
+from akasha.domain.graph import Edge, Graph, NodeInstance, Position
 from akasha.domain.graph_validation import ValidationIssue
 from akasha.domain.primitives import is_storable, semver_key, version_satisfies
 from akasha.domain.project import (
@@ -163,11 +163,17 @@ class ProjectManifest(_Strict):
     files: list[FileEntry]
 
 
+class _Position(_Strict):
+    x: float = Field(allow_inf_nan=False)
+    y: float = Field(allow_inf_nan=False)
+
+
 class _Node(_Strict):
     id: str
     node_type: Text
     config: dict[str, JsonValue] = Field(default_factory=dict)
     label: str = ""
+    position: _Position | None = None  # editor layout; optional
 
 
 class _Edge(_Strict):
@@ -227,7 +233,15 @@ def write_package(package: ProjectPackage) -> bytes:
         description=draft.description,
         graph=_Graph(
             nodes=list(
-                _Node(id=n.id, node_type=n.node_type, config=n.config, label=n.label)
+                _Node(
+                    id=n.id,
+                    node_type=n.node_type,
+                    config=n.config,
+                    label=n.label,
+                    position=None
+                    if n.position is None
+                    else _Position(x=n.position.x, y=n.position.y),
+                )
                 for n in sorted(draft.graph.nodes.values(), key=lambda n: n.id)
             ),
             edges=list(
@@ -497,7 +511,13 @@ def _to_draft(document: ProjectDocument, *, files: dict[str, bytes]) -> ProjectD
     for n in document.graph.nodes:
         graph.add_node(
             NodeInstance(
-                id=n.id, node_type=n.node_type, config=dict(n.config), label=n.label
+                id=n.id,
+                node_type=n.node_type,
+                config=dict(n.config),
+                label=n.label,
+                position=None
+                if n.position is None
+                else Position(x=n.position.x, y=n.position.y),
             )
         )
     for e in document.graph.edges:

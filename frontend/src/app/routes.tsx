@@ -64,7 +64,11 @@ export const routes: RouteObject[] = [
                         })),
                     {
                         path: '/projects/:projectId/editor',
-                        lazy: placeholder('Editor'),
+                        lazy: async () => {
+                            const { EditorPage } =
+                                await import('../features/editor/EditorPage')
+                            return { Component: EditorPage }
+                        },
                     },
                     {
                         // Internal design-system reference; not in the nav.

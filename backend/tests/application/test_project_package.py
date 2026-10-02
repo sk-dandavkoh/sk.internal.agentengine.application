@@ -30,7 +30,7 @@ from akasha.application.project_package import (
     read_package,
     write_package,
 )
-from akasha.domain.graph import Edge, Graph, NodeInstance
+from akasha.domain.graph import Edge, Graph, NodeInstance, Position
 from akasha.domain.primitives import new_id
 from akasha.domain.project import (
     MAX_PROJECT_FILE_BYTES,
@@ -59,7 +59,12 @@ PACKAGE_ERRORS = (
 
 def sample(config: dict[str, Any] | None = None) -> ProjectPackage:
     graph = Graph()
-    source = NodeInstance.create("core.input", config={"field": "lead"}, label="in")
+    source = NodeInstance.create(
+        "core.input",
+        config={"field": "lead"},
+        label="in",
+        position=Position(x=-40.5, y=120),
+    )
     llm = NodeInstance.create(
         "core.llm",
         config=config

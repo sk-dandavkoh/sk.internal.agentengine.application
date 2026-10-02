@@ -39,6 +39,8 @@ function detail(id: string, name: string, overrides: object = {}) {
                         node_type: 'core.input',
                         config: {},
                         label: '',
+                        // Editor layout must survive a details-only save.
+                        position: { x: 10, y: 20 },
                     },
                 ],
                 edges: [],
