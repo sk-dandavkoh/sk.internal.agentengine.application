@@ -8,6 +8,7 @@ import {
     listExecutions,
     listProjectExecutions,
     type ExecutionListParams,
+    type ProjectExecutionListParams,
 } from './executions'
 import { listNodeDefinitions, validateNodeConfig } from './nodes'
 import { listPlugins } from './plugins'
@@ -41,8 +42,10 @@ export const queryKeys = {
             ['projects', projectId, 'versions', version] as const,
         executions: (projectId: string) =>
             ['projects', projectId, 'executions'] as const,
-        executionList: (projectId: string, page: PageParams) =>
-            ['projects', projectId, 'executions', page] as const,
+        executionList: (
+            projectId: string,
+            params: ProjectExecutionListParams,
+        ) => ['projects', projectId, 'executions', params] as const,
     },
     executions: {
         overview: () => ['executions', 'overview'] as const,
@@ -103,11 +106,15 @@ export const projectQueries = {
             // Published versions are immutable: never stale.
             staleTime: Infinity,
         }),
-    executions: (client: ApiClient, projectId: string, page: PageParams = {}) =>
+    executions: (
+        client: ApiClient,
+        projectId: string,
+        params: ProjectExecutionListParams = {},
+    ) =>
         queryOptions({
-            queryKey: queryKeys.projects.executionList(projectId, page),
+            queryKey: queryKeys.projects.executionList(projectId, params),
             queryFn: ({ signal }) =>
-                listProjectExecutions(client, projectId, page, signal),
+                listProjectExecutions(client, projectId, params, signal),
         }),
 }
 

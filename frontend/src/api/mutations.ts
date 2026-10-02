@@ -22,6 +22,7 @@ import {
     deleteProject,
     duplicateProject,
     publishProject,
+    restoreProjectVersion,
     updateProject,
     validateProject,
     type CreateProjectInput,
@@ -84,11 +85,32 @@ export function useUpdateProject() {
     )
 }
 
+/** Copies the draft, or published `version` when given. */
 export function useDuplicateProject() {
     return useApiMutation(
-        (client, v: { projectId: string; name: string }) =>
-            duplicateProject(client, v.projectId, v.name),
+        (client, v: { projectId: string; name: string; version?: number }) =>
+            duplicateProject(client, v.projectId, v.name, v.version),
         (qc) => invalidate(qc, queryKeys.projects.lists()),
+    )
+}
+
+/** Replaces the draft with a version's copy; versions are untouched. */
+export function useRestoreProjectVersion() {
+    return useApiMutation(
+        (
+            client,
+            v: { projectId: string; version: number; expectedRevision: number },
+        ) =>
+            restoreProjectVersion(
+                client,
+                v.projectId,
+                v.version,
+                v.expectedRevision,
+            ),
+        (qc, project) => {
+            qc.setQueryData(queryKeys.projects.detail(project.id), project)
+            return invalidate(qc, queryKeys.projects.lists())
+        },
     )
 }
 

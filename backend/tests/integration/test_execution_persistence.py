@@ -716,13 +716,36 @@ async def test_upgrade_from_0009_makes_orphaned_running_rows_recoverable(
             return SqlAlchemyUnitOfWork(db)
 
         try:
-            project, version = await published(factory)
-            nodes = version.graph.nodes
+            graph = two_node_graph()[0]
+            nodes = graph.nodes
             a = next(n for n in nodes if nodes[n].node_type == "test.emit")
             b = next(n for n in nodes if nodes[n].node_type == "test.echo")
-            execution_id = new_id("exec")
-            # Written with the columns 0009 has: A completed, B in flight.
+            pid, execution_id = new_id("proj"), new_id("exec")
+            # Written with the columns 0009 has (today's repositories write
+            # later ones): the published project, A completed, B in flight.
             async with db.engine.begin() as conn:
+                await conn.execute(
+                    text(
+                        "INSERT INTO projects (id, name, status, draft_graph,"
+                        " draft_triggers, draft_dependencies, current_version,"
+                        " created_at, updated_at) VALUES (:id, 'demo', 'published',"
+                        " CAST(:graph AS jsonb), '[]', '[]', 1, now(), now())"
+                    ),
+                    {"id": pid, "graph": json.dumps(serialize_graph(graph))},
+                )
+                await conn.execute(
+                    text(
+                        "INSERT INTO project_versions (id, project_id, version,"
+                        " schema_version, graph, triggers, dependencies,"
+                        " published_at) VALUES (:id, :pid, 1, 1,"
+                        " CAST(:graph AS jsonb), '[]', '[]', now())"
+                    ),
+                    {
+                        "id": new_id("pver"),
+                        "pid": pid,
+                        "graph": json.dumps(serialize_graph(graph)),
+                    },
+                )
                 await conn.execute(
                     text(
                         "INSERT INTO executions (id, project_id, project_version,"
@@ -733,7 +756,7 @@ async def test_upgrade_from_0009_makes_orphaned_running_rows_recoverable(
                     ),
                     {
                         "id": execution_id,
-                        "pid": project.id,
+                        "pid": pid,
                         "metadata": json.dumps(
                             {
                                 "trigger_type": "manual",

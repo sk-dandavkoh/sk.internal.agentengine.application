@@ -102,6 +102,7 @@ function versionJson(version = 1) {
         description: '',
         schema_version: 1,
         published_at: AT,
+        published_by: null,
         graph: { nodes: [], edges: [] },
         triggers: [],
         dependencies: [],

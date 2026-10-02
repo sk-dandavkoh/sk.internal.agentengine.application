@@ -183,10 +183,16 @@ class ProjectService:
         return to_page(rows, offset, limit)
 
     async def duplicate_project(
-        self, project_id: str, *, name: str, owner_id: str | None = None
+        self,
+        project_id: str,
+        *,
+        name: str,
+        owner_id: str | None = None,
+        version: int | None = None,
     ) -> Project:
         """A new, never-published project holding a copy of the source's
-        draft (graph, triggers, dependencies, description, files).
+        draft, or of its published ``version`` (graph, triggers,
+        dependencies, description, files).
 
         Published versions are history of the source and are not copied.
         The copy goes through ``replace_draft``, so it obeys every rule a
@@ -194,12 +200,52 @@ class ProjectService:
         """
         async with self._uow() as uow:
             source = await load_project(uow, project_id)
+            draft = (
+                deepcopy(source.draft)
+                if version is None
+                else (await load_version(uow, project_id, version)).to_draft()
+            )
             project = Project.create(name, owner_id=owner_id)
-            project.replace_draft(deepcopy(source.draft), name=name)
+            project.replace_draft(draft, name=name)
             await uow.projects.save(project)
             await uow.commit()
-        _log("project_duplicated", project, source_project_id=source.id)
+        _log(
+            "project_duplicated",
+            project,
+            source_project_id=source.id,
+            source_version=version,
+        )
         return project
+
+    async def restore_version(
+        self, project_id: str, version: int, *, expected_revision: int
+    ) -> Project:
+        """Replace the draft with a copy of published ``version``.
+
+        The version itself is untouched; publishing the restored draft
+        creates a new version. ``expected_revision`` guards the draft being
+        replaced, like any draft write: unsaved work elsewhere is a 409.
+        """
+        async with self._uow() as uow:
+            project = await load_project(uow, project_id)
+            _check_revision(project, expected_revision)
+            snapshot = await load_version(uow, project_id, version)
+            project.replace_draft(snapshot.to_draft(), name=project.name)
+            await uow.projects.save(project)
+            await uow.commit()
+        _log("project_version_restored", project, version=version)
+        return project
+
+    async def usernames(self, user_ids: Collection[str | None]) -> dict[str, str]:
+        """Usernames of the given users, for display (version authors).
+        Unknown ids are left out."""
+        names: dict[str, str] = {}
+        async with self._uow() as uow:
+            for user_id in sorted({u for u in user_ids if u is not None}):
+                user = await uow.users.get(user_id)
+                if user is not None:
+                    names[user_id] = user.username
+        return names
 
     async def update_draft(
         self,
@@ -260,7 +306,11 @@ class ProjectService:
         return project.draft.validate(self._definitions, self._plugins)
 
     async def publish_project(
-        self, project_id: str, *, expected_revision: int | None = None
+        self,
+        project_id: str,
+        *,
+        expected_revision: int | None = None,
+        published_by: str | None = None,
     ) -> ProjectVersion:
         """Validate the draft and freeze it as the next immutable version.
 
@@ -275,7 +325,7 @@ class ProjectService:
             result = project.draft.validate(self._definitions, self._plugins)
             if not result.ok:
                 raise ProjectValidationFailedError(result)
-            version = project.publish_draft()
+            version = project.publish_draft(published_by=published_by)
             published = Event(
                 event_type=EventType.PROJECT_PUBLISHED,
                 occurred_at=version.published_at,
@@ -292,13 +342,7 @@ class ProjectService:
 
     async def get_version(self, project_id: str, version: int) -> ProjectVersion:
         async with self._uow() as uow:
-            found = await uow.versions.get(project_id, version)
-        if found is None:
-            raise ProjectVersionNotFoundError(
-                "Project version not found.",
-                details={"project_id": project_id, "version": version},
-            )
-        return found
+            return await load_version(uow, project_id, version)
 
     async def list_versions(
         self, project_id: str, *, offset: int = 0, limit: int = 50
@@ -317,6 +361,18 @@ async def load_project(uow: UnitOfWork, project_id: str) -> Project:
             "Project not found.", details={"project_id": project_id}
         )
     return project
+
+
+async def load_version(
+    uow: UnitOfWork, project_id: str, version: int
+) -> ProjectVersion:
+    found = await uow.versions.get(project_id, version)
+    if found is None:
+        raise ProjectVersionNotFoundError(
+            "Project version not found.",
+            details={"project_id": project_id, "version": version},
+        )
+    return found
 
 
 def _log(event: str, project: Project, **extra: object) -> None:

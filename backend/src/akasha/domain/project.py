@@ -323,6 +323,7 @@ class ProjectDraft:
         *,
         version: int,
         published_at: datetime | None = None,
+        published_by: str | None = None,
     ) -> "ProjectVersion":
         """Freeze the current draft state into an immutable version snapshot."""
         if version < 1:
@@ -337,6 +338,7 @@ class ProjectDraft:
             description=self.description,
             files=dict(self.files),  # bytes are immutable; the dict is not
             published_at=published_at or utcnow(),
+            published_by=published_by,
         )
 
 
@@ -353,6 +355,9 @@ class ProjectVersion:
     description: str = ""
     published_at: datetime = field(default_factory=utcnow)
     files: Mapping[str, bytes] = field(default_factory=dict)
+    # The publishing user's id; None when published without one (CLI, or
+    # before authorship was recorded).
+    published_by: str | None = None
 
     def __post_init__(self) -> None:
         validate_id(self.id)
@@ -367,6 +372,16 @@ class ProjectVersion:
         every run. Trigger rules are left out on purpose: they gate
         publishing, and a run never depends on how it was triggered."""
         return _validate(self.graph, self.dependencies, definitions)
+
+    def to_draft(self) -> ProjectDraft:
+        """An independent, editable copy of this snapshot (restore/clone)."""
+        return ProjectDraft(
+            graph=deepcopy(self.graph),
+            triggers=[deepcopy(t) for t in self.triggers],
+            dependencies=list(self.dependencies),
+            description=self.description,
+            files=dict(self.files),
+        )
 
 
 @dataclass(eq=False)
@@ -442,14 +457,21 @@ class Project(Entity):
         self.draft = draft
         self._touch(utcnow())
 
-    def publish_draft(self, *, published_at: datetime | None = None) -> ProjectVersion:
+    def publish_draft(
+        self,
+        *,
+        published_at: datetime | None = None,
+        published_by: str | None = None,
+    ) -> ProjectVersion:
         """Freeze the draft as the next version and return the snapshot.
 
         The caller persists the snapshot; the project only advances its
         counter, so version numbers stay monotonic and gap-free.
         """
         snapshot = self.draft.publish(
-            version=self.current_version + 1, published_at=published_at
+            version=self.current_version + 1,
+            published_at=published_at,
+            published_by=published_by,
         )
         self.current_version = snapshot.version
         if self.status is ProjectStatus.DRAFT:

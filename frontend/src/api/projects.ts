@@ -108,6 +108,14 @@ export const projectVersionSummarySchema = z.object({
     description: z.string(),
     schema_version: z.number().int(),
     published_at: timestamp,
+    /** Null when not recorded (CLI publishes, older versions). */
+    published_by: z
+        .object({
+            id: z.string(),
+            /** Null only if the account cannot be found. */
+            username: z.string().nullable(),
+        })
+        .nullable(),
 })
 export type ProjectVersionSummary = z.infer<typeof projectVersionSummarySchema>
 
@@ -235,19 +243,39 @@ export function updateProject(
     })
 }
 
-/** A new, never-published project with a copy of this project's draft. */
+/**
+ * A new, never-published project with a copy of this project's draft, or
+ * of its published `version`.
+ */
 export function duplicateProject(
     client: ApiClient,
     projectId: string,
     name: string,
+    version?: number,
 ) {
     return client.request(
         'POST',
         `${path(projectId)}/duplicate`,
         projectSchema,
-        {
-            body: { name },
-        },
+        { body: version === undefined ? { name } : { name, version } },
+    )
+}
+
+/**
+ * Replaces the draft with a copy of published `version` (the version is
+ * unchanged). A draft changed since `expectedRevision` is a 409.
+ */
+export function restoreProjectVersion(
+    client: ApiClient,
+    projectId: string,
+    version: number,
+    expectedRevision: number,
+) {
+    return client.request(
+        'POST',
+        `${path(projectId)}/versions/${String(version)}/restore`,
+        projectSchema,
+        { body: { expected_revision: expectedRevision } },
     )
 }
 

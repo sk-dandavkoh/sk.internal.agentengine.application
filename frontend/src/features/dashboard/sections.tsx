@@ -30,6 +30,7 @@ import {
 } from './format'
 import { formatDateTime } from '../../lib/format'
 import { projectStatusLabels } from '../projects/status'
+import { VersionLink } from '../versions/shared'
 import { FailureDetails } from './FailureDetails'
 import { QuerySection } from '../../components/QuerySection'
 
@@ -102,7 +103,9 @@ function ExecutionTable({
         {
             key: 'version',
             header: 'Version',
-            cell: (e) => `v${String(e.version)}`,
+            cell: (e) => (
+                <VersionLink projectId={e.project_id} version={e.version} />
+            ),
         },
         {
             key: 'status',

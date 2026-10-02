@@ -428,6 +428,43 @@ unsaved changes, stale draft at validate and at publish, refused and failed
 publish) and `tests/fullstack/projects.spec.ts` (validate → fix → publish
 against the real backend).
 
+## Project versions
+
+`features/versions/`: `/projects/:id/versions` and
+`/projects/:id/versions/:n`. Published versions are shown as what they are:
+immutable snapshots, never as an editable draft.
+
+- The list keeps the draft (revision, editor link) in its own card, apart
+  from the published versions (number, published at, published by,
+  description; the project's `current_version` is marked "Latest").
+  Versions come oldest first, as the backend pages them.
+- A version page shows its metadata, an "Immutable" badge and a read-only
+  notice pointing edits to the draft, its snapshot on a frozen canvas
+  (`SnapshotCanvas`: the editor's node cards, pan and zoom only) and as
+  tables (nodes with the names of their configured fields but not their
+  values, connections, triggers, dependencies, files), a comparison and
+  the executions that ran it (`GET /projects/:id/executions?version=n`).
+- Comparison (`compare.ts`) diffs a version against another version or the
+  current draft (the default for the first version): added, removed and
+  changed nodes, connections, triggers, dependencies and files. Node
+  positions are layout and ignored; files compare by path and size
+  (contents are not served).
+- "Restore to draft…" replaces the draft with a copy of the version after
+  a confirmation naming the revision it replaces (409 reloads the project),
+  then opens the editor. "Clone as new project…" creates an unpublished
+  project from the version. Neither changes the version.
+- Every execution's version links to its version page (dashboard tables),
+  so it is always clear which snapshot a run used.
+- Authors show their username (the user id in a tooltip, or alone if the
+  account cannot be found).
+
+Tests: `compare.test.ts`, `VersionsPage.test.tsx` (loading, empty,
+pagination, API failure, not found, immutable presentation and frozen
+canvas, comparison with versions and the draft, restore incl. conflict,
+clone, per-version executions, navigation from project and dashboard) and
+`tests/fullstack/projects.spec.ts` (publish twice, run v1, inspect,
+compare, clone and restore against the real backend).
+
 ## Design system
 
 All UI is composed from `src/components/ui` (`import { Button, Dialog } from

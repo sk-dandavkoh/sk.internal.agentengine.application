@@ -32,6 +32,7 @@ from akasha.api.project_schemas import (
     ProjectVersionDetail,
     ProjectVersionPage,
     PublishProjectRequest,
+    RestoreVersionRequest,
     UpdateProjectRequest,
     ValidateProjectRequest,
     ValidationResponse,
@@ -175,10 +176,13 @@ def create_projects_router() -> APIRouter:
         svc: Service,
         identity: CurrentIdentity,
     ) -> ProjectDetail:
-        """A new draft-only project with a copy of this project's draft,
-        owned by the caller."""
+        """A new draft-only project with a copy of this project's draft (or
+        of published ``version``), owned by the caller."""
         project = await svc.duplicate_project(
-            project_id, name=body.name, owner_id=identity.user.id
+            project_id,
+            name=body.name,
+            owner_id=identity.user.id,
+            version=body.version,
         )
         return ProjectDetail.from_domain(project)
 
@@ -192,11 +196,17 @@ def create_projects_router() -> APIRouter:
 
     @router.post("/{project_id}/publish", status_code=status.HTTP_201_CREATED)
     async def publish_project(
-        project_id: str, svc: Service, body: PublishProjectRequest | None = None
+        project_id: str,
+        svc: Service,
+        identity: CurrentIdentity,
+        body: PublishProjectRequest | None = None,
     ) -> ProjectVersionDetail:
         expected = body.expected_revision if body else None
-        version = await svc.publish_project(project_id, expected_revision=expected)
-        return ProjectVersionDetail.from_domain(version)
+        version = await svc.publish_project(
+            project_id, expected_revision=expected, published_by=identity.user.id
+        )
+        names = {identity.user.id: identity.user.username}
+        return ProjectVersionDetail.from_domain(version, names)
 
     @router.get(
         "/{project_id}/export",
@@ -227,14 +237,29 @@ def create_projects_router() -> APIRouter:
         project_id: str, svc: Service, offset: Offset = 0, limit: Limit = 50
     ) -> ProjectVersionPage:
         page = await svc.list_versions(project_id, offset=offset, limit=limit)
-        return ProjectVersionPage.from_page(page)
+        names = await svc.usernames([v.published_by for v in page.items])
+        return ProjectVersionPage.from_page(page, names)
 
     @router.get("/{project_id}/versions/{version}")
     async def get_version(
         project_id: str, version: VersionNumber, svc: Service
     ) -> ProjectVersionDetail:
-        return ProjectVersionDetail.from_domain(
-            await svc.get_version(project_id, version)
+        found = await svc.get_version(project_id, version)
+        names = await svc.usernames([found.published_by])
+        return ProjectVersionDetail.from_domain(found, names)
+
+    @router.post("/{project_id}/versions/{version}/restore")
+    async def restore_version(
+        project_id: str,
+        version: VersionNumber,
+        body: RestoreVersionRequest,
+        svc: Service,
+    ) -> ProjectDetail:
+        """Replace the draft with a copy of ``version``; the version itself
+        stays as it is. Publishing the draft afterwards makes a new version."""
+        project = await svc.restore_version(
+            project_id, version, expected_revision=body.expected_revision
         )
+        return ProjectDetail.from_domain(project)
 
     return router

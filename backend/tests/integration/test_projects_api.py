@@ -140,6 +140,10 @@ async def test_full_lifecycle_create_edit_validate_publish(
     version = published.json()
     assert version["version"] == 1
     assert version["graph"] == fetched["draft"]["graph"]
+    # The author is the authenticated caller, who also owns the project.
+    assert created["owner_id"] is not None
+    author = {"id": created["owner_id"], "username": "admin"}
+    assert version["published_by"] == author
 
     project = (await api.get(f"/api/v1/projects/{pid}")).json()
     assert project["status"] == "published"
@@ -156,6 +160,7 @@ async def test_full_lifecycle_create_edit_validate_publish(
     versions = (await api.get(f"/api/v1/projects/{pid}/versions")).json()
     assert [v["version"] for v in versions["items"]] == [1]
     assert "graph" not in versions["items"][0]  # summaries only
+    assert versions["items"][0]["published_by"] == author
     assert versions["page"] == {"offset": 0, "limit": 50, "has_more": False}
 
 
@@ -690,6 +695,99 @@ async def test_duplicate_copies_the_draft_into_a_new_unpublished_project(
     ] == []
     assert (await api.delete(f"/api/v1/projects/{copy['id']}")).status_code == 204
     assert (await api.get(f"/api/v1/projects/{pid}")).status_code == 200
+
+
+async def published_then_emptied(api: httpx.AsyncClient) -> tuple[str, dict[str, Any]]:
+    """A project with v1 (valid_draft) whose draft has since been emptied
+    (revision 4). Returns (id, v1 graph)."""
+    pid = (await create(api, "source"))["id"]
+    assert (await put_draft(api, pid, valid_draft(), revision=1)).status_code == 200
+    assert (await api.post(f"/api/v1/projects/{pid}/publish")).status_code == 201
+    v1 = (await api.get(f"/api/v1/projects/{pid}/versions/1")).json()
+    assert (await put_draft(api, pid, {}, revision=3)).status_code == 200
+    return pid, v1["graph"]
+
+
+async def test_duplicate_a_published_version(api: httpx.AsyncClient) -> None:
+    pid, v1_graph = await published_then_emptied(api)
+
+    response = await api.post(
+        f"/api/v1/projects/{pid}/duplicate", json={"name": "from v1", "version": 1}
+    )
+    assert response.status_code == 201, response.text
+    copy = response.json()
+    assert copy["draft"]["graph"] == v1_graph  # the version, not the draft
+    assert copy["current_version"] == 0
+
+    assert_error(
+        await api.post(
+            f"/api/v1/projects/{pid}/duplicate", json={"name": "x", "version": 9}
+        ),
+        404,
+        "PROJECT_VERSION_NOT_FOUND",
+    )
+    bad = await api.post(
+        f"/api/v1/projects/{pid}/duplicate", json={"name": "x", "version": 0}
+    )
+    assert bad.status_code == 422
+
+
+async def test_restore_version_replaces_only_the_draft(
+    api: httpx.AsyncClient,
+) -> None:
+    pid, v1_graph = await published_then_emptied(api)
+    before = (await api.get(f"/api/v1/projects/{pid}/versions/1")).json()
+
+    restored = await api.post(
+        f"/api/v1/projects/{pid}/versions/1/restore", json={"expected_revision": 4}
+    )
+    assert restored.status_code == 200, restored.text
+    project = restored.json()
+    assert project["draft"]["graph"] == v1_graph
+    assert (project["revision"], project["current_version"]) == (5, 1)
+    assert project["status"] == "published"
+
+    # The restored draft is a copy: editing it never reaches v1.
+    assert (await put_draft(api, pid, {}, revision=5)).status_code == 200
+    assert (await api.get(f"/api/v1/projects/{pid}/versions/1")).json() == before
+    # ... and publishing it later is a new version, not a rewrite of v1.
+    again = await api.post(
+        f"/api/v1/projects/{pid}/versions/1/restore", json={"expected_revision": 6}
+    )
+    assert again.status_code == 200
+    published = await api.post(f"/api/v1/projects/{pid}/publish")
+    assert published.json()["version"] == 2
+
+
+async def test_restore_version_errors(api: httpx.AsyncClient) -> None:
+    pid, _ = await published_then_emptied(api)
+    url = f"/api/v1/projects/{pid}/versions"
+
+    # A stale revision would overwrite unseen draft work.
+    assert_error(
+        await api.post(f"{url}/1/restore", json={"expected_revision": 1}),
+        409,
+        "CONCURRENT_MODIFICATION",
+    )
+    assert (await api.get(f"/api/v1/projects/{pid}")).json()["draft"]["graph"][
+        "nodes"
+    ] == []
+    assert_error(
+        await api.post(f"{url}/9/restore", json={"expected_revision": 4}),
+        404,
+        "PROJECT_VERSION_NOT_FOUND",
+    )
+    assert_error(
+        await api.post(
+            f"/api/v1/projects/{UNKNOWN}/versions/1/restore",
+            json={"expected_revision": 1},
+        ),
+        404,
+        "PROJECT_NOT_FOUND",
+    )
+    for body in ({}, {"expected_revision": 0}, {"expected_revision": 4, "x": 1}):
+        response = await api.post(f"{url}/1/restore", json=body)
+        assert response.status_code == 422, body
 
 
 @pytest.mark.parametrize("body", [{}, {"name": " "}, {"name": "x", "extra": 1}])

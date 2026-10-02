@@ -1114,6 +1114,7 @@ const VERSION = {
     schema_version: 1,
     description: 'Qualifies leads',
     published_at: AT,
+    published_by: null,
     graph: project().draft.graph,
     triggers: [],
     dependencies: [],

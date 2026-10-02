@@ -1247,8 +1247,9 @@ Implemented in V1 (Phase 27 closed the gaps the frontend needs):
 /api/v1/auth, /api/v1/users                      local accounts, sessions
 /api/v1/projects[/{id}[/validate|/publish|/duplicate|/export|/versions]], /import
 /api/v1/projects?q=&status=&sort=                 search (name), status filter, sort
-/api/v1/projects/{id}/executions                 execution history (paginated)
+/api/v1/projects/{id}/executions?version=        execution history (paginated), optionally of one version
 /api/v1/projects/{id}/versions/{n}/execute       manual run
+/api/v1/projects/{id}/versions/{n}/restore       copy a version into the draft (expected_revision)
 /api/v1/projects/{id}/triggers/{tid}/invoke      manual/API triggers
 /api/v1/webhooks/{id}/{tid}                      signed webhooks (public)
 /api/v1/executions?status=                       across the caller's projects, newest first
@@ -1268,6 +1269,19 @@ the draft revision the client shows. A different stored revision is a 409
 publish never freezes, a draft the user has not seen. Publishing advances
 the draft revision (the project row is saved); clients reload the draft
 afterwards.
+
+A published version records its author: `published_by` is the id of the
+user whose session published it (migration `0011_version_author`; null for
+versions published before it and for CLI publishes, which have no user).
+Users are disabled, never deleted, so the reference stays valid (`RESTRICT`).
+The API returns it as `{"id", "username"}`: anyone who may see the version
+may see who published it.
+
+Versions are never edited, but they can be copied (`ProjectVersion.to_draft`):
+`POST .../versions/{n}/restore` replaces the project's draft with the copy
+(guarded by `expected_revision` like any draft write; publishing it makes a
+new version), and `POST .../duplicate` with `{"version": n}` starts a new,
+unpublished project from it.
 
 Not over HTTP in V1: plugin management (install, enable, disable, remove;
 operator CLI only, plugins are trusted code; `/api/v1/plugins` only lists

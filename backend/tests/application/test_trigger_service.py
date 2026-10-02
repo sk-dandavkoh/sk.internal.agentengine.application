@@ -84,6 +84,7 @@ class FakeExecutions(ExecutionRepository):
         self,
         *,
         project_id: str | None = None,
+        project_version: int | None = None,
         owner_id: str | None = None,
         statuses: Collection[ExecutionStatus] = (),
         offset: int = 0,

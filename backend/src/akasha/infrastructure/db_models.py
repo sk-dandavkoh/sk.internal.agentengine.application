@@ -110,6 +110,12 @@ project_versions = Table(
     Column("description", String, nullable=False, server_default=""),
     Column("published_at", DateTime(timezone=True), nullable=False),
     Column("files", JSONB_VARIANT, nullable=False, server_default="{}"),
+    Column(
+        "published_by",
+        String,
+        ForeignKey("users.id", ondelete="RESTRICT"),
+        nullable=True,
+    ),
     Index("uq_project_versions_project_version", "project_id", "version", unique=True),
     Index("ix_project_versions_project_id", "project_id"),
 )

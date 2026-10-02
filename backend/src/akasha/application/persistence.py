@@ -149,13 +149,15 @@ class ExecutionRepository(Protocol):
         self,
         *,
         project_id: str | None = None,
+        project_version: int | None = None,
         owner_id: str | None = None,
         statuses: Collection[ExecutionStatus] = (),
         offset: int = 0,
         limit: int = 100,
     ) -> Sequence[ExecutionSummary]:
         """Executions newest first: of one project or all, limited to the
-        projects of ``owner_id`` and to ``statuses`` when given."""
+        projects of ``owner_id``, to one ``project_version`` (meaningful
+        with ``project_id``) and to ``statuses`` when given."""
         ...
 
     async def count_by_status(

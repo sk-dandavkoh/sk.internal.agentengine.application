@@ -149,6 +149,27 @@ async def test_list_executions_newest_first_and_paginated(env: Env) -> None:
     assert item["started_at"] is not None and item["finished_at"] is not None
 
 
+async def test_list_executions_filter_by_version(env: Env) -> None:
+    """Which runs used which immutable version (frontend Phase 12)."""
+    pid, v1, revision = await publish_with(env.client, [])
+    _, v2, _ = await publish_with(env.client, [], project_id=pid, revision=revision)
+    old = await env.run(pid, v1)
+    new = [await env.run(pid, v2) for _ in range(2)]
+
+    def listed(params: dict[str, int]) -> Any:
+        return env.client.get(f"/api/v1/projects/{pid}/executions", params=params)
+
+    of_v1 = (await listed({"version": v1})).json()["items"]
+    assert [(e["id"], e["version"]) for e in of_v1] == [(old, v1)]
+    of_v2 = (await listed({"version": v2})).json()["items"]
+    assert [e["id"] for e in of_v2] == new[::-1]
+    paged = (await listed({"version": v2, "limit": 1})).json()
+    assert [e["id"] for e in paged["items"]] == [new[1]]
+    assert paged["page"]["has_more"] is True
+    assert (await listed({"version": 99})).json()["items"] == []
+    assert (await listed({"version": 0})).status_code == 422
+
+
 async def test_list_executions_rejects_bad_pages_and_unknown_projects(
     env: Env,
 ) -> None:

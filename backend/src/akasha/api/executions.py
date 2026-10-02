@@ -3,7 +3,8 @@
 - GET  /executions?status=&offset=&limit= : runs across the caller's
   projects (all for an admin), newest first, optionally by status
 - GET  /executions/status-counts : how many of those runs are in each status
-- GET  /projects/{project_id}/executions : the project's runs, newest first
+- GET  /projects/{project_id}/executions?version= : the project's runs,
+  newest first, optionally of one published version
 - GET  /executions/{execution_id} : one run's state
 - GET  /executions/{execution_id}/events?after=&limit= : its event history
 - POST /executions/{execution_id}/cancel : request cooperative cancellation
@@ -152,9 +153,17 @@ def create_executions_router() -> APIRouter:
 
     @router.get("/projects/{project_id}/executions")
     async def list_executions(
-        project_id: str, svc: Executions, offset: Offset = 0, limit: Limit = 50
+        project_id: str,
+        svc: Executions,
+        offset: Offset = 0,
+        limit: Limit = 50,
+        version: Annotated[
+            int | None, Query(ge=1, description="Only runs of this version")
+        ] = None,
     ) -> ExecutionPage:
-        page = await svc.list_executions(project_id, offset=offset, limit=limit)
+        page = await svc.list_executions(
+            project_id, version=version, offset=offset, limit=limit
+        )
         return ExecutionPage.from_page(page)
 
     @router.get("/executions/{execution_id}")

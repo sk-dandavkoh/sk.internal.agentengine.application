@@ -1,6 +1,32 @@
 {
   "components": {
     "schemas": {
+      "AuthorOut": {
+        "description": "Who published a version. ``username`` is null only if the account\ncannot be found (users are disabled, never deleted).",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "username": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Username"
+          }
+        },
+        "required": [
+          "id",
+          "username"
+        ],
+        "title": "AuthorOut",
+        "type": "object"
+      },
       "CancelRequest": {
         "properties": {
           "reason": {
@@ -356,6 +382,18 @@
             "minLength": 1,
             "title": "Name",
             "type": "string"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
           }
         },
         "required": [
@@ -1879,6 +1917,16 @@
             "title": "Published At",
             "type": "string"
           },
+          "published_by": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AuthorOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "schema_version": {
             "title": "Schema Version",
             "type": "integer"
@@ -1901,6 +1949,7 @@
           "schema_version",
           "description",
           "published_at",
+          "published_by",
           "graph",
           "triggers",
           "dependencies",
@@ -1944,6 +1993,16 @@
             "title": "Published At",
             "type": "string"
           },
+          "published_by": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AuthorOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "schema_version": {
             "title": "Schema Version",
             "type": "integer"
@@ -1958,7 +2017,8 @@
           "version",
           "schema_version",
           "description",
-          "published_at"
+          "published_at",
+          "published_by"
         ],
         "title": "ProjectVersionSummary",
         "type": "object"
@@ -1981,6 +2041,22 @@
           }
         },
         "title": "PublishProjectRequest",
+        "type": "object"
+      },
+      "RestoreVersionRequest": {
+        "additionalProperties": false,
+        "description": "``expected_revision`` is the draft revision being replaced.",
+        "properties": {
+          "expected_revision": {
+            "minimum": 1.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_revision"
+        ],
+        "title": "RestoreVersionRequest",
         "type": "object"
       },
       "Role": {
@@ -4164,7 +4240,7 @@
     },
     "/api/v1/projects/{project_id}/duplicate": {
       "post": {
-        "description": "A new draft-only project with a copy of this project's draft,\nowned by the caller.",
+        "description": "A new draft-only project with a copy of this project's draft (or\nof published ``version``), owned by the caller.",
         "operationId": "duplicate_project_api_v1_projects__project_id__duplicate_post",
         "parameters": [
           {
@@ -4299,6 +4375,25 @@
               "minimum": 1,
               "title": "Limit",
               "type": "integer"
+            }
+          },
+          {
+            "description": "Only runs of this version",
+            "in": "query",
+            "name": "version",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "minimum": 1,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only runs of this version",
+              "title": "Version"
             }
           }
         ],
@@ -5121,6 +5216,119 @@
         "summary": "Execute Version",
         "tags": [
           "triggers"
+        ]
+      }
+    },
+    "/api/v1/projects/{project_id}/versions/{version}/restore": {
+      "post": {
+        "description": "Replace the draft with a copy of ``version``; the version itself\nstays as it is. Publishing the draft afterwards makes a new version.",
+        "operationId": "restore_version_api_v1_projects__project_id__versions__version__restore_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "version",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "title": "Version",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RestoreVersionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Content Too Large"
+          },
+          "415": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unsupported Media Type"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Restore Version",
+        "tags": [
+          "projects"
         ]
       }
     },

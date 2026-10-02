@@ -277,6 +277,7 @@ class SqlAlchemyProjectVersionRepository(ProjectVersionRepository):
                 description=version.description,
                 published_at=version.published_at,
                 files=serialize_files(version.files),
+                published_by=version.published_by,
             )
         )
 
@@ -341,6 +342,7 @@ class SqlAlchemyProjectVersionRepository(ProjectVersionRepository):
             description=r["description"],
             published_at=_ensure_utc(r["published_at"]),
             files=deserialize_files(r["files"]),
+            published_by=r["published_by"],
         )
 
 
@@ -426,6 +428,7 @@ class SqlAlchemyExecutionRepository(ExecutionRepository):
         self,
         *,
         project_id: str | None = None,
+        project_version: int | None = None,
         owner_id: str | None = None,
         statuses: Collection[ExecutionStatus] = (),
         offset: int = 0,
@@ -450,6 +453,8 @@ class SqlAlchemyExecutionRepository(ExecutionRepository):
         )
         if project_id is not None:
             query = query.where(e.project_id == project_id)
+        if project_version is not None:
+            query = query.where(e.project_version == project_version)
         if statuses:
             query = query.where(e.status.in_([s.value for s in statuses]))
         rows = (

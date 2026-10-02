@@ -211,13 +211,23 @@ class ExecutionService:
             return await load_execution(uow, execution_id)
 
     async def list_executions(
-        self, project_id: str, *, offset: int = 0, limit: int = 50
+        self,
+        project_id: str,
+        *,
+        version: int | None = None,
+        offset: int = 0,
+        limit: int = 50,
     ) -> Page[ExecutionSummary]:
+        """The project's executions newest first; only those of published
+        ``version`` when given (an unpublished one simply has none)."""
         check_page(offset, limit)
         async with self._uow() as uow:
             await load_project(uow, project_id)
             rows = await uow.executions.list_summaries(
-                project_id=project_id, offset=offset, limit=limit + 1
+                project_id=project_id,
+                project_version=version,
+                offset=offset,
+                limit=limit + 1,
             )
         return to_page(rows, offset, limit)
 

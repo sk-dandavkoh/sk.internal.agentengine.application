@@ -107,17 +107,22 @@ export function getExecutionStatusCounts(
     )
 }
 
+export interface ProjectExecutionListParams extends PageParams {
+    /** Only runs of this published version; all when omitted. */
+    version?: number
+}
+
 export function listProjectExecutions(
     client: ApiClient,
     projectId: string,
-    page: PageParams = {},
+    params: ProjectExecutionListParams = {},
     signal?: AbortSignal,
 ) {
     return client.request(
         'GET',
         `/projects/${encodeURIComponent(projectId)}/executions`,
         executionPageSchema,
-        { query: { ...page }, signal },
+        { query: { ...params }, signal },
     )
 }
 

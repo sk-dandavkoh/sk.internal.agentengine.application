@@ -63,6 +63,22 @@ export const routes: RouteObject[] = [
                             lazy: placeholder(item.label),
                         })),
                     {
+                        path: '/projects/:projectId/versions',
+                        lazy: async () => {
+                            const { VersionsPage } =
+                                await import('../features/versions/VersionsPage')
+                            return { Component: VersionsPage }
+                        },
+                    },
+                    {
+                        path: '/projects/:projectId/versions/:version',
+                        lazy: async () => {
+                            const { VersionDetailPage } =
+                                await import('../features/versions/VersionDetailPage')
+                            return { Component: VersionDetailPage }
+                        },
+                    },
+                    {
                         path: '/projects/:projectId/editor',
                         lazy: async () => {
                             const { EditorPage } =

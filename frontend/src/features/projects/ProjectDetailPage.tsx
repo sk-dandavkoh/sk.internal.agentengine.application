@@ -21,6 +21,8 @@ import {
     useToast,
 } from '../../components/ui'
 import { formatDateTime } from '../../lib/format'
+import { versionsPath } from '../versions/paths'
+import { VersionLink } from '../versions/shared'
 import { ProjectFormDialog } from './ProjectFormDialog'
 import { ProjectStatusBadge } from './ProjectStatusBadge'
 
@@ -50,9 +52,14 @@ function Metadata({ project }: { project: Project }) {
                     <ProjectStatusBadge status={project.status} />
                 </Item>
                 <Item term="Latest published version">
-                    {project.current_version > 0
-                        ? `v${String(project.current_version)}`
-                        : 'Not published yet'}
+                    {project.current_version > 0 ? (
+                        <VersionLink
+                            projectId={project.id}
+                            version={project.current_version}
+                        />
+                    ) : (
+                        'Not published yet'
+                    )}
                 </Item>
                 <Item term="Draft revision">{String(project.revision)}</Item>
                 <Item term="Created">
@@ -118,6 +125,12 @@ function ProjectView({ project }: { project: Project }) {
                             className="self-center"
                         >
                             Open editor
+                        </TextLink>
+                        <TextLink
+                            to={versionsPath(project.id)}
+                            className="self-center"
+                        >
+                            Versions
                         </TextLink>
                         <Button
                             onClick={() => {

@@ -226,7 +226,8 @@ void projects.updateProject(recorder, 'p', {
     draft,
     expected_revision: 1,
 })
-void projects.duplicateProject(recorder, 'p', 'copy')
+void projects.duplicateProject(recorder, 'p', 'copy', 1)
+void projects.restoreProjectVersion(recorder, 'p', 1, 2)
 void projects.deleteProject(recorder, 'p')
 void projects.validateProject(recorder, 'p', 1)
 void projects.publishProject(recorder, 'p', 1)
@@ -234,7 +235,7 @@ void projects.listProjectVersions(recorder, 'p')
 void projects.getProjectVersion(recorder, 'p', 1)
 void executions.listExecutions(recorder, { status: ['failed'], limit: 5 })
 void executions.getExecutionStatusCounts(recorder)
-void executions.listProjectExecutions(recorder, 'p')
+void executions.listProjectExecutions(recorder, 'p', { version: 1 })
 void executions.getExecution(recorder, 'e')
 void executions.listExecutionEvents(recorder, 'e', { after: 3 })
 void executions.cancelExecution(recorder, 'e', 'r')

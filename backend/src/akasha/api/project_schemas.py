@@ -179,6 +179,14 @@ class CreateProjectRequest(_Request):
 
 class DuplicateProjectRequest(_Request):
     name: Name
+    # Copy this published version instead of the current draft.
+    version: int | None = Field(default=None, ge=1)
+
+
+class RestoreVersionRequest(_Request):
+    """``expected_revision`` is the draft revision being replaced."""
+
+    expected_revision: int = Field(ge=1)
 
 
 class UpdateProjectRequest(_Request):
@@ -249,21 +257,40 @@ class ProjectDetail(ProjectSummary):
         )
 
 
+class AuthorOut(BaseModel):
+    """Who published a version. ``username`` is null only if the account
+    cannot be found (users are disabled, never deleted)."""
+
+    id: str
+    username: str | None
+
+
+Usernames = Mapping[str, str]
+
+
 class ProjectVersionSummary(BaseModel):
     id: str
     version: int
     schema_version: int
     description: str
     published_at: datetime
+    # Null when unknown (CLI publishes, versions from before 0011).
+    published_by: AuthorOut | None
 
     @classmethod
-    def from_domain(cls, v: ProjectVersion) -> "ProjectVersionSummary":
+    def from_domain(
+        cls, v: ProjectVersion, names: Usernames | None = None
+    ) -> "ProjectVersionSummary":
+        author = v.published_by
         return cls(
             id=v.id,
             version=v.version,
             schema_version=v.schema_version,
             description=v.description,
             published_at=v.published_at,
+            published_by=None
+            if author is None
+            else AuthorOut(id=author, username=(names or {}).get(author)),
         )
 
 
@@ -274,9 +301,11 @@ class ProjectVersionDetail(ProjectVersionSummary):
     files: list[ProjectFileOut]
 
     @classmethod
-    def from_domain(cls, v: ProjectVersion) -> "ProjectVersionDetail":
+    def from_domain(
+        cls, v: ProjectVersion, names: Usernames | None = None
+    ) -> "ProjectVersionDetail":
         return cls(
-            **ProjectVersionSummary.from_domain(v).model_dump(),
+            **ProjectVersionSummary.from_domain(v, names).model_dump(),
             graph=_graph_body(v.graph),
             triggers=_triggers(v.triggers),
             dependencies=_dependencies(v.dependencies),
@@ -331,9 +360,11 @@ class ProjectVersionPage(BaseModel):
     page: PageInfo
 
     @classmethod
-    def from_page(cls, page: Page[ProjectVersion]) -> "ProjectVersionPage":
+    def from_page(
+        cls, page: Page[ProjectVersion], names: Usernames
+    ) -> "ProjectVersionPage":
         return cls(
-            items=[ProjectVersionSummary.from_domain(v) for v in page.items],
+            items=[ProjectVersionSummary.from_domain(v, names) for v in page.items],
             page=PageInfo(offset=page.offset, limit=page.limit, has_more=page.has_more),
         )
 

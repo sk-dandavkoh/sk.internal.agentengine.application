@@ -132,8 +132,19 @@ test('create, search, rename, duplicate and delete', async ({ page: p }) => {
     })
 })
 
-test('a published project cannot be deleted', async ({ page: p }) => {
-    const project = await createViaApi(unique('Published'))
+interface HelloWorld {
+    graph: { nodes: { label?: string }[] }
+    triggers: unknown
+    dependencies: unknown
+}
+
+/** Stores the hello-world example as the draft, optionally edited, and
+ * publishes it; returns the next draft revision. */
+async function publishHelloWorld(
+    project: ProjectJson,
+    revision = project.revision,
+    edit: (draft: HelloWorld) => void = () => undefined,
+): Promise<number> {
     const example = readFileSync(
         new URL(
             '../../../backend/examples/projects/hello-world.json',
@@ -141,21 +152,22 @@ test('a published project cannot be deleted', async ({ page: p }) => {
         ),
         'utf8',
     )
-    const { graph, triggers, dependencies } = JSON.parse(example) as Record<
-        string,
-        unknown
-    >
+    const { graph, triggers, dependencies } = JSON.parse(example) as HelloWorld
+    const draft = { graph, triggers, dependencies }
+    edit(draft)
     const put = await api.put(`/api/v1/projects/${project.id}`, {
-        data: {
-            expected_revision: project.revision,
-            name: project.name,
-            draft: { graph, triggers, dependencies },
-        },
+        data: { expected_revision: revision, name: project.name, draft },
     })
     expect(put.status()).toBe(200)
     expect(
         (await api.post(`/api/v1/projects/${project.id}/publish`)).status(),
     ).toBe(201)
+    return revision + 2
+}
+
+test('a published project cannot be deleted', async ({ page: p }) => {
+    const project = await createViaApi(unique('Published'))
+    await publishHelloWorld(project)
 
     await p.goto(`/projects/${project.id}`)
     await expect(p.getByText('v1', { exact: true })).toBeVisible()
@@ -492,4 +504,84 @@ test('without a session the backend refuses and the UI says so', async ({
         'Could not load projects',
     )
     await page.close()
+})
+
+test('versions are listed, inspected, compared and show their runs', async ({
+    page: p,
+}) => {
+    const project = await createViaApi(unique('Versioned'))
+    const next = await publishHelloWorld(project)
+    await publishHelloWorld(project, next, (draft) => {
+        const [first] = draft.graph.nodes
+        if (first) first.label = 'Renamed in v2'
+    })
+    const run = await api.post(
+        `/api/v1/projects/${project.id}/versions/1/execute`,
+        { data: {} },
+    )
+    expect(run.status()).toBe(201)
+    const { id: executionId } = (await run.json()) as { id: string }
+    await p.goto(`/projects/${project.id}`)
+    await p.getByRole('link', { name: 'Versions', exact: true }).click()
+    const versions = p.getByRole('table', { name: 'Published versions' })
+    await expect(versions.getByRole('row')).toHaveCount(3)
+    const latest = versions.getByRole('row').nth(2)
+    await expect(latest.getByText('Latest')).toBeVisible()
+    await expect(latest.getByText('e2e-admin')).toBeVisible()
+
+    await versions.getByRole('link', { name: 'v1', exact: true }).click()
+    await expect(
+        p.getByRole('heading', { name: `${project.name} · v1`, level: 1 }),
+    ).toBeVisible()
+    await expect(p.getByText('Published versions are read-only')).toBeVisible()
+    await expect(p.getByText(executionId)).toBeVisible()
+    const graph = p.getByRole('figure', { name: 'Published graph (read-only)' })
+    // One card per node of the example: Input, Set, Output.
+    await expect(
+        graph.getByRole('group', { name: /\(core\.\w+\)$/ }),
+    ).toHaveCount(3)
+
+    await p.getByRole('combobox', { name: 'Compare with' }).selectOption('2')
+    const result = p.getByRole('region', { name: 'Comparison result' })
+    await expect(result.getByText('Changes from v1 to v2:')).toBeVisible()
+    await expect(result.getByText('Changed', { exact: true })).toHaveCount(1)
+
+    // v2 never ran: the runs list is per version.
+    await p.goto(`/projects/${project.id}/versions/2`)
+    await expect(p.getByRole('heading', { name: 'Not run yet' })).toBeVisible()
+
+    // Clone v1 into a new project: its draft is v1, not the current draft.
+    await p.goto(`/projects/${project.id}/versions/1`)
+    await p.getByRole('button', { name: 'Clone as new project…' }).click()
+    await p.getByRole('button', { name: 'Create project' }).click()
+    await expect(
+        p.getByRole('heading', { name: `${project.name} (v1)`, level: 1 }),
+    ).toBeVisible()
+    const cloneId = p.url().split('/').pop() ?? ''
+    const clone = (await (
+        await api.get(`/api/v1/projects/${cloneId}`)
+    ).json()) as { current_version: number; draft: HelloWorld }
+    expect(clone.current_version).toBe(0)
+    expect(clone.draft.graph.nodes.map((n) => n.label)).not.toContain(
+        'Renamed in v2',
+    )
+
+    // Restore v1 into this project's draft; v2 is the draft until then.
+    await p.goto(`/projects/${project.id}/versions/1`)
+    await p
+        .getByRole('combobox', { name: 'Compare with' })
+        .selectOption('draft')
+    await expect(
+        result.getByText('Changes from v1 to the current draft:'),
+    ).toBeVisible()
+    await p.getByRole('button', { name: 'Restore to draft…' }).click()
+    await p.getByRole('button', { name: 'Replace draft' }).click()
+    await expect(p).toHaveURL(new RegExp(`/projects/${project.id}/editor$`))
+    const restored = (await (
+        await api.get(`/api/v1/projects/${project.id}`)
+    ).json()) as { current_version: number; draft: HelloWorld }
+    expect(restored.current_version).toBe(2)
+    expect(restored.draft.graph.nodes.map((n) => n.label)).not.toContain(
+        'Renamed in v2',
+    )
 })
