@@ -531,3 +531,111 @@ async def test_create_rejects_nul_in_name_and_description(
         response = await api.post("/api/v1/projects", json=body)
         assert_error(response, 422, "DOMAIN_VALIDATION_ERROR")
     assert (await api.get("/api/v1/projects")).json()["items"] == []
+
+
+async def test_list_projects_search_is_literal_and_case_insensitive(
+    api: httpx.AsyncClient,
+) -> None:
+    alpha = (await create(api, "Alpha Agent"))["id"]
+    await create(api, "beta")
+    pct = (await create(api, "100% done_now"))["id"]
+
+    async def ids(q: str) -> list[str]:
+        response = await api.get("/api/v1/projects", params={"q": q})
+        assert response.status_code == 200, response.text
+        return [p["id"] for p in response.json()["items"]]
+
+    assert await ids("ALPHA") == [alpha]
+    # LIKE wildcards are matched literally, not as patterns.
+    assert await ids("%") == [pct]
+    assert await ids("e_n") == [pct]
+    assert await ids("\\") == []
+
+
+async def test_list_projects_filters_by_status(api: httpx.AsyncClient) -> None:
+    draft = (await create(api, "draft"))["id"]
+    published = (await create(api, "published"))["id"]
+    assert (await put_draft(api, published, valid_draft(), revision=1)).status_code
+    assert (await api.post(f"/api/v1/projects/{published}/publish")).status_code == 201
+
+    async def ids(*statuses: str) -> list[str]:
+        response = await api.get("/api/v1/projects", params={"status": statuses})
+        return [p["id"] for p in response.json()["items"]]
+
+    assert await ids("draft") == [draft]
+    assert await ids("published") == [published]
+    assert await ids("draft", "published") == [draft, published]
+
+
+async def test_list_projects_sorting(api: httpx.AsyncClient) -> None:
+    b = (await create(api, "b"))["id"]
+    a = (await create(api, "A"))["id"]
+    c = (await create(api, "c"))["id"]
+    assert (await put_draft(api, b, {}, revision=1, name="b")).status_code == 200
+
+    async def ids(sort: str) -> list[str]:
+        response = await api.get("/api/v1/projects", params={"sort": sort})
+        return [p["id"] for p in response.json()["items"]]
+
+    assert await ids("created_at") == [b, a, c]
+    assert await ids("-created_at") == [c, a, b]
+    assert await ids("name") == [a, b, c]
+    assert await ids("-name") == [c, b, a]
+    assert (await ids("-updated_at"))[0] == b
+    assert (await ids("updated_at"))[-1] == b
+
+
+@pytest.mark.parametrize(
+    "params",
+    [{"sort": "owner_id"}, {"status": "deleted"}, {"q": ""}, {"q": "x" * 201}],
+)
+async def test_list_rejects_bad_query(
+    api: httpx.AsyncClient, params: dict[str, Any]
+) -> None:
+    assert_error(
+        await api.get("/api/v1/projects", params=params), 422, "VALIDATION_ERROR"
+    )
+
+
+async def test_duplicate_copies_the_draft_into_a_new_unpublished_project(
+    api: httpx.AsyncClient,
+) -> None:
+    pid = (await create(api, "source"))["id"]
+    draft = valid_draft()
+    assert (await put_draft(api, pid, draft, revision=1)).status_code == 200
+    assert (await api.post(f"/api/v1/projects/{pid}/publish")).status_code == 201
+
+    response = await api.post(
+        f"/api/v1/projects/{pid}/duplicate", json={"name": "  copy  "}
+    )
+    assert response.status_code == 201, response.text
+    copy = response.json()
+    assert copy["id"] != pid
+    assert copy["name"] == "copy"
+    assert copy["status"] == "draft"
+    assert copy["current_version"] == 0
+    assert copy["revision"] == 1
+    source = (await api.get(f"/api/v1/projects/{pid}")).json()
+    assert copy["draft"] == source["draft"]
+    # The copy is independent: it has no history and can be deleted.
+    assert (await api.get(f"/api/v1/projects/{copy['id']}/versions")).json()[
+        "items"
+    ] == []
+    assert (await api.delete(f"/api/v1/projects/{copy['id']}")).status_code == 204
+    assert (await api.get(f"/api/v1/projects/{pid}")).status_code == 200
+
+
+@pytest.mark.parametrize("body", [{}, {"name": " "}, {"name": "x", "extra": 1}])
+async def test_duplicate_rejects_malformed_bodies(
+    api: httpx.AsyncClient, body: dict[str, Any]
+) -> None:
+    pid = (await create(api))["id"]
+    response = await api.post(f"/api/v1/projects/{pid}/duplicate", json=body)
+    assert_error(response, 422, "VALIDATION_ERROR")
+
+
+async def test_duplicate_unknown_project_is_404(api: httpx.AsyncClient) -> None:
+    response = await api.post(
+        f"/api/v1/projects/{UNKNOWN}/duplicate", json={"name": "copy"}
+    )
+    assert_error(response, 404, "PROJECT_NOT_FOUND")

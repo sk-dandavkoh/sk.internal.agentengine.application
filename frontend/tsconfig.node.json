@@ -25,6 +25,7 @@
     "include": [
         "vite.config.ts",
         "playwright.config.ts",
+        "playwright.fullstack.config.ts",
         "tests",
         "src/**/*.node.test.ts"
     ]

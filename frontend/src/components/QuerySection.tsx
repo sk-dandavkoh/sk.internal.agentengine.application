@@ -1,7 +1,7 @@
 import type { UseQueryResult } from '@tanstack/react-query'
 import type { ReactNode } from 'react'
-import { Alert, Button, ErrorState, LoadingState } from '../../components/ui'
-import { errorMessage } from './format'
+import { errorMessage } from '../api/errors'
+import { Alert, Button, ErrorState, LoadingState } from './ui'
 
 interface QuerySectionProps<T> {
     query: UseQueryResult<T>

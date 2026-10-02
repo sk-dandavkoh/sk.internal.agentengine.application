@@ -25,6 +25,7 @@ from akasha.application.persistence import (
     ExecutionRepository,
     ExecutionSummary,
     ProjectRepository,
+    ProjectSort,
     ProjectVersionRepository,
     SessionRepository,
     UnitOfWork,
@@ -166,17 +167,39 @@ class SqlAlchemyProjectRepository(ProjectRepository):
         return result.rowcount > 0
 
     async def list(
-        self, *, offset: int = 0, limit: int = 100, owner_id: str | None = None
+        self,
+        *,
+        offset: int = 0,
+        limit: int = 100,
+        owner_id: str | None = None,
+        search: str | None = None,
+        statuses: Collection[ProjectStatus] = (),
+        sort: ProjectSort = ProjectSort.CREATED,
     ) -> Sequence[Project]:
+        c = m.projects.c
         query = select(m.projects)
         if owner_id is not None:
-            query = query.where(m.projects.c.owner_id == owner_id)
+            query = query.where(c.owner_id == owner_id)
+        if search:
+            # ponytail: unindexed substring scan; add a pg_trgm index if
+            # project counts make it slow.
+            literal = (
+                search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            )
+            query = query.where(c.name.ilike(f"%{literal}%", escape="\\"))
+        if statuses:
+            query = query.where(c.status.in_([s.value for s in statuses]))
+        column = {
+            "created_at": c.created_at,
+            "updated_at": c.updated_at,
+            "name": func.lower(c.name),
+        }[sort.removeprefix("-")]
+        descending = sort.startswith("-")
+        order = (column.desc(), c.id.desc()) if descending else (column, c.id)
         rows = (
             (
                 await self._session.execute(
-                    query.order_by(m.projects.c.created_at, m.projects.c.id)
-                    .offset(offset)
-                    .limit(limit)
+                    query.order_by(*order).offset(offset).limit(limit)
                 )
             )
             .mappings()

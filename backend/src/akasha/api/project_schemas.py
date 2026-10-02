@@ -149,6 +149,10 @@ class CreateProjectRequest(_Request):
     description: Description = ""
 
 
+class DuplicateProjectRequest(_Request):
+    name: Name
+
+
 class UpdateProjectRequest(_Request):
     """Full replacement of name, description and draft (PUT semantics).
 

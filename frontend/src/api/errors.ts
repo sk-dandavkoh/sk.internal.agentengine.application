@@ -131,3 +131,11 @@ function parseJson(text: string): unknown {
         return undefined
     }
 }
+
+/** A message fit for users: ApiError messages are written for them;
+ * anything else is a bug and its message is not. */
+export function errorMessage(error: unknown): string {
+    return error instanceof ApiError
+        ? error.message
+        : 'An unexpected error occurred.'
+}

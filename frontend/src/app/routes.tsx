@@ -35,8 +35,29 @@ export const routes: RouteObject[] = [
                             return { Component: DashboardPage }
                         },
                     },
+                    {
+                        path: '/projects',
+                        lazy: async () => {
+                            const { ProjectsPage } =
+                                await import('../features/projects/ProjectsPage')
+                            return { Component: ProjectsPage }
+                        },
+                    },
+                    {
+                        path: '/projects/:projectId',
+                        lazy: async () => {
+                            const { ProjectDetailPage } =
+                                await import('../features/projects/ProjectDetailPage')
+                            return { Component: ProjectDetailPage }
+                        },
+                    },
                     ...navItems
-                        .filter((item) => item.path !== '/dashboard')
+                        .filter(
+                            (item) =>
+                                !['/dashboard', '/projects'].includes(
+                                    item.path,
+                                ),
+                        )
                         .map((item): RouteObject => ({
                             path: item.path,
                             lazy: placeholder(item.label),

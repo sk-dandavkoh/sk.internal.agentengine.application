@@ -614,6 +614,7 @@ def scoped_requests(o: Owned) -> list[tuple[str, str, dict[str, Any]]]:
         ("DELETE", p, {}),
         ("POST", f"{p}/validate", {}),
         ("POST", f"{p}/publish", {}),
+        ("POST", f"{p}/duplicate", {"json": {"name": "copy"}}),
         ("GET", f"{p}/export", {}),
         ("GET", f"{p}/export?version=1", {}),
         ("GET", f"{p}/versions", {}),
@@ -704,6 +705,23 @@ async def test_imported_projects_belong_to_the_importer(env: Env) -> None:
     copy = imported.json()["project"]
     assert copy["owner_id"] == (await me(env, bob)).json()["id"]
     response = await env.client.get(f"/api/v1/projects/{copy['id']}", headers=alice)
+    assert_error(response, 404, "PROJECT_NOT_FOUND")
+
+
+async def test_duplicates_belong_to_the_caller(env: Env) -> None:
+    admin = await env.admin()
+    alice = await env.member(admin, "alice")
+    owned = await owned_project(env, alice)
+    copy = await env.client.post(
+        f"/api/v1/projects/{owned.project_id}/duplicate",
+        json={"name": "copy"},
+        headers=admin,
+    )
+    assert copy.status_code == 201, copy.text
+    assert copy.json()["owner_id"] == (await me(env, admin)).json()["id"]
+    response = await env.client.get(
+        f"/api/v1/projects/{copy.json()['id']}", headers=alice
+    )
     assert_error(response, 404, "PROJECT_NOT_FOUND")
 
 

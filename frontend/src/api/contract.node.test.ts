@@ -211,7 +211,13 @@ void auth.login(recorder, { username: 'u', password: 'p' })
 void auth.logout(recorder)
 void auth.fetchCurrentUser(recorder)
 const draft = projects.projectDraftSchema.parse({})
-void projects.listProjects(recorder, { offset: 0, limit: 10 })
+void projects.listProjects(recorder, {
+    offset: 0,
+    limit: 10,
+    q: 'a',
+    status: ['draft'],
+    sort: '-name',
+})
 void projects.getProject(recorder, 'p')
 void projects.createProject(recorder, { name: 'n', description: 'd' })
 void projects.updateProject(recorder, 'p', {
@@ -220,6 +226,7 @@ void projects.updateProject(recorder, 'p', {
     draft,
     expected_revision: 1,
 })
+void projects.duplicateProject(recorder, 'p', 'copy')
 void projects.deleteProject(recorder, 'p')
 void projects.validateProject(recorder, 'p')
 void projects.publishProject(recorder, 'p', 1)
@@ -396,5 +403,13 @@ describe('the comparison itself', () => {
                 back,
             ),
         ).toEqual(['$.note: missing in frontend schema'])
+    })
+})
+
+describe('query parameter enums match the backend', () => {
+    it('project list sort orders', () => {
+        expect(projects.projectSortSchema.options).toEqual(
+            document.components.schemas.ProjectSort?.enum,
+        )
     })
 })

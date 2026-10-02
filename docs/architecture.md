@@ -1212,7 +1212,8 @@ Implemented in V1 (Phase 27 closed the gaps the frontend needs):
 
 ```text
 /api/v1/auth, /api/v1/users                      local accounts, sessions
-/api/v1/projects[/{id}[/validate|/publish|/export|/versions]], /import
+/api/v1/projects[/{id}[/validate|/publish|/duplicate|/export|/versions]], /import
+/api/v1/projects?q=&status=&sort=                 search (name), status filter, sort
 /api/v1/projects/{id}/executions                 execution history (paginated)
 /api/v1/projects/{id}/versions/{n}/execute       manual run
 /api/v1/projects/{id}/triggers/{tid}/invoke      manual/API triggers

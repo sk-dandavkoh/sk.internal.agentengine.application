@@ -159,6 +159,26 @@ export type ProjectPage = z.infer<typeof projectPageSchema>
 export const projectVersionPageSchema = pageSchema(projectVersionSummarySchema)
 export type ProjectVersionPage = z.infer<typeof projectVersionPageSchema>
 
+// backend application/persistence.py ProjectSort; "-" means descending.
+export const projectSortSchema = z.enum([
+    'created_at',
+    '-created_at',
+    'updated_at',
+    '-updated_at',
+    'name',
+    '-name',
+])
+export type ProjectSort = z.infer<typeof projectSortSchema>
+
+export interface ProjectListParams extends PageParams {
+    /** Name contains this text (any case); omit or leave blank for all. */
+    q?: string
+    /** Only these statuses; all when omitted. */
+    status?: readonly ProjectStatus[]
+    /** Backend default: created_at (oldest first). */
+    sort?: ProjectSort
+}
+
 export interface CreateProjectInput {
     name: string
     description?: string
@@ -176,11 +196,13 @@ const path = (projectId: string) => `/projects/${encodeURIComponent(projectId)}`
 
 export function listProjects(
     client: ApiClient,
-    page: PageParams = {},
+    { q, ...params }: ProjectListParams = {},
     signal?: AbortSignal,
 ) {
+    // The backend rejects a blank search (422): blank means "no filter".
+    const search = q?.trim()
     return client.request('GET', '/projects', projectPageSchema, {
-        query: { ...page },
+        query: { ...params, q: search === '' ? undefined : search },
         signal,
     })
 }
@@ -205,6 +227,22 @@ export function updateProject(
     return client.request('PUT', path(projectId), projectSchema, {
         body: input,
     })
+}
+
+/** A new, never-published project with a copy of this project's draft. */
+export function duplicateProject(
+    client: ApiClient,
+    projectId: string,
+    name: string,
+) {
+    return client.request(
+        'POST',
+        `${path(projectId)}/duplicate`,
+        projectSchema,
+        {
+            body: { name },
+        },
+    )
 }
 
 export function deleteProject(client: ApiClient, projectId: string) {

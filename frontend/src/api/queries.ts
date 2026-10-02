@@ -16,6 +16,7 @@ import {
     getProjectVersion,
     listProjects,
     listProjectVersions,
+    type ProjectListParams,
 } from './projects'
 import { getExecutionReport } from './reports'
 import type { PageParams } from './schemas'
@@ -31,7 +32,8 @@ import { getSystemStatus } from './system'
 export const queryKeys = {
     projects: {
         lists: () => ['projects', 'list'] as const,
-        list: (page: PageParams) => ['projects', 'list', page] as const,
+        list: (params: ProjectListParams) =>
+            ['projects', 'list', params] as const,
         detail: (projectId: string) => ['projects', projectId] as const,
         versions: (projectId: string, page: PageParams) =>
             ['projects', projectId, 'versions', 'list', page] as const,
@@ -74,10 +76,10 @@ export const INSTALLATION_STALE_TIME_MS = 5 * 60_000
  * defaults of `createQueryClient`: stale immediately, refetched on mount.
  */
 export const projectQueries = {
-    list: (client: ApiClient, page: PageParams = {}) =>
+    list: (client: ApiClient, params: ProjectListParams = {}) =>
         queryOptions({
-            queryKey: queryKeys.projects.list(page),
-            queryFn: ({ signal }) => listProjects(client, page, signal),
+            queryKey: queryKeys.projects.list(params),
+            queryFn: ({ signal }) => listProjects(client, params, signal),
         }),
     detail: (client: ApiClient, projectId: string) =>
         queryOptions({

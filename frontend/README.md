@@ -21,23 +21,34 @@ npx playwright install chromium   # once, only for E2E tests
 
 ## Commands
 
-| Command                | Purpose                                              |
-| ---------------------- | ---------------------------------------------------- |
-| `npm run dev`          | Dev server on http://localhost:5173                  |
-| `npm run build`        | Typecheck, then production bundle into `dist/`       |
-| `npm run preview`      | Serve `dist/` locally                                |
-| `npm run typecheck`    | `tsc -b` over app and tooling configs                |
-| `npm run lint`         | ESLint (type-checked `typescript-eslint` strict set) |
-| `npm run format`       | Prettier write                                       |
-| `npm run format:check` | Prettier check (CI)                                  |
-| `npm test`             | Vitest unit/component tests (jsdom)                  |
-| `npm run test:e2e`     | Playwright against a fresh production build          |
+| Command                  | Purpose                                              |
+| ------------------------ | ---------------------------------------------------- |
+| `npm run dev`            | Dev server on http://localhost:5173                  |
+| `npm run build`          | Typecheck, then production bundle into `dist/`       |
+| `npm run preview`        | Serve `dist/` locally                                |
+| `npm run typecheck`      | `tsc -b` over app and tooling configs                |
+| `npm run lint`           | ESLint (type-checked `typescript-eslint` strict set) |
+| `npm run format`         | Prettier write                                       |
+| `npm run format:check`   | Prettier check (CI)                                  |
+| `npm test`               | Vitest unit/component tests (jsdom)                  |
+| `npm run test:e2e`       | Playwright against a fresh production build          |
+| `npm run test:fullstack` | Playwright against the real backend (Docker + uv)    |
 
 Quality gate before finishing a phase:
 
 ```bash
-npm run format:check && npm run lint && npm run typecheck && npm test && npm run build && npm run test:e2e
+npm run format:check && npm run lint && npm run typecheck && npm test && npm run build && npm run test:e2e && npm run test:fullstack
 ```
+
+**Full-stack suite** (`tests/fullstack/`, `playwright.fullstack.config.ts`):
+the production bundle against the backend of this checkout, nothing
+stubbed. `backend.sh` starts PostgreSQL 17.2 in a labelled container with
+tmpfs storage, migrates and serves the backend on port 8765 (preview on
+4174); every run starts with an empty database. The suite creates the
+first admin through `/auth/setup` and, until the login UI exists (Phase
+21), the browser sends that admin's token as a request header.
+`globalTeardown` removes the container; `backend.sh` also removes leftovers
+of a crashed run. Needs Docker and `uv`.
 
 ## Configuration
 
@@ -62,7 +73,8 @@ frontend/
 │   ├── api/            the only backend communication layer (see API layer)
 │   ├── components/ui/  design system primitives (import from the index)
 │   ├── features/       product areas (dashboard, …); a feature owns its screens
-│   ├── lib/            small framework-free helpers (cx)
+│   ├── components/     QuerySection: loading/error/stale states of one query
+│   ├── lib/            small framework-free helpers (cx, format, form)
 │   ├── styles/         global CSS: Tailwind v4 entry and design tokens
 │   └── test/           Vitest setup; app.tsx renders routes against a stub backend
 ├── tests/e2e/          Playwright specs
@@ -226,6 +238,24 @@ Not shown, because the backend has no aggregate for them: token usage and
 cost (per execution only, in the report) and Prometheus metrics (`/metrics`
 is a scrape target, not an API). Project names and status counts cover the
 first 100 projects (the page limit); beyond that the card says so.
+
+## Projects
+
+`features/projects/`: `/projects` lists the caller's projects (search by
+name, status filter, sort, 25 per page) with search, filter, sort and page
+in the URL, so links and Back restore the view. All of it runs on the
+backend (`GET /projects?q=&status=&sort=`), never on a client-side copy.
+`/projects/:projectId` shows the metadata and offers Open editor
+(`/projects/:id/editor`, Phase 07), Edit details (name and description),
+Duplicate and Delete.
+
+Writes are authoritative, not optimistic: a dialog stays open with a
+pending button until the backend answers, and the screen shows only data
+the backend returned. Edit details sends the draft back unchanged with the
+`revision` it was read at; a 409 is shown and the project reloaded. Delete
+asks for confirmation; the backend refuses projects with published
+versions (409 `PROJECT_HAS_VERSIONS`), and the dialog shows that answer.
+Request validation errors (`details["body.name"]`) appear at their field.
 
 ## Design system
 

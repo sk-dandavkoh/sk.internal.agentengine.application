@@ -24,7 +24,9 @@ from fastapi import (
 from akasha.api.auth import CurrentIdentity
 from akasha.api.project_schemas import (
     CreateProjectRequest,
+    DuplicateProjectRequest,
     ImportProjectResponse,
+    Name,
     ProjectDetail,
     ProjectPage,
     ProjectVersionDetail,
@@ -36,12 +38,14 @@ from akasha.api.project_schemas import (
 from akasha.api.schemas import ErrorResponse, read_limited_body
 from akasha.application.auth import AuthorizationService
 from akasha.application.packages import ProjectPackageService
+from akasha.application.persistence import ProjectSort
 from akasha.application.project_package import (
     MAX_PACKAGE_BYTES,
     MEDIA_TYPE,
     ProjectPackageTooLargeError,
 )
 from akasha.application.projects import MAX_PAGE_SIZE, ProjectService
+from akasha.domain.project import ProjectStatus
 from akasha.errors import ConfigurationError
 
 
@@ -123,12 +127,24 @@ def create_projects_router() -> APIRouter:
 
     @router.get("")
     async def list_projects(
-        svc: Service, identity: CurrentIdentity, offset: Offset = 0, limit: Limit = 50
+        svc: Service,
+        identity: CurrentIdentity,
+        offset: Offset = 0,
+        limit: Limit = 50,
+        q: Annotated[Name | None, Query(description="Name contains (any case)")] = None,
+        status: Annotated[list[ProjectStatus] | None, Query()] = None,
+        sort: ProjectSort = ProjectSort.CREATED,
     ) -> ProjectPage:
         owner = AuthorizationService.owner_filter(identity)
-        return ProjectPage.from_page(
-            await svc.list_projects(offset=offset, limit=limit, owner_id=owner)
+        page = await svc.list_projects(
+            offset=offset,
+            limit=limit,
+            owner_id=owner,
+            search=q,
+            statuses=status or (),
+            sort=sort,
         )
+        return ProjectPage.from_page(page)
 
     @router.get("/{project_id}")
     async def get_project(project_id: str, svc: Service) -> ProjectDetail:
@@ -150,6 +166,20 @@ def create_projects_router() -> APIRouter:
     async def delete_project(project_id: str, svc: Service) -> Response:
         await svc.delete_project(project_id)
         return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    @router.post("/{project_id}/duplicate", status_code=status.HTTP_201_CREATED)
+    async def duplicate_project(
+        project_id: str,
+        body: DuplicateProjectRequest,
+        svc: Service,
+        identity: CurrentIdentity,
+    ) -> ProjectDetail:
+        """A new draft-only project with a copy of this project's draft,
+        owned by the caller."""
+        project = await svc.duplicate_project(
+            project_id, name=body.name, owner_id=identity.user.id
+        )
+        return ProjectDetail.from_domain(project)
 
     @router.post("/{project_id}/validate")
     async def validate_project(project_id: str, svc: Service) -> ValidationResponse:

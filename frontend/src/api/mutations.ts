@@ -20,6 +20,7 @@ import {
 import {
     createProject,
     deleteProject,
+    duplicateProject,
     publishProject,
     updateProject,
     validateProject,
@@ -80,6 +81,14 @@ export function useUpdateProject() {
             qc.setQueryData(queryKeys.projects.detail(project.id), project)
             return invalidate(qc, queryKeys.projects.lists())
         },
+    )
+}
+
+export function useDuplicateProject() {
+    return useApiMutation(
+        (client, v: { projectId: string; name: string }) =>
+            duplicateProject(client, v.projectId, v.name),
+        (qc) => invalidate(qc, queryKeys.projects.lists()),
     )
 }
 

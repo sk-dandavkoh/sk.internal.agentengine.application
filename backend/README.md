@@ -139,10 +139,11 @@ completed), `2` usage error, `70` unexpected internal error.
 | Method | Path | Use case |
 |---|---|---|
 | POST | `/api/v1/projects` | CreateProject → 201 |
-| GET | `/api/v1/projects?offset=&limit=` | ListProjects (summaries, `limit` ≤ 100) |
+| GET | `/api/v1/projects?offset=&limit=&q=&status=&sort=` | ListProjects (summaries, `limit` ≤ 100); `q`: name contains (any case, literal); `status` repeatable; `sort`: `created_at` (default), `updated_at`, `name`, `-` prefix descending |
 | GET | `/api/v1/projects/{id}` | GetProject (incl. draft) |
 | PUT | `/api/v1/projects/{id}` | UpdateProjectDraft — full replace, requires `expected_revision` |
 | DELETE | `/api/v1/projects/{id}` | DeleteProject → 204; 409 once versions exist |
+| POST | `/api/v1/projects/{id}/duplicate` | DuplicateProject `{name}` → 201: new draft-only project owned by the caller, copy of the draft (incl. files); versions are not copied |
 | POST | `/api/v1/projects/{id}/validate` | ValidateProject → `{valid, issues}` |
 | POST | `/api/v1/projects/{id}/publish` | PublishProject → 201 immutable version; 422 if invalid |
 | GET | `/api/v1/projects/{id}/versions` | ListProjectVersions (summaries) |

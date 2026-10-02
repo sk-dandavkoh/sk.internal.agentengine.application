@@ -15,6 +15,7 @@ Boundary rules (backend/AGENTS.md §13/§15/§16):
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from enum import StrEnum
 from types import TracebackType
 from typing import Protocol
 
@@ -22,7 +23,7 @@ from akasha.domain.credentials import Credential
 from akasha.domain.event import Event
 from akasha.domain.execution import Execution, ExecutionMetadata, ExecutionStatus
 from akasha.domain.identity import User, UserSession
-from akasha.domain.project import Project, ProjectVersion
+from akasha.domain.project import Project, ProjectStatus, ProjectVersion
 from akasha.errors import AkashaError
 
 
@@ -31,6 +32,18 @@ class ConcurrentModificationError(AkashaError):
 
     code = "CONCURRENT_MODIFICATION"
     http_status = 409
+
+
+class ProjectSort(StrEnum):
+    """Project list orders; a leading ``-`` means descending. Every order
+    breaks ties by id, so pages are stable."""
+
+    CREATED = "created_at"
+    CREATED_DESC = "-created_at"
+    UPDATED = "updated_at"
+    UPDATED_DESC = "-updated_at"
+    NAME = "name"
+    NAME_DESC = "-name"
 
 
 class ProjectRepository(Protocol):
@@ -54,9 +67,18 @@ class ProjectRepository(Protocol):
         ...
 
     async def list(
-        self, *, offset: int = 0, limit: int = 100, owner_id: str | None = None
+        self,
+        *,
+        offset: int = 0,
+        limit: int = 100,
+        owner_id: str | None = None,
+        search: str | None = None,
+        statuses: Collection[ProjectStatus] = (),
+        sort: ProjectSort = ProjectSort.CREATED,
     ) -> Sequence[Project]:
-        """All projects, or only those owned by ``owner_id``."""
+        """All projects, or only those owned by ``owner_id``; optionally
+        only names containing ``search`` (case-insensitive, literal) and
+        only ``statuses``."""
         ...
 
     async def using_plugin(

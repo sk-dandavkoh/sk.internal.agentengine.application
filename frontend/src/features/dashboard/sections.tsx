@@ -25,12 +25,13 @@ import {
     ACTIVE_STATUSES,
     executionStatusDisplay,
     FAILURE_STATUSES,
-    formatDateTime,
     formatDuration,
     PROJECT_SAMPLE,
 } from './format'
+import { formatDateTime } from '../../lib/format'
+import { projectStatusLabels } from '../projects/status'
 import { FailureDetails } from './FailureDetails'
-import { QuerySection } from './QuerySection'
+import { QuerySection } from '../../components/QuerySection'
 
 function useProjects() {
     return useQuery(projectQueries.list(useApiClient(), PROJECT_SAMPLE))
@@ -331,14 +332,6 @@ export function SystemStatusCard() {
 }
 
 // -- projects ----------------------------------------------------------------------
-
-const projectStatusLabels: Record<ProjectStatus, string> = {
-    draft: 'Draft',
-    published: 'Published',
-    active: 'Active',
-    disabled: 'Disabled',
-    archived: 'Archived',
-}
 
 export function ProjectsCard({ className }: { className?: string }) {
     const query = useProjects()

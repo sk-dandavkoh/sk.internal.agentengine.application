@@ -11,16 +11,26 @@ service.
 """
 
 import logging
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
+from copy import deepcopy
 from dataclasses import dataclass, replace
 from types import MappingProxyType
 
 from akasha.application.events import EventPublisher
-from akasha.application.persistence import ConcurrentModificationError, UnitOfWork
+from akasha.application.persistence import (
+    ConcurrentModificationError,
+    ProjectSort,
+    UnitOfWork,
+)
 from akasha.domain.event import Event, EventType
 from akasha.domain.graph_validation import ValidationIssue, ValidationResult
 from akasha.domain.node import NodeDefinition
-from akasha.domain.project import Project, ProjectDraft, ProjectVersion
+from akasha.domain.project import (
+    Project,
+    ProjectDraft,
+    ProjectStatus,
+    ProjectVersion,
+)
 from akasha.errors import AkashaError, DomainValidationError
 
 logger = logging.getLogger("akasha.application.projects")
@@ -149,15 +159,47 @@ class ProjectService:
             return await load_project(uow, project_id)
 
     async def list_projects(
-        self, *, offset: int = 0, limit: int = 50, owner_id: str | None = None
+        self,
+        *,
+        offset: int = 0,
+        limit: int = 50,
+        owner_id: str | None = None,
+        search: str | None = None,
+        statuses: Collection[ProjectStatus] = (),
+        sort: ProjectSort = ProjectSort.CREATED,
     ) -> Page[Project]:
-        """All projects, or only those of ``owner_id``."""
+        """All projects, or only those of ``owner_id``; ``search`` matches
+        a case-insensitive substring of the name."""
         check_page(offset, limit)
         async with self._uow() as uow:
             rows = await uow.projects.list(
-                offset=offset, limit=limit + 1, owner_id=owner_id
+                offset=offset,
+                limit=limit + 1,
+                owner_id=owner_id,
+                search=search,
+                statuses=statuses,
+                sort=sort,
             )
         return to_page(rows, offset, limit)
+
+    async def duplicate_project(
+        self, project_id: str, *, name: str, owner_id: str | None = None
+    ) -> Project:
+        """A new, never-published project holding a copy of the source's
+        draft (graph, triggers, dependencies, description, files).
+
+        Published versions are history of the source and are not copied.
+        The copy goes through ``replace_draft``, so it obeys every rule a
+        draft write does.
+        """
+        async with self._uow() as uow:
+            source = await load_project(uow, project_id)
+            project = Project.create(name, owner_id=owner_id)
+            project.replace_draft(deepcopy(source.draft), name=name)
+            await uow.projects.save(project)
+            await uow.commit()
+        _log("project_duplicated", project, source_project_id=source.id)
+        return project
 
     async def update_draft(
         self,

@@ -130,9 +130,7 @@ class FakeProjects(ProjectRepository):
     async def delete(self, project_id: str, *, revision: int) -> bool:
         return False
 
-    async def list(
-        self, *, offset: int = 0, limit: int = 100, owner_id: str | None = None
-    ) -> Sequence[Project]:
+    async def list(self, **_: object) -> Sequence[Project]:
         return []
 
     async def using_plugin(

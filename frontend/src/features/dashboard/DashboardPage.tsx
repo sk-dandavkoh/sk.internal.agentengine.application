@@ -4,6 +4,7 @@ import {
     useQueryClient,
 } from '@tanstack/react-query'
 import { useApiClient } from '../../api/context'
+import { errorMessage } from '../../api/errors'
 import {
     executionQueries,
     projectQueries,
@@ -12,7 +13,6 @@ import {
 import { Button, ErrorState, PageHeader } from '../../components/ui'
 import {
     activeExecutions,
-    errorMessage,
     PROJECT_SAMPLE,
     recentExecutions,
     recentFailures,

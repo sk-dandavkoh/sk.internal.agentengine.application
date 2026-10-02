@@ -8,13 +8,14 @@ import { ApiClient } from '../api/client'
 import { ApiClientContext } from '../api/context'
 import { createQueryClient } from '../api/queryClient'
 import { routes } from '../app/routes'
+import { ToastProvider } from '../components/ui'
 
 export interface Reply {
     status: number
     body?: unknown
 }
 /** Answers one request; a never-settling promise keeps it loading. */
-export type Handler = (url: URL) => Reply | Promise<Reply>
+export type Handler = (url: URL, init: RequestInit) => Reply | Promise<Reply>
 
 export const ok = (body: unknown): Reply => ({ status: 200, body })
 export function apiError(status: number, code: string, message: string) {
@@ -34,7 +35,7 @@ export function stubBackend(handlers: Record<string, Handler> = {}) {
         const key = `${init.method ?? 'GET'} ${url.pathname.replace('/api/v1', '')}`
         const handler = handlers[key]
         const reply = handler
-            ? await handler(url)
+            ? await handler(url, init)
             : apiError(404, 'NOT_FOUND', 'Not found.')
         return new Response(
             reply.body === undefined ? null : JSON.stringify(reply.body),
@@ -53,7 +54,9 @@ export function renderRoute(path: string) {
     render(
         <ApiClientContext value={new ApiClient()}>
             <QueryClientProvider client={queryClient}>
-                <RouterProvider router={router} />
+                <ToastProvider>
+                    <RouterProvider router={router} />
+                </ToastProvider>
             </QueryClientProvider>
         </ApiClientContext>,
     )

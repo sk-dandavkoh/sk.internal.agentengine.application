@@ -17,6 +17,7 @@ import {
     useCancelExecution,
     useCreateCredential,
     useDeleteProject,
+    useDuplicateProject,
     useExecuteProjectVersion,
     usePublishProject,
     useUpdateProject,
@@ -375,6 +376,27 @@ describe('mutations', () => {
         expect(
             queryClient.getQueryData(queryKeys.projects.detail('proj_1')),
         ).toBeUndefined()
+    })
+
+    it('duplicate refetches the lists and leaves the source untouched', async () => {
+        routes['GET /projects/proj_1'] = () => ok(projectJson())
+        routes['GET /projects'] = () => ok(page([projectJson()]))
+        routes['POST /projects/proj_1/duplicate'] = () =>
+            ok(projectJson({ id: 'proj_2', name: 'Copy' }), 201)
+        await loaded(useProject)
+        await loaded(useProjects)
+        const duplicate = render(useDuplicateProject)
+
+        const copy = await act(() =>
+            duplicate.result.current.mutateAsync({
+                projectId: 'proj_1',
+                name: 'Copy',
+            }),
+        )
+
+        expect(copy.id).toBe('proj_2')
+        expect(count('GET /projects')).toBe(2)
+        expect(count('GET /projects/proj_1')).toBe(1)
     })
 
     it('starting and cancelling executions refetch what they change', async () => {

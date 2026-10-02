@@ -377,14 +377,14 @@ describe('Dashboard', () => {
         const handlers = Object.fromEntries(
             Object.entries(all).map(([key, handler]) => [
                 key,
-                ((url) =>
+                ((url, init) =>
                     down
                         ? apiError(
                               401,
                               'AUTHENTICATION_REQUIRED',
                               'Authentication required.',
                           )
-                        : handler(url)) satisfies Handler,
+                        : handler(url, init)) satisfies Handler,
             ]),
         )
         await renderDashboard(handlers)

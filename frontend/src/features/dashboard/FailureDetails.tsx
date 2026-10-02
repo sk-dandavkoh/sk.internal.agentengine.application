@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useApiClient } from '../../api/context'
 import { executionQueries } from '../../api/queries'
 import type { ExecutionError } from '../../api/reports'
-import { QuerySection } from './QuerySection'
+import { QuerySection } from '../../components/QuerySection'
 
 function ErrorEntry({ error }: { error: ExecutionError }) {
     return (
