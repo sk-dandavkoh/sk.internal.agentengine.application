@@ -37,7 +37,7 @@ from akasha.runtime.runtime import ExecutionRuntime
 from akasha.security.crypto import SecretCipher, SecretDecryptionError
 from akasha.security.network import NetworkPolicy
 from akasha.security.redaction import MASK
-from tests.integration.conftest import AuthKit
+from tests.integration.fixtures import AuthKit
 from tests.support import (
     SMTP_LOGIN,
     LocalHttpServer,

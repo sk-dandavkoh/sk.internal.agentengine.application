@@ -400,6 +400,34 @@ credentials, invalid input, save failure, schema changes) and
 `tests/fullstack/projects.spec.ts` (core.http configured against the real
 backend).
 
+## Validate and publish
+
+`features/editor/ValidationPanel.tsx` + `usePublishWorkflow.ts`, at the top
+of the editor's side column: Draft → Validate → Publish → immutable version.
+
+- The backend decides both steps. Only the saved draft can be validated or
+  published; while the editor has unsaved changes both buttons are off and
+  the panel says why. Validate and publish send `expected_revision` (the
+  revision the editor shows): a 409 means the draft changed elsewhere and
+  the editor offers a reload instead of a result.
+- A result belongs to one revision. Any later edit marks it outdated; only
+  a current, valid result enables Publish.
+- Every issue is listed, grouped by where it points (node, connection,
+  trigger, project) with a count per group. Node issues name node and port,
+  mark the node on the canvas and in the node list, and jump to it; edge-only
+  issues select the edge. Trigger and project issues have no editor surface
+  yet and are listed only. The backend reports errors only, no warnings.
+- Publish needs a confirmation naming the version number. A publish the
+  backend refuses (422) replaces the result with its issues; other failures
+  stay in the dialog for a retry. Success shows the version and reloads
+  the draft, because publishing advances the draft revision.
+
+Tests: `validation.test.ts`, the "Validate and publish" block of
+`EditorPage.test.tsx` (valid, invalid, multiple and node errors, navigation,
+unsaved changes, stale draft at validate and at publish, refused and failed
+publish) and `tests/fullstack/projects.spec.ts` (validate → fix → publish
+against the real backend).
+
 ## Design system
 
 All UI is composed from `src/components/ui` (`import { Button, Dialog } from

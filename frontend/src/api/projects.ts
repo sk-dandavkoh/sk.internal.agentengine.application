@@ -255,12 +255,22 @@ export function deleteProject(client: ApiClient, projectId: string) {
     return client.request('DELETE', path(projectId), z.undefined())
 }
 
-/** Validates the current draft; nothing is persisted. */
-export function validateProject(client: ApiClient, projectId: string) {
+/**
+ * Validates the stored draft; nothing is persisted. With `expectedRevision`
+ * the backend rejects (409) a draft other than the one the caller shows.
+ */
+export function validateProject(
+    client: ApiClient,
+    projectId: string,
+    expectedRevision?: number,
+) {
     return client.request(
         'POST',
         `${path(projectId)}/validate`,
         validationResultSchema,
+        expectedRevision === undefined
+            ? {}
+            : { body: { expected_revision: expectedRevision } },
     )
 }
 

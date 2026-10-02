@@ -38,7 +38,7 @@ from akasha.runtime.plan import NodeCatalog
 from akasha.runtime.runtime import ExecutionRuntime
 from akasha.runtime.scheduler import TriggerScheduler
 from akasha.security.crypto import SecretCipher
-from tests.integration.conftest import SINK, SOURCE, make_auth_kit
+from tests.integration.fixtures import SINK, SOURCE, make_auth_kit
 
 pytestmark = pytest.mark.usefixtures("clean_db")
 

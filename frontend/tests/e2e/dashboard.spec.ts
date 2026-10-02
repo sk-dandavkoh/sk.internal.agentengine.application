@@ -206,10 +206,14 @@ test('an unreachable backend shows one error, not one per section', async ({
     await p.goto('/dashboard')
 
     // Network errors are retried first (queryClient.ts), then collapse.
+    // Sections whose last retry fails first show their own alert until the
+    // rest fail too, and a strict `getByRole('alert')` assertion fails at
+    // once on that transient state instead of retrying: wait for the
+    // page-level error, then count.
+    await expect(
+        p.getByRole('heading', { name: 'Could not load the dashboard' }),
+    ).toBeVisible({ timeout: 15_000 })
     const alert = p.getByRole('alert')
-    await expect(alert).toHaveText(/Could not load the dashboard/, {
-        timeout: 15_000,
-    })
     await expect(alert).toHaveCount(1)
     await expect(alert).toContainText('The server could not be reached.')
 })

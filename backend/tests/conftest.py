@@ -16,6 +16,13 @@ from tests.support import (
     serve_http,
 )
 
+# Package fixtures load as plugins, not per-directory conftests: pytest
+# builds a second, conftest-less Package node when command-line paths
+# interleave directories (tests/integration/a.py tests/b.py
+# tests/integration/c.py), so c.py would lose them. Plugin fixtures are
+# visible everywhere; none of them is autouse or defines hooks.
+pytest_plugins = ["tests.integration.fixtures", "tests.nodes.fixtures"]
+
 
 @pytest.fixture
 def settings() -> Settings:

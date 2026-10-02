@@ -395,6 +395,94 @@ test('the backend port rule decides which inputs an output may feed', async ({
     await expect(p.locator('.react-flow__edge')).toHaveCount(1)
 })
 
+test('validate, fix and publish a draft as an immutable version', async ({
+    page: p,
+}) => {
+    // Log's required input is not connected: the backend must refuse it.
+    const project = await createViaApi(unique('Publishing'))
+    const id = (n: number) => `node_${String(n).repeat(32)}`
+    const seeded = await api.put(`/api/v1/projects/${project.id}`, {
+        data: {
+            name: project.name,
+            description: '',
+            draft: {
+                graph: {
+                    nodes: ['core.input', 'core.log', 'core.output'].map(
+                        (type, i) => ({
+                            id: id(i + 1),
+                            node_type: type,
+                            config:
+                                type === 'core.log' ? { message: 'seen' } : {},
+                            label: '',
+                            position: { x: i * 220, y: 0 },
+                        }),
+                    ),
+                    edges: [
+                        {
+                            source_node_id: id(2),
+                            source_port: 'value',
+                            target_node_id: id(3),
+                            target_port: 'value',
+                        },
+                    ],
+                },
+                triggers: [],
+                dependencies: [],
+            },
+            expected_revision: project.revision,
+        },
+    })
+    expect(seeded.status()).toBe(200)
+    await p.goto(`/projects/${project.id}/editor`)
+    const panel = p.getByRole('region', { name: 'Validate and publish' })
+
+    await panel.getByRole('button', { name: 'Validate' }).click()
+    const errors = panel.getByRole('list', { name: 'Nodes errors' })
+    await expect(errors).toContainText('Node "Log" → port "value"')
+    await expect(panel.getByRole('button', { name: 'Publish…' })).toBeDisabled()
+    await errors
+        .getByRole('button', { name: /port "value"/ })
+        .first()
+        .click()
+    await expect(
+        p
+            .getByRole('region', { name: /^Nodes/ })
+            .getByRole('button', { name: /^Log/ }),
+    ).toHaveAttribute('aria-pressed', 'true')
+
+    // Fix: connect Input → Log, save, validate again.
+    await p
+        .getByRole('region', { name: /^Nodes/ })
+        .getByRole('button', { name: /^Input/ })
+        .click()
+    const connections = p.getByRole('region', { name: /^Connections: Input/ })
+    await connections
+        .getByRole('combobox', { name: 'To input' })
+        .selectOption({ label: 'Log › value' })
+    await connections.getByRole('button', { name: 'Connect' }).click()
+    await p.keyboard.press('ControlOrMeta+s')
+    await expect(p.getByText('All changes saved to draft')).toBeVisible()
+    await panel.getByRole('button', { name: 'Validate' }).click()
+    await expect(panel.getByText('Valid', { exact: true })).toBeVisible()
+
+    await panel.getByRole('button', { name: 'Publish…' }).click()
+    await p
+        .getByRole('dialog', { name: 'Publish version 1?' })
+        .getByRole('button', { name: 'Publish version 1' })
+        .click()
+    await expect(p.getByText('Version 1 is published')).toBeVisible()
+
+    // The backend froze exactly the fixed draft.
+    const version = (await (
+        await api.get(`/api/v1/projects/${project.id}/versions/1`)
+    ).json()) as { graph: { edges: unknown[] } }
+    expect(version.graph.edges).toHaveLength(2)
+    // The editor continues on the draft the publish advanced.
+    await expect(
+        p.getByText(/Revision \d+ has not been validated yet/),
+    ).toBeVisible()
+})
+
 test('without a session the backend refuses and the UI says so', async ({
     browser,
 }) => {

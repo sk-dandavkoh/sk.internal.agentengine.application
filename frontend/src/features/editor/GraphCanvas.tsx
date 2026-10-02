@@ -44,6 +44,7 @@ export interface CanvasNodeData extends Record<string, unknown> {
     inputs: CardPort[]
     outputs: CardPort[]
     missing: string[]
+    issues: number
 }
 type CanvasNode = FlowNode<CanvasNodeData, 'draft'>
 
@@ -69,8 +70,15 @@ function toEdge(c: Connection | FlowEdge): Edge | null {
 }
 
 function DraftNode({ id, data, selected }: NodeProps<CanvasNode>) {
-    const { instance, definition, catalogLoaded, inputs, outputs, missing } =
-        data
+    const {
+        instance,
+        definition,
+        catalogLoaded,
+        inputs,
+        outputs,
+        missing,
+        issues,
+    } = data
     const check = use(CheckContext)
     // A string, so nodes re-render when a drag starts or ends, not per move.
     const from = useConnection((c) =>
@@ -110,6 +118,7 @@ function DraftNode({ id, data, selected }: NodeProps<CanvasNode>) {
             inputs={inputs.map((p) => fit(p, 'target'))}
             outputs={outputs.map((p) => fit(p, 'source'))}
             missing={missing}
+            issues={issues}
             selected={selected}
             unknown={catalogLoaded && !definition}
             handles
@@ -136,6 +145,8 @@ export interface GraphCanvasProps {
     selection: readonly string[]
     edgeSelection: readonly string[]
     rules: ConnectionRules
+    /** Backend validation errors per node id. */
+    issueCounts?: ReadonlyMap<string, number>
     onMove: (positions: Record<string, NodePosition>, done: boolean) => void
     onSelect: (nodeIds: string[]) => void
     onSelectEdges: (edgeKeys: string[]) => void
@@ -160,6 +171,7 @@ export function GraphCanvas({
     selection,
     edgeSelection,
     rules,
+    issueCounts,
     onMove,
     onSelect,
     onSelectEdges,
@@ -219,10 +231,11 @@ export function GraphCanvas({
                         definition,
                         graph.edges,
                     ),
+                    issues: issueCounts?.get(instance.id) ?? 0,
                 },
             }
         })
-    }, [graph, selection, catalog, measured])
+    }, [graph, selection, catalog, measured, issueCounts])
 
     const edges = useMemo((): FlowEdge[] => {
         const selected = new Set(edgeSelection)

@@ -20,7 +20,7 @@ from akasha.domain.node import NodeDefinition
 from akasha.domain.primitives import new_id
 from akasha.infrastructure.database import Database
 from akasha.infrastructure.persistence import SqlAlchemyUnitOfWork
-from tests.integration.conftest import AuthKit, make_auth_kit
+from tests.integration.fixtures import AuthKit, make_auth_kit
 
 pytestmark = pytest.mark.usefixtures("clean_db")
 
@@ -430,6 +430,27 @@ async def test_publish_pinned_to_stale_revision_is_a_conflict(
         f"/api/v1/projects/{pid}/publish", json={"expected_revision": 1}
     )
     assert_error(response, 409, "CONCURRENT_MODIFICATION")
+
+
+async def test_validate_pinned_to_revision(api: httpx.AsyncClient) -> None:
+    """A validation result must describe the draft the client shows: a
+    stale pin is a conflict, a current one validates as usual."""
+    pid = (await create(api))["id"]
+    assert (await put_draft(api, pid, valid_draft(), revision=1)).status_code == 200
+    stale = await api.post(
+        f"/api/v1/projects/{pid}/validate", json={"expected_revision": 1}
+    )
+    body = assert_error(stale, 409, "CONCURRENT_MODIFICATION")
+    assert body["details"]["current_revision"] == 2
+    current = await api.post(
+        f"/api/v1/projects/{pid}/validate", json={"expected_revision": 2}
+    )
+    assert current.status_code == 200
+    assert current.json() == {"valid": True, "issues": []}
+    malformed = await api.post(
+        f"/api/v1/projects/{pid}/validate", json={"expected_revision": 0}
+    )
+    assert_error(malformed, 422, "VALIDATION_ERROR")
 
 
 async def test_publish_rejects_malformed_body(api: httpx.AsyncClient) -> None:

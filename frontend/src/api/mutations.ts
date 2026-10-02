@@ -105,7 +105,8 @@ export function useDeleteProject() {
 /** Changes nothing on the server, so it invalidates nothing. */
 export function useValidateProject() {
     return useApiMutation(
-        (client, projectId: string) => validateProject(client, projectId),
+        (client, v: { projectId: string; expectedRevision?: number }) =>
+            validateProject(client, v.projectId, v.expectedRevision),
         () => Promise.resolve(),
     )
 }

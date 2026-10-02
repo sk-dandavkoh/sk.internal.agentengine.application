@@ -18,7 +18,7 @@ from akasha.domain.node import NodeDefinition
 from akasha.infrastructure.database import Database
 from akasha.infrastructure.persistence import SqlAlchemyUnitOfWork
 from tests.application.test_project_package import read
-from tests.integration.conftest import SOURCE, AuthKit, make_auth_kit
+from tests.integration.fixtures import SOURCE, AuthKit, make_auth_kit
 from tests.integration.test_projects_api import (
     assert_error,
     create,

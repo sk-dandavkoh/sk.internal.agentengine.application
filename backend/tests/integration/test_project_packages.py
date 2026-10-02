@@ -51,7 +51,7 @@ from akasha.providers.litellm_adapter import LiteLLMAdapter
 from akasha.runtime.runtime import ExecutionRuntime
 from akasha.security.crypto import SecretCipher
 from tests.application.test_project_package import read
-from tests.integration.conftest import SINK, SOURCE, truncate_all
+from tests.integration.fixtures import SINK, SOURCE, truncate_all
 from tests.support import CHAT_COMPLETION, LocalHttpServer, project_semantics
 
 pytestmark = pytest.mark.usefixtures("clean_db")

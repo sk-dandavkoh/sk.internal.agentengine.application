@@ -200,6 +200,12 @@ class PublishProjectRequest(_Request):
     expected_revision: int | None = Field(default=None, ge=1)
 
 
+class ValidateProjectRequest(_Request):
+    """Optional: pin validation to the revision the client shows."""
+
+    expected_revision: int | None = Field(default=None, ge=1)
+
+
 class ProjectSummary(BaseModel):
     id: str
     name: str

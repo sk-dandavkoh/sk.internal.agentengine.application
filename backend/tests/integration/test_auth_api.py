@@ -34,7 +34,7 @@ from akasha.domain.node import NodeDefinition
 from akasha.domain.primitives import new_id
 from akasha.infrastructure.database import Database
 from akasha.infrastructure.persistence import SqlAlchemyUnitOfWork
-from tests.integration.conftest import PASSWORD, AuthKit, make_auth_kit
+from tests.integration.fixtures import PASSWORD, AuthKit, make_auth_kit
 from tests.integration.test_triggers_api import (
     HOOK_CIPHER,
     add_hook_credential,

@@ -33,6 +33,7 @@ from akasha.api.project_schemas import (
     ProjectVersionPage,
     PublishProjectRequest,
     UpdateProjectRequest,
+    ValidateProjectRequest,
     ValidationResponse,
 )
 from akasha.api.schemas import ErrorResponse, read_limited_body
@@ -182,8 +183,12 @@ def create_projects_router() -> APIRouter:
         return ProjectDetail.from_domain(project)
 
     @router.post("/{project_id}/validate")
-    async def validate_project(project_id: str, svc: Service) -> ValidationResponse:
-        return ValidationResponse.from_domain(await svc.validate_project(project_id))
+    async def validate_project(
+        project_id: str, svc: Service, body: ValidateProjectRequest | None = None
+    ) -> ValidationResponse:
+        expected = body.expected_revision if body else None
+        result = await svc.validate_project(project_id, expected_revision=expected)
+        return ValidationResponse.from_domain(result)
 
     @router.post("/{project_id}/publish", status_code=status.HTTP_201_CREATED)
     async def publish_project(

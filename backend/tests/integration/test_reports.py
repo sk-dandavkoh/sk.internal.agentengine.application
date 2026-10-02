@@ -32,7 +32,7 @@ from akasha.domain.project import Project
 from akasha.domain.trigger import TriggerType
 from akasha.infrastructure.database import Database
 from akasha.infrastructure.persistence import SqlAlchemyUnitOfWork
-from tests.integration.conftest import AuthKit
+from tests.integration.fixtures import AuthKit
 
 UowFactory = Callable[[], AbstractAsyncContextManager[SqlAlchemyUnitOfWork]]
 

@@ -15,7 +15,7 @@ from akasha.config import Settings
 from akasha.infrastructure.database import Database
 from akasha.nodes.registry import NodeRegistry
 from akasha.plugins.registry import PluginRegistry
-from tests.integration.conftest import AuthKit, make_auth_kit
+from tests.integration.fixtures import AuthKit, make_auth_kit
 from tests.integration.test_triggers_api import assert_error
 from tests.test_plugins import SAMPLE
 

@@ -228,7 +228,7 @@ void projects.updateProject(recorder, 'p', {
 })
 void projects.duplicateProject(recorder, 'p', 'copy')
 void projects.deleteProject(recorder, 'p')
-void projects.validateProject(recorder, 'p')
+void projects.validateProject(recorder, 'p', 1)
 void projects.publishProject(recorder, 'p', 1)
 void projects.listProjectVersions(recorder, 'p')
 void projects.getProjectVersion(recorder, 'p', 1)

@@ -2264,6 +2264,26 @@
         "title": "UserPage",
         "type": "object"
       },
+      "ValidateProjectRequest": {
+        "additionalProperties": false,
+        "description": "Optional: pin validation to the revision the client shows.",
+        "properties": {
+          "expected_revision": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Revision"
+          }
+        },
+        "title": "ValidateProjectRequest",
+        "type": "object"
+      },
       "ValidationCode": {
         "description": "Stable machine-readable codes (architecture \u00a745/\u00a746).",
         "enum": [
@@ -4680,6 +4700,23 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ValidateProjectRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "content": {

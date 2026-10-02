@@ -57,6 +57,8 @@ export interface NodeCardProps {
     outputs: readonly CardPort[]
     /** Required inputs without a connection. */
     missing?: readonly string[]
+    /** Errors the backend's last validation reported on this node. */
+    issues?: number
     selected?: boolean
     unknown?: boolean
     /** React Flow connection handles; only inside a ReactFlow canvas. */
@@ -70,6 +72,7 @@ export function NodeCard({
     inputs,
     outputs,
     missing = [],
+    issues = 0,
     selected = false,
     unknown = false,
     handles = false,
@@ -80,7 +83,9 @@ export function NodeCard({
                 'min-w-44 rounded-md border bg-surface text-sm text-fg shadow-sm',
                 selected
                     ? 'border-primary ring-2 ring-primary'
-                    : 'border-border-strong',
+                    : issues > 0
+                      ? 'border-danger'
+                      : 'border-border-strong',
                 unknown && 'border-dashed',
             )}
         >
@@ -125,6 +130,11 @@ export function NodeCard({
                     ))}
                 </ul>
             </div>
+            {issues > 0 && (
+                <p className="border-t border-border px-3 py-1 text-xs font-medium text-danger-text">
+                    {issues} validation {issues === 1 ? 'error' : 'errors'}
+                </p>
+            )}
             {missing.length > 0 && (
                 <p className="border-t border-border px-3 py-1 text-xs font-medium text-warning-text">
                     Missing required input: {missing.join(', ')}

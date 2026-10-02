@@ -1262,6 +1262,13 @@ Implemented in V1 (Phase 27 closed the gaps the frontend needs):
 /api/v1/system/status                            version + readiness (/health, /ready) for the UI
 ```
 
+`/validate` and `/publish` accept an optional `{"expected_revision": n}`:
+the draft revision the client shows. A different stored revision is a 409
+`CONCURRENT_MODIFICATION`, so a validation result never describes, and a
+publish never freezes, a draft the user has not seen. Publishing advances
+the draft revision (the project row is saved); clients reload the draft
+afterwards.
+
 Not over HTTP in V1: plugin management (install, enable, disable, remove;
 operator CLI only, plugins are trusted code; `/api/v1/plugins` only lists
 them) and live updates (WebSocket, §23; clients poll

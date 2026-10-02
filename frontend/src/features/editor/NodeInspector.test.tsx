@@ -1,5 +1,5 @@
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { beforeAll, describe, expect, it } from 'vitest'
 import type { JsonObject } from '../../api/schemas'
 import {
     apiError,
@@ -150,6 +150,11 @@ async function saveDraft() {
         ).toBeInTheDocument()
     })
 }
+
+// The editor route is code-split: its first render imports React Flow and
+// the editor (~0.6 s cold, over 1 s under parallel workers). Load it here so
+// that cost is not charged to the first test's 1 s findBy window.
+beforeAll(() => import('./EditorPage'))
 
 describe('NodeInspector', () => {
     it('renders every field kind from the node schema alone', async () => {

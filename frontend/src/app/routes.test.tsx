@@ -1,5 +1,5 @@
 import { fireEvent, screen, within } from '@testing-library/react'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { renderRoute, stubBackend } from '../test/app'
 import { navItems } from './navigation'
 
@@ -16,6 +16,11 @@ function renderAt(path: string) {
 function pageHeading(name: string) {
     return screen.findByRole('heading', { level: 1, name })
 }
+
+// The editor route is code-split: its first render imports React Flow and
+// the editor (~0.6 s cold, over 1 s under parallel workers). Load it here so
+// that cost is not charged to the first test's 1 s findBy window.
+beforeAll(() => import('../features/editor/EditorPage'))
 
 describe('routes', () => {
     it('shows the loading fallback until the first page chunk resolves', async () => {

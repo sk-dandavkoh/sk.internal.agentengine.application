@@ -249,8 +249,14 @@ class ProjectService:
         async with self._uow() as uow:
             return await uow.projects.using_plugin(plugin_id, node_types)
 
-    async def validate_project(self, project_id: str) -> ValidationResult:
+    async def validate_project(
+        self, project_id: str, *, expected_revision: int | None = None
+    ) -> ValidationResult:
+        """Validate the stored draft. ``expected_revision`` pins the result to
+        the draft the caller shows, so it never describes a newer one."""
         project = await self.get_project(project_id)
+        if expected_revision is not None:
+            _check_revision(project, expected_revision)
         return project.draft.validate(self._definitions, self._plugins)
 
     async def publish_project(

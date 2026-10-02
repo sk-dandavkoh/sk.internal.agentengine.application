@@ -35,7 +35,7 @@ from akasha.infrastructure.database import Database
 from akasha.infrastructure.redis_queue import RedisExecutionQueue
 from akasha.nodes.builtins import create_builtin_registry
 from akasha.security.crypto import SecretCipher
-from tests.integration.conftest import AuthKit, truncate_all
+from tests.integration.fixtures import AuthKit, truncate_all
 from tests.support import posix_only
 from tests.test_cli import Result
 from tests.test_plugins import SAMPLE

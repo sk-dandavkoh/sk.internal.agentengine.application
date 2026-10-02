@@ -56,7 +56,7 @@ from akasha.infrastructure.persistence import SqlAlchemyUnitOfWork
 from akasha.infrastructure.redis_queue import RedisExecutionQueue, encode_job
 from akasha.runtime.runtime import ExecutionRuntime
 from akasha.workers import Worker, WorkerManager
-from tests.integration.conftest import make_auth_kit
+from tests.integration.fixtures import make_auth_kit
 
 pytestmark = pytest.mark.usefixtures("clean_db")
 

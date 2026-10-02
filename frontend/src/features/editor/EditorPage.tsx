@@ -5,8 +5,15 @@ import { useParams } from 'react-router'
 import { useApiClient } from '../../api/context'
 import { ApiError, errorMessage } from '../../api/errors'
 import type { NodeCatalog } from '../../api/nodes'
-import type { Edge, NodePosition, Project } from '../../api/projects'
+import type {
+    Edge,
+    NodePosition,
+    Project,
+    ProjectVersion,
+    ValidationIssue,
+} from '../../api/projects'
 import { nodeQueries, projectQueries } from '../../api/queries'
+import { formatDateTime } from '../../lib/format'
 import { QuerySection } from '../../components/QuerySection'
 import {
     Alert,
@@ -26,6 +33,9 @@ import { edgeKey, nodeTitle } from './graphView'
 import { NodeInspector } from './NodeInspector'
 import { NodeLibrary } from './NodeLibrary'
 import { useDraftEditor } from './useDraftEditor'
+import { usePublishWorkflow } from './usePublishWorkflow'
+import { issueCounts } from './validation'
+import { ValidationPanel } from './ValidationPanel'
 
 const projectPath = (id: string) => `/projects/${encodeURIComponent(id)}`
 
@@ -66,21 +76,36 @@ function DraftEditor({
     rules,
     catalogQuery,
     onReload,
+    onPublished,
 }: {
     project: Project
     rules: ConnectionRules
     catalogQuery: UseQueryResult<NodeCatalog>
     onReload: () => void
+    onPublished: (version: ProjectVersion) => void
 }) {
     const editor = useDraftEditor(project)
     const { state, dispatch } = editor
+    const clean = !editor.dirty && !editor.saving && editor.saveError === null
+    const workflow = usePublishWorkflow({
+        projectId: project.id,
+        revision: state.revision,
+        clean,
+        onPublished,
+    })
+    const { checked } = workflow
+    const issuesByNode = useMemo(
+        () => issueCounts(checked?.result.issues ?? []),
+        [checked],
+    )
     const { catalog } = rules
     const { setCenter, screenToFlowPosition } = useReactFlow()
     const { notify } = useToast()
     const canvasRef = useRef<HTMLElement>(null)
     const conflict =
-        editor.saveError instanceof ApiError &&
-        editor.saveError.kind === 'conflict'
+        (editor.saveError instanceof ApiError &&
+            editor.saveError.kind === 'conflict') ||
+        workflow.stale
     const selected = new Set(state.selection)
     const inspected =
         state.selection.length === 1
@@ -214,6 +239,23 @@ function DraftEditor({
             })
     }
 
+    /** Jumps to where a validation issue points: its node, else its edge. */
+    function locate(issue: ValidationIssue) {
+        if (
+            issue.node_id !== null &&
+            state.graph.nodes.some((n) => n.id === issue.node_id)
+        ) {
+            focusNode(issue.node_id)
+            return
+        }
+        if (issue.edge)
+            dispatch({
+                type: 'select',
+                nodeIds: [],
+                edgeKeys: [edgeKey(issue.edge)],
+            })
+    }
+
     return (
         <div className="flex flex-col gap-3" onKeyDown={onKeyDown}>
             <div
@@ -298,12 +340,15 @@ function DraftEditor({
                     title="The draft was changed elsewhere"
                     action={
                         <Button size="sm" onClick={onReload}>
-                            Discard my changes and reload
+                            {editor.dirty
+                                ? 'Discard my changes and reload'
+                                : 'Reload the draft'}
                         </Button>
                     }
                 >
-                    Your changes are not saved. Saving them would overwrite the
-                    newer draft, so the editor will not do it.
+                    {editor.dirty
+                        ? 'Your changes are not saved. Saving them would overwrite the newer draft, so the editor will not do it.'
+                        : 'The editor shows an older revision, so it can neither validate nor publish it. Reload to continue with the newer draft.'}
                 </Alert>
             ) : editor.saveError !== null ? (
                 <Alert
@@ -340,6 +385,7 @@ function DraftEditor({
                         selection={state.selection}
                         edgeSelection={state.edgeSelection}
                         rules={rules}
+                        issueCounts={issuesByNode}
                         onMove={(positions, done) => {
                             dispatch({ type: 'move', positions, done })
                         }}
@@ -364,6 +410,22 @@ function DraftEditor({
                     />
                 </section>
                 <div className="flex flex-col gap-3 lg:w-96 lg:shrink-0">
+                    <ValidationPanel
+                        workflow={workflow}
+                        revision={state.revision}
+                        clean={clean}
+                        currentVersion={project.current_version}
+                        nodeName={(id) => {
+                            const node = state.graph.nodes.find(
+                                (n) => n.id === id,
+                            )
+                            return (
+                                node &&
+                                nodeTitle(node, catalog?.get(node.node_type))
+                            )
+                        }}
+                        onLocate={locate}
+                    />
                     {inspected && (
                         // One key for both panels: per node, so its half-typed
                         // numbers and JSON stay its own.
@@ -417,6 +479,8 @@ function DraftEditor({
                                     const outgoing = state.graph.edges.filter(
                                         (e) => e.source_node_id === node.id,
                                     ).length
+                                    const issues =
+                                        issuesByNode.get(node.id) ?? 0
                                     return (
                                         <li key={node.id}>
                                             <button
@@ -440,6 +504,14 @@ function DraftEditor({
                                                     {incoming} in, {outgoing}{' '}
                                                     out
                                                 </span>
+                                                {issues > 0 && (
+                                                    <span className="block text-xs font-medium text-danger-text">
+                                                        {issues} validation{' '}
+                                                        {issues === 1
+                                                            ? 'error'
+                                                            : 'errors'}
+                                                    </span>
+                                                )}
                                             </button>
                                         </li>
                                     )
@@ -508,6 +580,8 @@ export function EditorPage() {
     })
     const nodes = useQuery(nodeQueries.catalog(client))
     const [session, setSession] = useState(0)
+    const [published, setPublished] = useState<ProjectVersion | null>(null)
+    const { notify } = useToast()
     const rules = useMemo(
         (): ConnectionRules => ({
             catalog:
@@ -553,12 +627,40 @@ export function EditorPage() {
                                 {errorMessage(nodes.error)}
                             </Alert>
                         )}
+                        {published && (
+                            <Alert
+                                tone="success"
+                                title={`Version ${String(published.version)} is published`}
+                                className="mb-3"
+                            >
+                                Published{' '}
+                                <time dateTime={published.published_at}>
+                                    {formatDateTime(published.published_at)}
+                                </time>
+                                . This version is immutable; you keep editing
+                                the draft, and further changes need another
+                                publish.{' '}
+                                <TextLink to={projectPath(project.id)}>
+                                    View project
+                                </TextLink>
+                            </Alert>
+                        )}
                         <ReactFlowProvider key={session}>
                             <DraftEditor
                                 project={project}
                                 rules={rules}
                                 catalogQuery={nodes}
                                 onReload={() => void reload()}
+                                onPublished={(version) => {
+                                    setPublished(version)
+                                    notify({
+                                        tone: 'success',
+                                        title: `Version ${String(version.version)} published`,
+                                    })
+                                    // Publishing advances the draft revision:
+                                    // continue from the server's draft.
+                                    void reload()
+                                }}
                             />
                         </ReactFlowProvider>
                     </>

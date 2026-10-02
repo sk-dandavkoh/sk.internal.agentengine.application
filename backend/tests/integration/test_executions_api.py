@@ -28,7 +28,7 @@ from akasha.infrastructure.persistence import SqlAlchemyUnitOfWork
 from akasha.nodes.builtins import create_builtin_registry
 from akasha.runtime.runtime import ExecutionRuntime
 from akasha.sdk import NodeError, NodeErrorKind
-from tests.integration.conftest import SINK, SOURCE, AuthKit, make_auth_kit
+from tests.integration.fixtures import SINK, SOURCE, AuthKit, make_auth_kit
 from tests.integration.test_triggers_api import assert_error, publish_with
 
 pytestmark = pytest.mark.usefixtures("clean_db")

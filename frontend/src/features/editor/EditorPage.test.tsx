@@ -6,7 +6,7 @@ import {
     waitFor,
     within,
 } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import {
     apiError,
     ok,
@@ -140,6 +140,11 @@ function backend(overrides: Record<string, Handler> = {}, initial = project()) {
         bump: () => {
             current = { ...current, revision: current.revision + 1 }
         },
+        current: () => current,
+        /** Another stored change: like every save, it advances the revision. */
+        patch: (fields: Partial<typeof current>) => {
+            current = { ...current, ...fields, revision: current.revision + 1 }
+        },
     }
 }
 
@@ -174,6 +179,11 @@ async function moveNodeA() {
 afterEach(() => {
     vi.useRealTimers()
 })
+
+// The editor route is code-split: its first render imports React Flow and
+// the editor (~0.6 s cold, over 1 s under parallel workers). Load it here so
+// that cost is not charged to the first test's 1 s findBy window.
+beforeAll(() => import('./EditorPage'))
 
 describe('EditorPage', () => {
     it('loads the draft graph and says it is the draft, not a version', async () => {
@@ -420,7 +430,9 @@ describe('EditorPage', () => {
         })
         expect(screen.queryByRole('alert')).not.toBeInTheDocument()
         expect(button('Undo')).toBeDisabled()
-        expect(screen.getByText(/revision 4/)).toBeInTheDocument()
+        expect(
+            screen.getByText(/editing the draft \(revision 4\)/),
+        ).toBeInTheDocument()
     })
 
     it('asks before leaving with unsaved changes', async () => {
@@ -1047,6 +1059,342 @@ describe('Graph editing', () => {
             await edgeOnCanvas(/^Connection from Source text to Target all$/),
         ).toBeInTheDocument()
         expect(status()).toHaveTextContent('All changes saved to draft')
-        expect(screen.getByText(/revision 4/)).toBeInTheDocument()
+        expect(
+            screen.getByText(/editing the draft \(revision 4\)/),
+        ).toBeInTheDocument()
+    })
+})
+
+// -- validate and publish ------------------------------------------------------
+
+interface PinBody {
+    expected_revision?: number
+}
+
+const issue = (overrides: object) => ({
+    code: 'invalid_config',
+    message: 'invalid configuration',
+    node_id: null,
+    port: null,
+    edge: null,
+    trigger_id: null,
+    ...overrides,
+})
+
+/** One error of each kind the backend reports. */
+const ISSUES = [
+    issue({
+        code: 'missing_required_input',
+        message: 'required input "value" is not connected',
+        node_id: ID_B,
+        port: 'value',
+    }),
+    issue({ node_id: ID_B, message: 'invalid configuration: level' }),
+    issue({
+        code: 'duplicate_edge',
+        message: 'duplicate edge',
+        edge: {
+            source_node_id: ID_A,
+            source_port: 'value',
+            target_node_id: ID_B,
+            target_port: 'value',
+        },
+    }),
+    issue({
+        code: 'invalid_trigger_schedule',
+        message: 'bad schedule',
+        trigger_id: 't1',
+    }),
+    issue({ code: 'missing_dependency', message: 'plugin x is missing' }),
+]
+
+const VERSION = {
+    id: 'v3',
+    version: 3,
+    schema_version: 1,
+    description: 'Qualifies leads',
+    published_at: AT,
+    graph: project().draft.graph,
+    triggers: [],
+    dependencies: [],
+    files: [],
+}
+
+/** A backend whose validate/publish enforce the pinned revision like the
+ * real one; `publish` and `validate` replace their success answers. */
+function publishBackend({
+    validate = () => ok({ valid: true, issues: [] }),
+    publish,
+}: { validate?: () => Reply; publish?: () => Reply } = {}) {
+    const pins: { path: string; body: PinBody }[] = []
+    const pinned =
+        (path: string, answer: () => Reply): Handler =>
+        (_url, init) => {
+            const body = JSON.parse(
+                (init.body as string | undefined) ?? '{}',
+            ) as PinBody
+            pins.push({ path, body })
+            if (body.expected_revision !== server.current().revision)
+                return apiError(409, 'CONCURRENT_MODIFICATION', 'Changed.')
+            return answer()
+        }
+    const server = backend({
+        'POST /projects/p1/validate': pinned('validate', validate),
+        'POST /projects/p1/publish': pinned(
+            'publish',
+            publish ??
+                (() => {
+                    // Like the backend: saving the project advances the revision.
+                    server.patch({
+                        current_version: server.current().current_version + 1,
+                    })
+                    return { status: 201, body: VERSION }
+                }),
+        ),
+    })
+    return { ...server, pins }
+}
+
+const panel = () =>
+    within(screen.getByRole('region', { name: 'Validate and publish' }))
+
+async function validate() {
+    fireEvent.click(panel().getByRole('button', { name: 'Validate' }))
+    await waitFor(() => {
+        expect(
+            panel().getByRole('button', { name: 'Validate' }),
+        ).not.toHaveAttribute('aria-busy', 'true')
+    })
+}
+
+describe('Validate and publish', () => {
+    it('publishes a valid draft only after validation and confirmation', async () => {
+        const server = publishBackend()
+        await openEditor()
+
+        expect(
+            panel().getByText('Revision 3 has not been validated yet.'),
+        ).toBeInTheDocument()
+        expect(panel().getByRole('button', { name: 'Publish…' })).toBeDisabled()
+
+        await validate()
+        expect(
+            await panel().findByText(
+                'The backend accepted revision 3. It can be published as version 3.',
+            ),
+        ).toBeInTheDocument()
+        expect(panel().getByText('Valid')).toBeInTheDocument()
+
+        fireEvent.click(panel().getByRole('button', { name: 'Publish…' }))
+        const dialog = await screen.findByRole('dialog', {
+            name: 'Publish version 3?',
+        })
+        expect(dialog).toHaveTextContent('immutable')
+        expect(dialog).toHaveTextContent('This cannot be undone.')
+        // Nothing is published until the user confirms.
+        expect(server.pins.map((p) => p.path)).toEqual(['validate'])
+
+        fireEvent.click(
+            within(dialog).getByRole('button', { name: 'Publish version 3' }),
+        )
+        expect(
+            await screen.findByText('Version 3 is published'),
+        ).toBeInTheDocument()
+        expect(server.pins).toEqual([
+            { path: 'validate', body: { expected_revision: 3 } },
+            { path: 'publish', body: { expected_revision: 3 } },
+        ])
+        // The editor continues from the server's draft, whose revision the
+        // publish advanced, so the next save is not a conflict.
+        await waitFor(() => {
+            expect(
+                screen.getByText(/editing the draft \(revision 4\)/),
+            ).toBeInTheDocument()
+        })
+        expect(
+            panel().getByText('Revision 4 has not been validated yet.'),
+        ).toBeInTheDocument()
+        await moveNodeA()
+        fireEvent.click(button('Save draft'))
+        await waitFor(() => {
+            expect(status()).toHaveTextContent('All changes saved to draft')
+        })
+        expect(server.puts.at(-1)?.expected_revision).toBe(4)
+    })
+
+    it('shows every backend error, grouped, on its node, and navigates to it', async () => {
+        publishBackend({ validate: () => ok({ valid: false, issues: ISSUES }) })
+        await openEditor()
+        await validate()
+
+        expect(await panel().findByText('5 errors')).toBeInTheDocument()
+        expect(
+            panel().getByText(
+                'Nodes: 2 · Connections: 1 · Triggers: 1 · Project: 1',
+            ),
+        ).toBeInTheDocument()
+        expect(panel().getByRole('button', { name: 'Publish…' })).toBeDisabled()
+        for (const { message } of ISSUES)
+            expect(panel().getByText(message)).toBeInTheDocument()
+
+        // Node and port are named; the node carries a marker on the canvas
+        // and in the node list.
+        const nodeErrors = panel().getByRole('list', { name: 'Nodes errors' })
+        expect(nodeErrors).toHaveTextContent('Node "core.log" → port "value"')
+        expect(
+            canvas().getByRole('group', { name: /^core\.log/ }),
+        ).toHaveTextContent('2 validation errors')
+        expect(
+            nodeList().getByRole('button', { name: /^core\.log/ }),
+        ).toHaveTextContent('2 validation errors')
+
+        fireEvent.click(
+            within(nodeErrors).getByRole('button', { name: /port "value"/ }),
+        )
+        expect(
+            nodeList().getByRole('button', { name: /^core\.log/ }),
+        ).toHaveAttribute('aria-pressed', 'true')
+
+        // An issue located only at an edge selects that edge.
+        const connectionErrors = panel().getByRole('list', {
+            name: 'Connections errors',
+        })
+        fireEvent.click(within(connectionErrors).getByRole('button'))
+        await waitFor(() => {
+            expect(
+                canvas().getByRole('group', {
+                    name: /^Connection from Lead in/,
+                }),
+            ).toHaveClass('selected')
+        })
+        expect(
+            nodeList().getByRole('button', { name: /^core\.log/ }),
+        ).toHaveAttribute('aria-pressed', 'false')
+
+        // Not in the editor: shown, but not a navigation target.
+        const triggerErrors = panel().getByRole('list', {
+            name: 'Triggers errors',
+        })
+        expect(triggerErrors).toHaveTextContent('trigger "t1"')
+        expect(within(triggerErrors).queryByRole('button')).toBeNull()
+    })
+
+    it('marks results outdated by unsaved changes and validates the saved draft only', async () => {
+        vi.useFakeTimers({ shouldAdvanceTime: true })
+        const server = publishBackend()
+        await openEditor()
+        await validate()
+        await panel().findByText('Valid')
+
+        await moveNodeA()
+        expect(panel().getByText('Outdated')).toBeInTheDocument()
+        expect(panel().getByText(/^Save the draft first/)).toBeInTheDocument()
+        expect(panel().getByRole('button', { name: 'Validate' })).toBeDisabled()
+        expect(panel().getByRole('button', { name: 'Publish…' })).toBeDisabled()
+
+        // Autosave stores revision 4; the old result stays outdated.
+        await act(() => vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS))
+        await waitFor(() => {
+            expect(status()).toHaveTextContent('All changes saved to draft')
+        })
+        expect(
+            panel().getByText(
+                'These results are for revision 3; the draft changed since. Validate again.',
+            ),
+        ).toBeInTheDocument()
+        expect(panel().getByRole('button', { name: 'Publish…' })).toBeDisabled()
+        expect(server.pins).toHaveLength(1)
+    })
+
+    it('refuses to validate or publish a draft changed elsewhere', async () => {
+        const server = publishBackend()
+        await openEditor()
+        server.bump()
+
+        await validate()
+        const alert = await screen.findByRole('alert')
+        expect(alert).toHaveTextContent('The draft was changed elsewhere')
+        expect(panel().getByRole('button', { name: 'Validate' })).toBeDisabled()
+        expect(panel().getByRole('button', { name: 'Publish…' })).toBeDisabled()
+
+        fireEvent.click(
+            within(alert).getByRole('button', { name: 'Reload the draft' }),
+        )
+        await waitFor(() => {
+            expect(
+                screen.getByText(/editing the draft \(revision 4\)/),
+            ).toBeInTheDocument()
+        })
+        expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+        expect(panel().getByRole('button', { name: 'Validate' })).toBeEnabled()
+    })
+
+    it('a draft changed between validate and publish is not published', async () => {
+        const server = publishBackend()
+        await openEditor()
+        await validate()
+        await panel().findByText('Valid')
+        server.bump()
+
+        fireEvent.click(panel().getByRole('button', { name: 'Publish…' }))
+        const dialog = await screen.findByRole('dialog')
+        fireEvent.click(
+            within(dialog).getByRole('button', { name: 'Publish version 3' }),
+        )
+        expect(await screen.findByRole('alert')).toHaveTextContent(
+            'The draft was changed elsewhere',
+        )
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+        expect(screen.queryByText(/is published/)).not.toBeInTheDocument()
+    })
+
+    it('shows the issues of a publish the backend refused', async () => {
+        publishBackend({
+            publish: () => ({
+                status: 422,
+                body: {
+                    code: 'PROJECT_VALIDATION_FAILED',
+                    message: 'The project draft contains validation errors.',
+                    details: { issues: [ISSUES[0]] },
+                    request_id: 'r',
+                },
+            }),
+        })
+        await openEditor()
+        await validate()
+        await panel().findByText('Valid')
+
+        fireEvent.click(panel().getByRole('button', { name: 'Publish…' }))
+        const dialog = await screen.findByRole('dialog')
+        fireEvent.click(
+            within(dialog).getByRole('button', { name: 'Publish version 3' }),
+        )
+        expect(await panel().findByText('1 error')).toBeInTheDocument()
+        expect(panel().getByText(ISSUES[0]?.message ?? '')).toBeInTheDocument()
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+        expect(panel().getByRole('button', { name: 'Publish…' })).toBeDisabled()
+    })
+
+    it('keeps the dialog open with the reason when publishing fails otherwise', async () => {
+        publishBackend({
+            publish: () =>
+                apiError(500, 'INTERNAL_ERROR', 'An internal error occurred.'),
+        })
+        await openEditor()
+        await validate()
+        await panel().findByText('Valid')
+
+        fireEvent.click(panel().getByRole('button', { name: 'Publish…' }))
+        const dialog = await screen.findByRole('dialog')
+        fireEvent.click(
+            within(dialog).getByRole('button', { name: 'Publish version 3' }),
+        )
+        expect(
+            await within(dialog).findByText('An internal error occurred.'),
+        ).toBeInTheDocument()
+        expect(screen.queryByText(/is published/)).not.toBeInTheDocument()
+        expect(
+            screen.getByText(/editing the draft \(revision 3\)/),
+        ).toBeInTheDocument()
     })
 })
