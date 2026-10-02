@@ -514,3 +514,206 @@ describe('EditorPage', () => {
         await moveNodeA()
     })
 })
+
+describe('Node library', () => {
+    const library = () =>
+        within(screen.getByRole('region', { name: 'Node library' }))
+
+    const llm = {
+        ...definition('ai.llm', 'LLM'),
+        version: '2.1.0',
+        description: 'Calls a language model.',
+        category: 'ai',
+        documentation_url: 'https://docs.example/llm',
+        inputs: [{ ...port('prompt'), type: 'string', required: true }],
+        outputs: [{ ...port('text'), type: 'string' }],
+        config_schema: { type: 'object', required: ['model', 'credential'] },
+        capabilities: {
+            supports_cancellation: true,
+            has_side_effects: false,
+            streams_output: true,
+        },
+    }
+    const http = {
+        ...definition('web.http', 'HTTP Request'),
+        category: 'web',
+        description: 'Sends an HTTP request.',
+        documentation_url: 'javascript:alert(1)',
+        capabilities: { has_side_effects: true },
+    }
+    const items = [definition('core.input', 'Input'), llm, http]
+
+    async function openLibrary(nodes: Handler = () => ok({ items })) {
+        const server = backend({ 'GET /nodes': nodes })
+        await openEditor()
+        return server
+    }
+
+    it('shows loading, then the registry grouped by category', async () => {
+        let release: (r: Reply) => void = () => undefined
+        await openLibrary(
+            () =>
+                new Promise<Reply>((resolve) => {
+                    release = resolve
+                }),
+        )
+        expect(
+            library().getByText('Loading the node library…'),
+        ).toBeInTheDocument()
+        act(() => {
+            release(ok({ items }))
+        })
+        expect(await library().findByText('3 of 3 nodes')).toBeInTheDocument()
+        expect(
+            library()
+                .getAllByRole('heading', { level: 3 })
+                .map((h) => h.textContent),
+        ).toEqual(['Ai', 'Core', 'Web'])
+    })
+
+    it('shows what a node does, its ports, settings, capabilities and version', async () => {
+        await openLibrary()
+        const item = within(
+            (await library().findByRole('heading', { name: 'LLM' })).closest(
+                'li',
+            ) as HTMLElement,
+        )
+        expect(item.getByText('ai.llm · v2.1.0')).toBeInTheDocument()
+        expect(item.getByText('Calls a language model.')).toBeInTheDocument()
+        const caps = within(item.getByRole('list', { name: 'Capabilities' }))
+        expect(
+            caps.getAllByRole('listitem').map((li) => li.textContent),
+        ).toEqual(['Streams output', 'Cancellable'])
+        // The preview is the canvas card, hidden from assistive tech
+        // because the text lists below say the same.
+        const preview = item.getByRole('list', {
+            name: 'Outputs',
+            hidden: true,
+        })
+        expect(preview).toHaveTextContent('text')
+        expect(preview.closest('[aria-hidden="true"]')).not.toBeNull()
+        expect(item.queryByRole('list', { name: 'Outputs' })).toBeNull()
+        expect(item.getAllByText('prompt')).toHaveLength(2)
+        expect(item.getByText('(string, required)')).toBeInTheDocument()
+        expect(item.getByText('model, credential')).toBeInTheDocument()
+        expect(
+            item.getByRole('link', { name: 'Documentation for LLM' }),
+        ).toHaveAttribute('href', 'https://docs.example/llm')
+        // A non-web documentation URL from plugin metadata is not linked.
+        expect(
+            library().queryByRole('link', {
+                name: 'Documentation for HTTP Request',
+            }),
+        ).not.toBeInTheDocument()
+    })
+
+    it('searches and filters by category and capability', async () => {
+        await openLibrary()
+        const search = await library().findByRole('searchbox', {
+            name: 'Search nodes',
+        })
+        fireEvent.change(search, { target: { value: 'language' } })
+        expect(library().getByText('1 of 3 nodes')).toBeInTheDocument()
+        expect(library().getByRole('heading', { name: 'LLM' })).toBeVisible()
+
+        fireEvent.change(search, { target: { value: '' } })
+        fireEvent.change(
+            library().getByRole('combobox', { name: 'Category' }),
+            {
+                target: { value: 'web' },
+            },
+        )
+        expect(library().getByText('1 of 3 nodes')).toBeInTheDocument()
+        expect(
+            library().getByRole('heading', { name: 'HTTP Request' }),
+        ).toBeInTheDocument()
+
+        fireEvent.change(
+            library().getByRole('combobox', { name: 'Capability' }),
+            { target: { value: 'streams_output' } },
+        )
+        expect(library().getByText('0 of 3 nodes')).toBeInTheDocument()
+        expect(
+            library().getByRole('heading', { name: 'No matching nodes' }),
+        ).toBeInTheDocument()
+    })
+
+    it('says when the registry has no nodes', async () => {
+        await openLibrary(() => ok({ items: [] }))
+        expect(
+            await library().findByRole('heading', {
+                name: 'No nodes registered',
+            }),
+        ).toBeInTheDocument()
+    })
+
+    it('shows an API error with retry', async () => {
+        let fail = true
+        await openLibrary(() =>
+            fail
+                ? apiError(500, 'INTERNAL_ERROR', 'Registry down.')
+                : ok({ items }),
+        )
+        expect(
+            await library().findByRole('heading', {
+                name: 'Could not load the node library',
+            }),
+        ).toBeInTheDocument()
+        expect(library().getByText('Registry down.')).toBeInTheDocument()
+        fail = false
+        fireEvent.click(library().getByRole('button', { name: 'Retry' }))
+        expect(await library().findByText('3 of 3 nodes')).toBeInTheDocument()
+    })
+
+    it('adds nodes to the draft with fresh ids, selected, without stacking', async () => {
+        vi.useFakeTimers({ shouldAdvanceTime: true })
+        const server = await openLibrary()
+        const add = await library().findByRole('button', {
+            name: 'Add LLM to graph',
+        })
+        fireEvent.click(add)
+        fireEvent.click(add)
+        expect(status()).toHaveTextContent('Unsaved changes')
+        const listed = nodeList().getAllByRole('button', { name: /^LLM/ })
+        expect(listed).toHaveLength(2)
+        // The last added node is the selection.
+        expect(listed[1]).toHaveAttribute('aria-pressed', 'true')
+
+        await act(async () => {
+            await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS)
+        })
+        await waitFor(() => {
+            expect(server.puts).toHaveLength(1)
+        })
+        const nodes = server.puts[0]?.draft.graph.nodes ?? []
+        const added = nodes.slice(2)
+        expect(new Set(nodes.map((n) => n.id)).size).toBe(4)
+        expect(added.map((n) => n.id)).toEqual([
+            expect.stringMatching(/^node_[0-9a-f]{32}$/),
+            expect.stringMatching(/^node_[0-9a-f]{32}$/),
+        ])
+        expect(added[0]?.position).not.toEqual(added[1]?.position)
+    })
+
+    it('adds a node dropped on the canvas and refuses unregistered types', async () => {
+        await openLibrary()
+        await library().findByText('3 of 3 nodes')
+        const pane = screen.getByTestId('rf__wrapper')
+        const drop = (nodeType: string) => {
+            const dataTransfer = {
+                types: ['application/x-akasha-node-type'],
+                getData: () => nodeType,
+                dropEffect: 'none',
+            }
+            fireEvent.dragOver(pane, { dataTransfer })
+            fireEvent.drop(pane, { dataTransfer, clientX: 50, clientY: 60 })
+        }
+        drop('web.http')
+        expect(
+            nodeList().getByRole('button', { name: /^HTTP Request/ }),
+        ).toBeInTheDocument()
+        drop('plugin.removed')
+        expect(await screen.findByText('Node not added')).toBeInTheDocument()
+        expect(nodeList().getAllByRole('listitem')).toHaveLength(3)
+    })
+})

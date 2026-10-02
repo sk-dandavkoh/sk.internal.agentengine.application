@@ -1,11 +1,11 @@
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, type UseQueryResult } from '@tanstack/react-query'
 import { ReactFlowProvider, useReactFlow } from '@xyflow/react'
-import { useMemo, useState, type KeyboardEvent } from 'react'
+import { useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { useParams } from 'react-router'
 import { useApiClient } from '../../api/context'
 import { ApiError, errorMessage } from '../../api/errors'
 import type { NodeDefinition } from '../../api/nodes'
-import type { Project } from '../../api/projects'
+import type { NodePosition, Project } from '../../api/projects'
 import { nodeQueries, projectQueries } from '../../api/queries'
 import { QuerySection } from '../../components/QuerySection'
 import {
@@ -16,9 +16,12 @@ import {
     ErrorState,
     PageHeader,
     TextLink,
+    useToast,
 } from '../../components/ui'
-import { GraphCanvas } from './GraphCanvas'
+import { newNodeId } from './editorState'
+import { GRID, GraphCanvas } from './GraphCanvas'
 import { nodeTitle } from './graphView'
+import { NodeLibrary } from './NodeLibrary'
 import { useDraftEditor } from './useDraftEditor'
 
 const projectPath = (id: string) => `/projects/${encodeURIComponent(id)}`
@@ -58,15 +61,19 @@ function isTextInput(target: EventTarget) {
 function DraftEditor({
     project,
     catalog,
+    catalogQuery,
     onReload,
 }: {
     project: Project
     catalog: ReadonlyMap<string, NodeDefinition> | undefined
+    catalogQuery: UseQueryResult<{ items: NodeDefinition[] }>
     onReload: () => void
 }) {
     const editor = useDraftEditor(project)
     const { state, dispatch } = editor
-    const { setCenter } = useReactFlow()
+    const { setCenter, screenToFlowPosition } = useReactFlow()
+    const { notify } = useToast()
+    const canvasRef = useRef<HTMLElement>(null)
     const conflict =
         editor.saveError instanceof ApiError &&
         editor.saveError.kind === 'conflict'
@@ -99,6 +106,40 @@ function DraftEditor({
         if (!action) return
         event.preventDefault()
         action()
+    }
+
+    /** Adds a registered node type; anything else (a stale drop, a type a
+     * plugin removed) is refused, since the draft could not use it. */
+    function addNode(nodeType: string, at?: NodePosition) {
+        if (!catalog?.has(nodeType)) {
+            notify({
+                tone: 'warning',
+                title: 'Node not added',
+                description: `"${nodeType}" is not a registered node type.`,
+            })
+            return
+        }
+        const rect = canvasRef.current?.getBoundingClientRect()
+        const p =
+            at ??
+            screenToFlowPosition({
+                x: (rect?.left ?? 0) + (rect?.width ?? 0) / 2,
+                y: (rect?.top ?? 0) + (rect?.height ?? 0) / 2,
+            })
+        dispatch({
+            type: 'add',
+            node: {
+                id: newNodeId(),
+                node_type: nodeType,
+                config: {},
+                label: '',
+                // On the canvas grid, like dragged nodes.
+                position: {
+                    x: Math.round(p.x / GRID) * GRID,
+                    y: Math.round(p.y / GRID) * GRID,
+                },
+            },
+        })
     }
 
     function focusNode(nodeId: string) {
@@ -204,7 +245,14 @@ function DraftEditor({
             ) : null}
 
             <div className="flex min-h-[32rem] flex-col gap-3 lg:flex-row">
+                <NodeLibrary
+                    query={catalogQuery}
+                    onAdd={(d) => {
+                        addNode(d.node_type)
+                    }}
+                />
                 <section
+                    ref={canvasRef}
                     aria-label="Graph canvas"
                     className="h-[32rem] min-w-0 flex-1 overflow-hidden rounded-md border border-border bg-canvas lg:h-auto"
                 >
@@ -218,6 +266,7 @@ function DraftEditor({
                         onSelect={(nodeIds) => {
                             dispatch({ type: 'select', nodeIds })
                         }}
+                        onDropNode={addNode}
                     />
                 </section>
                 {/* The canvas as a list: the graph without pointer or sight
@@ -361,17 +410,18 @@ export function EditorPage() {
                 {(project) => (
                     <>
                         <EditorHeader project={project} />
-                        {nodes.isError && (
+                        {nodes.isError && nodes.data === undefined && (
                             <Alert tone="warning" className="mb-3">
                                 The node catalog could not be loaded, so ports
-                                without connections are not shown.{' '}
-                                {errorMessage(nodes.error)}
+                                without connections are not shown and no nodes
+                                can be added. {errorMessage(nodes.error)}
                             </Alert>
                         )}
                         <ReactFlowProvider key={session}>
                             <DraftEditor
                                 project={project}
                                 catalog={catalog}
+                                catalogQuery={nodes}
                                 onReload={() => void reload()}
                             />
                         </ReactFlowProvider>

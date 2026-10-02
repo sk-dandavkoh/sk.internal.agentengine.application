@@ -199,6 +199,28 @@ test('an edit based on a stale revision is refused, then reloaded', async ({
     expect(await namesOnServer(project.name)).toEqual([elsewhere])
 })
 
+test('the node library lists the backend registry and adds to the draft', async ({
+    page: p,
+}) => {
+    const project = await createViaApi(unique('Library'))
+    await p.goto(`/projects/${project.id}/editor`)
+    const library = p.getByRole('region', { name: 'Node library' })
+    // Built-in nodes come from the real registry, not a frontend list.
+    await expect(library.getByRole('heading', { name: 'Log' })).toBeVisible()
+    await library
+        .getByRole('searchbox', { name: 'Search nodes' })
+        .fill('core.log')
+    await library.getByRole('button', { name: 'Add Log to graph' }).click()
+    await p.keyboard.press('ControlOrMeta+s')
+    await expect(p.getByText('All changes saved to draft')).toBeVisible()
+
+    const saved = await api.get(`/api/v1/projects/${project.id}`)
+    const body = (await saved.json()) as {
+        draft: { graph: { nodes: { node_type: string }[] } }
+    }
+    expect(body.draft.graph.nodes.map((n) => n.node_type)).toEqual(['core.log'])
+})
+
 test('without a session the backend refuses and the UI says so', async ({
     browser,
 }) => {

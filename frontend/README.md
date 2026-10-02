@@ -280,7 +280,8 @@ that published versions stay unchanged. Saving never publishes.
   and selection come from the editor state. Measured node sizes are
   rendering state and stay local. Pan, zoom (0.2–2×, controls, wheel), grid,
   minimap, and node selection (click or keyboard; arrow keys move nodes).
-  Connecting and deleting are off until Phase 10. Ports come from the node
+  Connecting and deleting are off until Phase 10. Library nodes can be
+  dropped onto it (see Node library). Ports come from the node
   catalog, plus any port an edge uses, so every stored edge is drawn.
   Unknown node types are marked in text.
 - Node positions are part of the backend graph (`position: {x, y} | null`,
@@ -297,6 +298,36 @@ the real route against a stub backend that enforces revisions (load, select,
 zoom, move, undo/redo, save, autosave, failures, conflict, leave guard).
 `tests/e2e/editor.spec.ts` covers what needs real layout: drag, pan, edge
 paths, minimap and the saved positions.
+
+## Node library
+
+`features/editor/NodeLibrary.tsx`, beside the canvas: the node catalog from
+`GET /nodes` (the backend registry, built-in and plugin nodes alike). There
+is no node list in the frontend; a new backend node appears without a
+frontend change. Unknown categories and capabilities are shown humanized.
+
+- Search (name, type, description, category), category and capability
+  filters, all local: the catalog is small and unpaginated. Results are
+  grouped by category with a live "n of m nodes" count.
+- Each item shows a category icon, name, type, version, description and
+  capabilities. "Preview and details" opens a preview (the canvas card
+  itself, `NodeCard.tsx`, shared with `GraphCanvas`), then ports (type,
+  required, multiple), the config schema's required settings and the
+  documentation link (only `http(s)` URLs are linked: it is plugin
+  metadata).
+- Icons are per category (`CATEGORY_GLYPHS` in `NodeCard.tsx`, the
+  backend's built-in categories); any other category, e.g. a plugin's, gets
+  a generic glyph. Icons are decorative: the category is always text too.
+  The node contract has no icon field; add one only when a plugin needs
+  its own icon.
+- Add puts the node at the canvas center; dragging an item onto the canvas
+  puts it at the drop point. Both are one undoable edit that selects the
+  new node; it is saved like any other draft change. Adds onto an occupied
+  spot are offset, so repeated adds stay visible.
+- Refused: a type the catalog does not contain (a stale drop, a removed
+  plugin) shows a toast, and a duplicate node id (the backend would reject
+  the draft). New nodes start with empty config; configuring them is the
+  inspector (Phase 09), validity is the backend's `/validate`.
 
 ## Design system
 

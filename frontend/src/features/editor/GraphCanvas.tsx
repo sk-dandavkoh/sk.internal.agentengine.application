@@ -2,11 +2,10 @@ import {
     Background,
     BackgroundVariant,
     Controls,
-    Handle,
     MiniMap,
     Panel,
-    Position,
     ReactFlow,
+    useReactFlow,
     useViewport,
     type Edge as FlowEdge,
     type Node as FlowNode,
@@ -17,8 +16,9 @@ import '@xyflow/react/dist/style.css'
 import { useMemo, useState } from 'react'
 import type { NodeDefinition } from '../../api/nodes'
 import type { Graph, NodeInstance, NodePosition } from '../../api/projects'
-import { cx } from '../../lib/cx'
 import { edgeKey, nodeTitle, portsOf } from './graphView'
+import { NodeCard } from './NodeCard'
+import { NODE_TYPE_MIME } from './NodeLibrary'
 
 export interface CanvasNodeData extends Record<string, unknown> {
     instance: NodeInstance
@@ -32,63 +32,22 @@ type CanvasNode = FlowNode<CanvasNodeData, 'draft'>
 
 export const MIN_ZOOM = 0.2
 export const MAX_ZOOM = 2
+/** Snap step of moved and added nodes. */
+export const GRID = 10
 
 function DraftNode({ data, selected }: NodeProps<CanvasNode>) {
     const { instance, definition, catalogLoaded, inputs, outputs } = data
-    const unknown = catalogLoaded && !definition
     return (
-        <div
-            className={cx(
-                'min-w-44 rounded-md border bg-surface text-sm text-fg shadow-sm',
-                selected
-                    ? 'border-primary ring-2 ring-primary'
-                    : 'border-border-strong',
-                unknown && 'border-dashed',
-            )}
-        >
-            <div className="border-b border-border px-3 py-2">
-                <p className="font-semibold">
-                    {nodeTitle(instance, definition)}
-                </p>
-                <p className="font-mono text-xs text-muted">
-                    {instance.node_type}
-                </p>
-                {/* Text, not just the dashed border: state is never color-only. */}
-                {unknown && (
-                    <p className="text-xs font-medium text-warning-text">
-                        Unknown node type
-                    </p>
-                )}
-            </div>
-            <div className="flex justify-between gap-4 py-1.5 text-xs">
-                <ul aria-label="Inputs">
-                    {inputs.map((port) => (
-                        <li key={port} className="relative px-3 py-0.5">
-                            <Handle
-                                type="target"
-                                id={port}
-                                position={Position.Left}
-                                isConnectable={false}
-                            />
-                            {port}
-                        </li>
-                    ))}
-                </ul>
-                <ul aria-label="Outputs" className="text-right">
-                    {outputs.map((port) => (
-                        <li key={port} className="relative px-3 py-0.5">
-                            <Handle
-                                type="source"
-                                id={port}
-                                position={Position.Right}
-                                isConnectable={false}
-                            />
-                            {port}
-                        </li>
-                    ))}
-                </ul>
-            </div>
-        </div>
+        <NodeCard
+            title={nodeTitle(instance, definition)}
+            nodeType={instance.node_type}
+            category={definition?.category}
+            inputs={inputs}
+            outputs={outputs}
+            selected={selected}
+            unknown={catalogLoaded && !definition}
+            handles
+        />
     )
 }
 
@@ -112,12 +71,15 @@ export interface GraphCanvasProps {
     catalog: ReadonlyMap<string, NodeDefinition> | undefined
     onMove: (positions: Record<string, NodePosition>, done: boolean) => void
     onSelect: (nodeIds: string[]) => void
+    /** A library node dropped at a flow position. */
+    onDropNode: (nodeType: string, position: NodePosition) => void
 }
 
 /**
  * Renders a draft graph. Controlled: positions and selection come from the
  * editor state; only measured node sizes (rendering detail) live here.
- * Connecting and deleting are Phase 10, so both are switched off.
+ * Connecting and deleting are Phase 10, so both are switched off. Library
+ * nodes can be dropped in; the editor decides whether they are added.
  */
 export function GraphCanvas({
     graph,
@@ -125,7 +87,9 @@ export function GraphCanvas({
     catalog,
     onMove,
     onSelect,
+    onDropNode,
 }: GraphCanvasProps) {
+    const { screenToFlowPosition } = useReactFlow()
     const [measured, setMeasured] = useState<
         Record<string, { width: number; height: number }>
     >({})
@@ -198,6 +162,24 @@ export function GraphCanvas({
             edges={edges}
             nodeTypes={nodeTypes}
             onNodesChange={onNodesChange}
+            onDragOver={(event) => {
+                // Only library items are droppable; files and text are not.
+                if (!event.dataTransfer.types.includes(NODE_TYPE_MIME)) return
+                event.preventDefault()
+                event.dataTransfer.dropEffect = 'copy'
+            }}
+            onDrop={(event) => {
+                const nodeType = event.dataTransfer.getData(NODE_TYPE_MIME)
+                if (!nodeType) return
+                event.preventDefault()
+                onDropNode(
+                    nodeType,
+                    screenToFlowPosition({
+                        x: event.clientX,
+                        y: event.clientY,
+                    }),
+                )
+            }}
             nodesConnectable={false}
             edgesFocusable={false}
             deleteKeyCode={null}
@@ -206,7 +188,7 @@ export function GraphCanvas({
             fitView
             fitViewOptions={{ maxZoom: 1 }}
             snapToGrid
-            snapGrid={[10, 10]}
+            snapGrid={[GRID, GRID]}
             className="draft-canvas"
         >
             <Background variant={BackgroundVariant.Dots} gap={20} />

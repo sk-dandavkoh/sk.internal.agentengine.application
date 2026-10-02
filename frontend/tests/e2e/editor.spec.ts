@@ -215,3 +215,36 @@ test('renders, zooms, drags and saves a draft graph', async ({ page: p }) => {
     await leave.getByRole('button', { name: 'Stay in editor' }).click()
     await expect(p).toHaveURL(/\/projects\/p1\/editor$/)
 })
+
+test('drags a node from the library onto the canvas', async ({ page: p }) => {
+    const saved = await fakeBackend(p)
+    await p.goto('/projects/p1/editor')
+    const library = p.getByRole('region', { name: 'Node library' })
+    await expect(library.getByText('2 of 2 nodes')).toBeVisible()
+
+    // Real HTML5 drag and drop, onto an empty spot of the pane.
+    const pane = p.locator('.react-flow__pane')
+    const box = await pane.boundingBox()
+    if (!box) throw new Error('no pane')
+    const target = { x: box.width - 120, y: 30 }
+    await library
+        .getByRole('listitem')
+        .filter({ has: p.getByRole('heading', { name: 'core.log' }) })
+        .dragTo(pane, { targetPosition: target })
+
+    await expect(p.locator('.react-flow__node')).toHaveCount(3)
+    const added = p.locator('.react-flow__node.selected')
+    await expect(added).toContainText('core.log')
+    // The node's top-left lands at the drop point (snapped to the grid).
+    const at = await added.boundingBox()
+    expect(Math.abs((at?.x ?? 0) - (box.x + target.x))).toBeLessThan(15)
+    expect(Math.abs((at?.y ?? 0) - (box.y + target.y))).toBeLessThan(15)
+
+    await p.keyboard.press('ControlOrMeta+s')
+    await expect(p.getByText('All changes saved to draft')).toBeVisible()
+    expect(saved[0]?.graph.nodes.map((n) => n.node_type)).toEqual([
+        'core.input',
+        'core.log',
+        'core.log',
+    ])
+})

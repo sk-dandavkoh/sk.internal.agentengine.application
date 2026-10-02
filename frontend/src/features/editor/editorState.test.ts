@@ -241,6 +241,35 @@ describe('copy / paste', () => {
     })
 })
 
+describe('add', () => {
+    const add = (id: string, x = 0, y = 0) =>
+        ({ type: 'add', node: node(id, { x, y }) }) as const
+
+    it('adds and selects the node as one undo step', () => {
+        const added = run(initEditor(graph(), 1), add('c', 600, 0))
+        expect(added.graph.nodes.map((n) => n.id)).toEqual(['a', 'b', 'c'])
+        expect(added.selection).toEqual(['c'])
+        expect(isDirty(added)).toBe(true)
+        expect(run(added, { type: 'undo' }).graph.nodes).toHaveLength(2)
+    })
+
+    it('refuses a duplicate id, and adds during a drag', () => {
+        const start = initEditor(graph(), 1)
+        expect(run(start, add('a', 900, 900))).toBe(start)
+        const dragging = run(start, drag('a', 5, 5))
+        expect(run(dragging, add('c'))).toBe(dragging)
+    })
+
+    it('offsets nodes added onto an occupied spot', () => {
+        const state = run(initEditor(graph(), 1), add('c'), add('d'))
+        expect(at(state, 'c')).toEqual({ x: PASTE_OFFSET, y: PASTE_OFFSET })
+        expect(at(state, 'd')).toEqual({
+            x: 2 * PASTE_OFFSET,
+            y: 2 * PASTE_OFFSET,
+        })
+    })
+})
+
 describe('saved', () => {
     it('marks the saved graph clean and keeps the undo stack', () => {
         const moved = run(initEditor(graph(), 1), drag('a', 9, 9, true))

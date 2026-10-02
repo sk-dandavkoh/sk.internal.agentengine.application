@@ -1,7 +1,8 @@
 import type { SVGProps } from 'react'
 
 // Decorative only: every icon is aria-hidden, the meaning is carried by text.
-function Icon({ children, ...props }: SVGProps<SVGSVGElement>) {
+// `Icon` is the shared frame for feature glyphs (e.g. node categories).
+export function Icon({ children, ...props }: SVGProps<SVGSVGElement>) {
     return (
         <svg
             viewBox="0 0 20 20"
