@@ -158,6 +158,8 @@ Every write is optimistic-concurrency controlled: a stale `expected_revision`
 |---|---|---|
 | POST | `/api/v1/projects/{id}/versions/{n}/execute` | manual run → 201, `queued` |
 | POST | `/api/v1/projects/{id}/triggers/{tid}/invoke` | fire a manual/API trigger |
+| GET | `/api/v1/executions?status=&offset=&limit=` | executions across the caller's projects (all for an admin), newest first; `status` repeatable |
+| GET | `/api/v1/executions/status-counts` | `{counts: {status: n}}` over the same executions, every status present |
 | GET | `/api/v1/projects/{id}/executions?offset=&limit=` | the project's executions, newest first |
 | GET | `/api/v1/executions/{id}` | one execution's state |
 | GET | `/api/v1/executions/{id}/events?after=&limit=` | event history; pass `next_after` back as `after` to page or to poll |
@@ -165,6 +167,7 @@ Every write is optimistic-concurrency controlled: a stale `expected_revision`
 | GET | `/api/v1/reports/executions/{id}` | full report: nodes, outputs, errors, tokens, cost, timeline |
 | GET | `/api/v1/nodes` | node catalog: ports, config JSON Schema, capabilities |
 | GET | `/api/v1/plugins` | installed plugins: state, failure code, manifest metadata (admin, read-only) |
+| GET | `/api/v1/system/status` | `{version, ready, failures}`: `/health` + `/ready` for API clients (any session; always 200) |
 
 ## Example projects
 

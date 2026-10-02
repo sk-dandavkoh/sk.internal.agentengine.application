@@ -1,12 +1,16 @@
 """Execution inspection and control: thin HTTP adapters (architecture §22).
 
+- GET  /executions?status=&offset=&limit= : runs across the caller's
+  projects (all for an admin), newest first, optionally by status
+- GET  /executions/status-counts : how many of those runs are in each status
 - GET  /projects/{project_id}/executions : the project's runs, newest first
 - GET  /executions/{execution_id} : one run's state
 - GET  /executions/{execution_id}/events?after=&limit= : its event history
 - POST /executions/{execution_id}/cancel : request cooperative cancellation
 
-The path carries the project or execution id, so ``authorize_path`` limits
-every route to callers who may see that project. Full node-level detail
+Where the path carries the project or execution id, ``authorize_path``
+limits the route to callers who may see that project; the cross-project
+routes apply the same rule through the owner filter. Full node-level detail
 (outputs, errors, usage, cost) is the report: GET /reports/executions/{id}.
 """
 
@@ -16,14 +20,17 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Body, Depends, Query, Request, status
 from pydantic import BaseModel, Field, JsonValue
 
+from akasha.api.auth import CurrentIdentity
 from akasha.api.project_schemas import PageInfo
 from akasha.api.projects import Limit, Offset
 from akasha.api.schemas import ErrorResponse
 from akasha.api.trigger_schemas import ExecutionDetail
+from akasha.application.auth import AuthorizationService
 from akasha.application.executions import ExecutionService
 from akasha.application.persistence import ExecutionSummary
 from akasha.application.projects import MAX_PAGE_SIZE, Page
 from akasha.domain.event import Event
+from akasha.domain.execution import ExecutionStatus
 from akasha.errors import ConfigurationError
 from akasha.runtime.runtime import ExecutionRuntime
 from akasha.security.redaction import redact
@@ -103,6 +110,12 @@ class EventPage(BaseModel):
     has_more: bool
 
 
+class StatusCounts(BaseModel):
+    """Every execution status with its count (zero included)."""
+
+    counts: dict[ExecutionStatus, int]
+
+
 class CancelRequest(BaseModel):
     reason: str = Field(default="cancelled through the API", max_length=500)
 
@@ -112,6 +125,30 @@ def create_executions_router() -> APIRouter:
         code: {"model": ErrorResponse} for code in (404, 409, 422, 500)
     }
     router = APIRouter(tags=["executions"], responses=errors)
+
+    @router.get("/executions")
+    async def list_recent_executions(
+        svc: Executions,
+        identity: CurrentIdentity,
+        status: Annotated[list[ExecutionStatus] | None, Query()] = None,
+        offset: Offset = 0,
+        limit: Limit = 50,
+    ) -> ExecutionPage:
+        page = await svc.list_recent(
+            owner_id=AuthorizationService.owner_filter(identity),
+            statuses=status or (),
+            offset=offset,
+            limit=limit,
+        )
+        return ExecutionPage.from_page(page)
+
+    # Registered before /executions/{execution_id}, which would match it too.
+    @router.get("/executions/status-counts")
+    async def count_executions(
+        svc: Executions, identity: CurrentIdentity
+    ) -> StatusCounts:
+        owner = AuthorizationService.owner_filter(identity)
+        return StatusCounts(counts=await svc.count_by_status(owner_id=owner))
 
     @router.get("/projects/{project_id}/executions")
     async def list_executions(

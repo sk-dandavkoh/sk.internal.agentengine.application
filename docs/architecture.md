@@ -1217,11 +1217,14 @@ Implemented in V1 (Phase 27 closed the gaps the frontend needs):
 /api/v1/projects/{id}/versions/{n}/execute       manual run
 /api/v1/projects/{id}/triggers/{tid}/invoke      manual/API triggers
 /api/v1/webhooks/{id}/{tid}                      signed webhooks (public)
+/api/v1/executions?status=                       across the caller's projects, newest first
+/api/v1/executions/status-counts                 executions per status (same visibility)
 /api/v1/executions/{id}[/events|/cancel]         state, event history, cancel
 /api/v1/nodes                                    node catalog (ports, config schema)
 /api/v1/plugins                                  installed plugins (admin, read-only)
 /api/v1/credentials                              admin only, values never returned
 /api/v1/reports/executions/{id}                  execution report
+/api/v1/system/status                            version + readiness (/health, /ready) for the UI
 ```
 
 Not over HTTP in V1: plugin management (install, enable, disable, remove;

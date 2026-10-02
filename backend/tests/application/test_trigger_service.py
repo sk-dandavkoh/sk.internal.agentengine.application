@@ -6,7 +6,7 @@ the SQL behind ``list_latest`` is covered by the PostgreSQL integration
 tests (backend/AGENTS.md §52/§54).
 """
 
-from collections.abc import Sequence
+from collections.abc import Collection, Mapping, Sequence
 from datetime import datetime, timedelta
 from types import TracebackType
 from typing import Any, cast
@@ -81,9 +81,20 @@ class FakeExecutions(ExecutionRepository):
         self.items[execution.id] = execution
 
     async def list_summaries(
-        self, project_id: str, *, offset: int = 0, limit: int = 100
+        self,
+        *,
+        project_id: str | None = None,
+        owner_id: str | None = None,
+        statuses: Collection[ExecutionStatus] = (),
+        offset: int = 0,
+        limit: int = 100,
     ) -> Sequence[ExecutionSummary]:
         return []
+
+    async def count_by_status(
+        self, *, owner_id: str | None = None
+    ) -> Mapping[ExecutionStatus, int]:
+        return {}
 
     async def list_queued(
         self, *, created_before: datetime, limit: int

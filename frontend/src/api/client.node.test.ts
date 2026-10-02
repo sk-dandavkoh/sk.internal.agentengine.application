@@ -95,13 +95,20 @@ describe('successful requests', () => {
             z.object({ id: z.string() }),
             {
                 body: { name: 'x' },
-                query: { limit: 10, after: undefined, archived: false },
+                query: {
+                    limit: 10,
+                    after: undefined,
+                    archived: false,
+                    status: ['failed', 'timeout'],
+                },
             },
         )
 
         expect(result).toEqual({ id: 'p1' })
         expect(seen?.req.method).toBe('POST')
-        expect(seen?.req.url).toBe('/api/v1/projects?limit=10&archived=false')
+        expect(seen?.req.url).toBe(
+            '/api/v1/projects?limit=10&archived=false&status=failed&status=timeout',
+        )
         expect(seen?.body).toBe('{"name":"x"}')
         expect(seen?.req.headers['content-type']).toBe('application/json')
         expect(seen?.req.headers.accept).toBe('application/json')

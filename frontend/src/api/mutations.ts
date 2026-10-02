@@ -124,7 +124,11 @@ export function useExecuteProjectVersion() {
             v: { projectId: string; version: number; input?: JsonObject },
         ) => executeProjectVersion(client, v.projectId, v.version, v.input),
         (qc, execution) =>
-            invalidate(qc, queryKeys.projects.executions(execution.project_id)),
+            invalidate(
+                qc,
+                queryKeys.projects.executions(execution.project_id),
+                queryKeys.executions.overview(),
+            ),
     )
 }
 
@@ -135,7 +139,11 @@ export function useInvokeTrigger() {
             v: { projectId: string; triggerId: string; input?: JsonObject },
         ) => invokeTrigger(client, v.projectId, v.triggerId, v.input),
         (qc, execution) =>
-            invalidate(qc, queryKeys.projects.executions(execution.project_id)),
+            invalidate(
+                qc,
+                queryKeys.projects.executions(execution.project_id),
+                queryKeys.executions.overview(),
+            ),
     )
 }
 
@@ -148,6 +156,7 @@ export function useCancelExecution() {
                 qc,
                 queryKeys.executions.detail(execution.id),
                 queryKeys.projects.executions(execution.project_id),
+                queryKeys.executions.overview(),
             ),
     )
 }

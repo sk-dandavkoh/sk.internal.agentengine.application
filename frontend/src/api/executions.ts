@@ -69,8 +69,43 @@ export const executionEventPageSchema = z.object({
 })
 export type ExecutionEventPage = z.infer<typeof executionEventPageSchema>
 
+/** Every status with its count; the backend includes zeros. */
+export const executionStatusCountsSchema = z.object({
+    counts: z.record(executionStatusSchema, z.number().int()),
+})
+export type ExecutionStatusCounts = z.infer<typeof executionStatusCountsSchema>
+
+export interface ExecutionListParams extends PageParams {
+    /** Only these statuses; all when omitted. */
+    status?: readonly ExecutionStatus[]
+}
+
 const path = (executionId: string) =>
     `/executions/${encodeURIComponent(executionId)}`
+
+/** Executions across the caller's projects (all for an admin), newest first. */
+export function listExecutions(
+    client: ApiClient,
+    params: ExecutionListParams = {},
+    signal?: AbortSignal,
+) {
+    return client.request('GET', '/executions', executionPageSchema, {
+        query: { ...params },
+        signal,
+    })
+}
+
+export function getExecutionStatusCounts(
+    client: ApiClient,
+    signal?: AbortSignal,
+) {
+    return client.request(
+        'GET',
+        '/executions/status-counts',
+        executionStatusCountsSchema,
+        { signal },
+    )
+}
 
 export function listProjectExecutions(
     client: ApiClient,

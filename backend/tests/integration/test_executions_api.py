@@ -13,6 +13,7 @@ from typing import Any
 import httpx
 import pytest
 
+from akasha import __version__
 from akasha.api.app import create_app
 from akasha.application.executions import ExecutionService
 from akasha.application.projects import ProjectService
@@ -63,6 +64,15 @@ class Env:
     runtime: ExecutionRuntime
     kit: AuthKit
     admin: dict[str, str]
+    app: Any
+
+    def client_with(self, headers: dict[str, str]) -> httpx.AsyncClient:
+        """Another caller against the same app (close it after use)."""
+        return httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=self.app),
+            base_url="http://test",
+            headers=headers,
+        )
 
     async def run(self, project_id: str, version: int, **input: Any) -> str:
         created = await self.client.post(
@@ -103,7 +113,7 @@ async def env(
         base_url="http://test",
         headers=admin,
     ) as client:
-        yield Env(client, runtime, kit, admin)
+        yield Env(client, runtime, kit, admin, app)
 
 
 # -- list -----------------------------------------------------------------------
@@ -152,6 +162,117 @@ async def test_list_executions_rejects_bad_pages_and_unknown_projects(
         404,
         "PROJECT_NOT_FOUND",
     )
+
+
+# -- cross-project listing and counts ------------------------------------------
+
+
+async def test_recent_executions_span_projects_newest_first(env: Env) -> None:
+    assert (await env.client.get("/api/v1/executions")).json() == {
+        "items": [],
+        "page": {"offset": 0, "limit": 50, "has_more": False},
+    }
+    a, va, _ = await publish_with(env.client, [])
+    b, vb, _ = await publish_with(env.client, [])
+    ids = [await env.run(a, va), await env.run(b, vb), await env.run(a, va)]
+
+    first = (await env.client.get("/api/v1/executions", params={"limit": 2})).json()
+    second = (
+        await env.client.get("/api/v1/executions", params={"offset": 2, "limit": 2})
+    ).json()
+
+    items = first["items"] + second["items"]
+    assert [e["id"] for e in items] == ids[::-1]
+    assert [e["project_id"] for e in items] == [a, b, a]
+    assert (first["page"]["has_more"], second["page"]["has_more"]) == (True, False)
+
+
+async def test_recent_executions_filter_by_status(env: Env) -> None:
+    pid, version, _ = await publish_with(env.client, [])
+    completed = await env.run(pid, version)
+    failed = await env.run(pid, version, fail=True)
+    queued = (
+        await env.client.post(f"/api/v1/projects/{pid}/versions/{version}/execute")
+    ).json()["id"]
+
+    async def listed(*statuses: str) -> list[str]:
+        response = await env.client.get(
+            "/api/v1/executions", params=[("status", s) for s in statuses]
+        )
+        assert response.status_code == 200, response.text
+        return [e["id"] for e in response.json()["items"]]
+
+    assert await listed("failed", "timeout") == [failed]
+    assert await listed("queued", "running") == [queued]
+    assert await listed() == [queued, failed, completed]
+    bad = await env.client.get("/api/v1/executions", params={"status": "exploded"})
+    assert bad.status_code == 422
+    for params in ({"limit": 0}, {"limit": 101}, {"offset": -1}):
+        response = await env.client.get("/api/v1/executions", params=params)
+        assert response.status_code == 422, params
+
+
+async def test_status_counts_cover_every_status(env: Env) -> None:
+    empty = (await env.client.get("/api/v1/executions/status-counts")).json()
+    assert empty == {
+        "counts": {
+            s: 0
+            for s in (
+                "created",
+                "queued",
+                "running",
+                "paused",
+                "waiting",
+                "completed",
+                "failed",
+                "cancelled",
+                "timeout",
+            )
+        }
+    }
+    pid, version, _ = await publish_with(env.client, [])
+    await env.run(pid, version)
+    await env.run(pid, version)
+    await env.run(pid, version, fail=True)
+
+    counts = (await env.client.get("/api/v1/executions/status-counts")).json()
+    assert counts["counts"]["completed"] == 2
+    assert counts["counts"]["failed"] == 1
+    assert sum(counts["counts"].values()) == 3
+
+
+async def test_members_see_only_their_projects_executions(env: Env) -> None:
+    admin_pid, admin_version, _ = await publish_with(env.client, [])
+    await env.run(admin_pid, admin_version, fail=True)
+    member_headers = await env.kit.member_headers(env.admin, "member")
+    async with env.client_with(member_headers) as member:
+        assert (await member.get("/api/v1/executions")).json()["items"] == []
+        assert (
+            sum(
+                (await member.get("/api/v1/executions/status-counts"))
+                .json()["counts"]
+                .values()
+            )
+            == 0
+        )
+        pid, version, _ = await publish_with(member, [])
+        own = await env.run(pid, version)
+
+        listed = (await member.get("/api/v1/executions")).json()["items"]
+        counts = (await member.get("/api/v1/executions/status-counts")).json()
+
+    assert [e["id"] for e in listed] == [own]
+    assert counts["counts"]["completed"] == 1
+    assert counts["counts"]["failed"] == 0
+    # The admin still sees every project's runs.
+    everything = (await env.client.get("/api/v1/executions")).json()["items"]
+    assert len(everything) == 2
+
+
+async def test_cross_project_routes_require_a_session(env: Env) -> None:
+    async with env.client_with({}) as anonymous:
+        for path in ("/api/v1/executions", "/api/v1/executions/status-counts"):
+            assert_error(await anonymous.get(path), 401, "AUTHENTICATION_REQUIRED")
 
 
 # -- events ---------------------------------------------------------------------
@@ -270,3 +391,34 @@ async def test_node_catalog_lists_every_registered_type(env: Env) -> None:
     assert search["outputs"][0]["schema"]["type"] == "array"
     flags = next(n for n in items if n["node_type"] == "core.if")["capabilities"]
     assert flags["is_control_flow"] is True
+
+
+# -- system status ----------------------------------------------------------------
+
+
+async def test_system_status_reports_version_and_readiness(env: Env) -> None:
+    member_headers = await env.kit.member_headers(env.admin, "member")
+    async with env.client_with(member_headers) as member:
+        ready = await member.get("/api/v1/system/status")
+        assert ready.status_code == 200, ready.text
+        assert ready.json() == {"version": __version__, "ready": True, "failures": {}}
+
+        async def failing_check() -> str:
+            return "connection refused"
+
+        env.app.state.container.ready_checks["database"] = failing_check
+        degraded = await member.get("/api/v1/system/status")
+
+    # Still 200: the caller asked for the status, unlike /ready's 503.
+    assert degraded.status_code == 200
+    assert degraded.json() == {
+        "version": __version__,
+        "ready": False,
+        "failures": {"database": "connection refused"},
+    }
+    async with env.client_with({}) as anonymous:
+        assert_error(
+            await anonymous.get("/api/v1/system/status"),
+            401,
+            "AUTHENTICATION_REQUIRED",
+        )

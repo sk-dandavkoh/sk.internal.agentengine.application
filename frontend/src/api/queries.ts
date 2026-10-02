@@ -3,8 +3,11 @@ import type { ApiClient } from './client'
 import { getCredential, listCredentials } from './credentials'
 import {
     getExecution,
+    getExecutionStatusCounts,
     listExecutionEvents,
+    listExecutions,
     listProjectExecutions,
+    type ExecutionListParams,
 } from './executions'
 import { listNodeDefinitions } from './nodes'
 import { listPlugins } from './plugins'
@@ -16,12 +19,14 @@ import {
 } from './projects'
 import { getExecutionReport } from './reports'
 import type { PageParams } from './schemas'
+import { getSystemStatus } from './system'
 
 /**
  * Every server-state query key. Keys nest by ownership so invalidating a
  * prefix reaches everything below it: `projects.detail(id)` covers the
  * project's versions and executions, `executions.detail(id)` its events
- * and report.
+ * and report. Every execution write invalidates `executions.overview()`:
+ * the cross-project listings and status counts.
  */
 export const queryKeys = {
     projects: {
@@ -38,6 +43,11 @@ export const queryKeys = {
             ['projects', projectId, 'executions', page] as const,
     },
     executions: {
+        overview: () => ['executions', 'overview'] as const,
+        list: (params: ExecutionListParams) =>
+            ['executions', 'overview', 'list', params] as const,
+        statusCounts: () =>
+            ['executions', 'overview', 'status-counts'] as const,
         detail: (executionId: string) => ['executions', executionId] as const,
         events: (executionId: string, after: number) =>
             ['executions', executionId, 'events', after] as const,
@@ -45,6 +55,7 @@ export const queryKeys = {
             ['executions', executionId, 'report'] as const,
     },
     nodes: () => ['nodes'] as const,
+    system: () => ['system', 'status'] as const,
     plugins: () => ['plugins'] as const,
     credentials: {
         lists: () => ['credentials', 'list'] as const,
@@ -96,6 +107,17 @@ export const projectQueries = {
 }
 
 export const executionQueries = {
+    /** Across projects, newest first (the caller's projects; all for an admin). */
+    list: (client: ApiClient, params: ExecutionListParams = {}) =>
+        queryOptions({
+            queryKey: queryKeys.executions.list(params),
+            queryFn: ({ signal }) => listExecutions(client, params, signal),
+        }),
+    statusCounts: (client: ApiClient) =>
+        queryOptions({
+            queryKey: queryKeys.executions.statusCounts(),
+            queryFn: ({ signal }) => getExecutionStatusCounts(client, signal),
+        }),
     detail: (client: ApiClient, executionId: string) =>
         queryOptions({
             queryKey: queryKeys.executions.detail(executionId),
@@ -144,5 +166,13 @@ export const credentialQueries = {
         queryOptions({
             queryKey: queryKeys.credentials.detail(name),
             queryFn: ({ signal }) => getCredential(client, name, signal),
+        }),
+}
+
+export const systemQueries = {
+    status: (client: ApiClient) =>
+        queryOptions({
+            queryKey: queryKeys.system(),
+            queryFn: ({ signal }) => getSystemStatus(client, signal),
         }),
 }

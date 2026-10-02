@@ -61,9 +61,10 @@ frontend/
 │   ├── app/            app root: router, shell layout, route boundaries
 │   ├── api/            the only backend communication layer (see API layer)
 │   ├── components/ui/  design system primitives (import from the index)
+│   ├── features/       product areas (dashboard, …); a feature owns its screens
 │   ├── lib/            small framework-free helpers (cx)
 │   ├── styles/         global CSS: Tailwind v4 entry and design tokens
-│   └── test/           Vitest setup (jest-dom matchers, RTL cleanup)
+│   └── test/           Vitest setup; app.tsx renders routes against a stub backend
 ├── tests/e2e/          Playwright specs
 ├── index.html
 ├── vite.config.ts      Vite + Vitest config
@@ -166,7 +167,9 @@ store.
   `useQuery(projectQueries.detail(useApiClient(), id))` or in route loaders
   via `queryClient.ensureQueryData`. Keys nest by ownership:
   `['projects', id]` covers the project's versions and executions,
-  `['executions', id]` its events and report.
+  `['executions', id]` its events and report. Every execution write also
+  invalidates `['executions', 'overview']`: the cross-project lists and the
+  status counts the dashboard shows.
 - **Freshness**: default stale-immediately (refetch on mount, stale data
   shown meanwhile); published versions `staleTime: Infinity` (immutable);
   node catalog and plugins 5 minutes (change only on backend restart).
@@ -204,6 +207,25 @@ Two tests keep both sides in step:
   and no field required that the backend marks optional), request body field
   names, and the error envelope. A new service function must be added to its
   call list; a coverage test fails otherwise.
+
+## Dashboard
+
+`features/dashboard/` (`/dashboard`): status counts, active executions,
+recent failures, recent executions, system readiness/version and projects by
+status, each from its backend endpoint (`/executions?status=`,
+`/executions/status-counts`, `/system/status`, `/projects`). Every section
+loads, fails, retries and shows its empty state on its own
+(`QuerySection`); a failed refresh keeps the last data with a warning. When
+every section has failed with nothing to show (backend down, no session),
+one page-level error with Retry replaces them.
+"Refresh" refetches the queries on screen. No polling: live updates are
+Phase 14. Recent failures expand to their recorded errors: the execution
+report (`/reports/executions/{id}`) is fetched only when a row is opened.
+
+Not shown, because the backend has no aggregate for them: token usage and
+cost (per execution only, in the report) and Prometheus metrics (`/metrics`
+is a scrape target, not an API). Project names and status counts cover the
+first 100 projects (the page limit); beyond that the card says so.
 
 ## Design system
 

@@ -15,7 +15,11 @@ export interface ApiClientOptions {
 export interface RequestOptions {
     /** JSON-serialized request body. */
     body?: unknown
-    query?: Record<string, string | number | boolean | undefined>
+    /** An array value repeats the parameter (`?status=a&status=b`). */
+    query?: Record<
+        string,
+        string | number | boolean | readonly string[] | undefined
+    >
     /** Caller cancellation, e.g. the AbortSignal TanStack Query passes in. */
     signal?: AbortSignal | undefined
     timeoutMs?: number
@@ -109,7 +113,9 @@ export class ApiClient {
     private url(path: string, query: RequestOptions['query']): string {
         const params = new URLSearchParams()
         for (const [key, value] of Object.entries(query ?? {})) {
-            if (value !== undefined) params.append(key, String(value))
+            if (value === undefined) continue
+            for (const item of typeof value === 'object' ? value : [value])
+                params.append(key, String(item))
         }
         const search = params.toString()
         return `${this.baseUrl}${path}${search ? `?${search}` : ''}`

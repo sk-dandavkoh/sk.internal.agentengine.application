@@ -12,7 +12,7 @@ Boundary rules (backend/AGENTS.md §13/§15/§16):
   this interface
 """
 
-from collections.abc import Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from types import TracebackType
@@ -124,9 +124,23 @@ class ExecutionRepository(Protocol):
     async def get(self, execution_id: str) -> Execution | None: ...
     async def save(self, execution: Execution) -> None: ...
     async def list_summaries(
-        self, project_id: str, *, offset: int = 0, limit: int = 100
+        self,
+        *,
+        project_id: str | None = None,
+        owner_id: str | None = None,
+        statuses: Collection[ExecutionStatus] = (),
+        offset: int = 0,
+        limit: int = 100,
     ) -> Sequence[ExecutionSummary]:
-        """The project's executions, newest first."""
+        """Executions newest first: of one project or all, limited to the
+        projects of ``owner_id`` and to ``statuses`` when given."""
+        ...
+
+    async def count_by_status(
+        self, *, owner_id: str | None = None
+    ) -> Mapping[ExecutionStatus, int]:
+        """Executions per status (absent statuses: none), limited to the
+        projects of ``owner_id`` when given."""
         ...
 
     async def list_queued(

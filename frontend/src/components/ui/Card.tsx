@@ -8,7 +8,7 @@ export interface CardProps {
     /** Header actions, end-aligned next to the title. */
     actions?: ReactNode
     children?: ReactNode
-    className?: string
+    className?: string | undefined
 }
 
 export function Card({

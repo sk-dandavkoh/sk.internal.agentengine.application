@@ -13,6 +13,7 @@ import * as nodes from './nodes'
 import * as plugins from './plugins'
 import * as projects from './projects'
 import * as reports from './reports'
+import * as system from './system'
 import {
     ApiClient,
     DEFAULT_BASE_URL,
@@ -224,6 +225,8 @@ void projects.validateProject(recorder, 'p')
 void projects.publishProject(recorder, 'p', 1)
 void projects.listProjectVersions(recorder, 'p')
 void projects.getProjectVersion(recorder, 'p', 1)
+void executions.listExecutions(recorder, { status: ['failed'], limit: 5 })
+void executions.getExecutionStatusCounts(recorder)
 void executions.listProjectExecutions(recorder, 'p')
 void executions.getExecution(recorder, 'e')
 void executions.listExecutionEvents(recorder, 'e', { after: 3 })
@@ -243,6 +246,7 @@ void credentials.createCredential(recorder, {
 void credentials.updateCredential(recorder, 'c', { description: 'd' })
 void credentials.deleteCredential(recorder, 'c')
 void plugins.listPlugins(recorder)
+void system.getSystemStatus(recorder)
 const modules: Record<string, unknown>[] = [
     auth,
     projects,
@@ -251,6 +255,7 @@ const modules: Record<string, unknown>[] = [
     nodes,
     credentials,
     plugins,
+    system,
 ]
 const serviceFunctions = modules.flatMap((module) =>
     Object.values(module).filter((v) => typeof v === 'function'),

@@ -7,12 +7,12 @@ are the exclusive job of ``SqlAlchemyUnitOfWork`` (backend/AGENTS.md §16).
 """
 
 import json
-from collections.abc import Sequence
+from collections.abc import Collection, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from types import TracebackType
 from typing import Any, cast
 
-from sqlalchemy import Insert, Update, delete, func, select, text
+from sqlalchemy import Insert, Select, Update, delete, func, select, text
 from sqlalchemy.dialects.postgresql import Insert as PgInsert
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import CursorResult, RowMapping
@@ -321,6 +321,15 @@ class SqlAlchemyProjectVersionRepository(ProjectVersionRepository):
         )
 
 
+def _owned[S: Select[Any]](query: S, owner_id: str | None) -> S:
+    """Limit an executions query to the projects of ``owner_id`` (None: all)."""
+    if owner_id is None:
+        return query
+    return query.join(m.projects, m.projects.c.id == m.executions.c.project_id).where(
+        m.projects.c.owner_id == owner_id
+    )
+
+
 class SqlAlchemyExecutionRepository(ExecutionRepository):
     def __init__(
         self, session: AsyncSession, versions: ProjectVersionRepository
@@ -391,22 +400,38 @@ class SqlAlchemyExecutionRepository(ExecutionRepository):
         )
 
     async def list_summaries(
-        self, project_id: str, *, offset: int = 0, limit: int = 100
+        self,
+        *,
+        project_id: str | None = None,
+        owner_id: str | None = None,
+        statuses: Collection[ExecutionStatus] = (),
+        offset: int = 0,
+        limit: int = 100,
     ) -> Sequence[ExecutionSummary]:
         e = m.executions.c
+        # ponytail: no index on created_at; the cross-project listing sorts
+        # the (owner's) history per page. Add ix_executions_created_at when
+        # dashboard latency shows up in the request timings.
+        query = _owned(
+            select(
+                e.id,
+                e.project_id,
+                e.project_version,
+                e.status,
+                e.metadata,
+                e.created_at,
+                e.started_at,
+                e.finished_at,
+            ),
+            owner_id,
+        )
+        if project_id is not None:
+            query = query.where(e.project_id == project_id)
+        if statuses:
+            query = query.where(e.status.in_([s.value for s in statuses]))
         rows = (
             await self._session.execute(
-                select(
-                    e.id,
-                    e.project_version,
-                    e.status,
-                    e.metadata,
-                    e.created_at,
-                    e.started_at,
-                    e.finished_at,
-                )
-                .where(e.project_id == project_id)
-                .order_by(e.created_at.desc(), e.id.desc())
+                query.order_by(e.created_at.desc(), e.id.desc())
                 .offset(offset)
                 .limit(limit)
             )
@@ -414,7 +439,7 @@ class SqlAlchemyExecutionRepository(ExecutionRepository):
         return [
             ExecutionSummary(
                 id=r["id"],
-                project_id=project_id,
+                project_id=r["project_id"],
                 project_version=r["project_version"],
                 status=ExecutionStatus(r["status"]),
                 metadata=_metadata(r["metadata"]),
@@ -424,6 +449,14 @@ class SqlAlchemyExecutionRepository(ExecutionRepository):
             )
             for r in rows
         ]
+
+    async def count_by_status(
+        self, *, owner_id: str | None = None
+    ) -> Mapping[ExecutionStatus, int]:
+        e = m.executions.c
+        query = _owned(select(e.status, func.count()), owner_id).group_by(e.status)
+        rows = (await self._session.execute(query)).all()
+        return {ExecutionStatus(row[0]): int(row[1]) for row in rows}
 
     async def list_queued(
         self, *, created_before: datetime, limit: int

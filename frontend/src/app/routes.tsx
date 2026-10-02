@@ -27,10 +27,20 @@ export const routes: RouteObject[] = [
                 errorElement: <RouteErrorBoundary />,
                 children: [
                     { index: true, loader: () => redirect('/dashboard') },
-                    ...navItems.map((item): RouteObject => ({
-                        path: item.path,
-                        lazy: placeholder(item.label),
-                    })),
+                    {
+                        path: '/dashboard',
+                        lazy: async () => {
+                            const { DashboardPage } =
+                                await import('../features/dashboard/DashboardPage')
+                            return { Component: DashboardPage }
+                        },
+                    },
+                    ...navItems
+                        .filter((item) => item.path !== '/dashboard')
+                        .map((item): RouteObject => ({
+                            path: item.path,
+                            lazy: placeholder(item.label),
+                        })),
                     {
                         path: '/projects/:projectId/editor',
                         lazy: placeholder('Editor'),

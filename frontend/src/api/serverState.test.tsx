@@ -27,6 +27,7 @@ import {
     queryKeys,
     credentialQueries,
 } from './queries'
+import { executionStatusSchema } from './executions'
 import { createQueryClient } from './queryClient'
 
 // -- fake backend ----------------------------------------------------------------
@@ -383,6 +384,20 @@ describe('mutations', () => {
             ok(executionJson(), 201)
         routes['POST /executions/exec_1/cancel'] = () =>
             ok(executionJson({ status: 'running' }), 202)
+        // The dashboard's cross-project views.
+        routes['GET /executions'] = () => ok(page([]))
+        routes['GET /executions/status-counts'] = () =>
+            ok({
+                counts: Object.fromEntries(
+                    executionStatusSchema.options.map((s) => [s, 0]),
+                ),
+            })
+        await loaded(() =>
+            useQuery(executionQueries.list(useApiClient(), { limit: 5 })),
+        )
+        await loaded(() =>
+            useQuery(executionQueries.statusCounts(useApiClient())),
+        )
         await loaded(() =>
             useQuery(projectQueries.executions(useApiClient(), 'proj_1')),
         )
@@ -400,6 +415,8 @@ describe('mutations', () => {
             }),
         )
         expect(count('GET /projects/proj_1/executions')).toBe(2)
+        expect(count('GET /executions')).toBe(2)
+        expect(count('GET /executions/status-counts')).toBe(2)
 
         routes['GET /executions/exec_1'] = () =>
             ok(executionJson({ status: 'cancelled' }))
@@ -410,6 +427,8 @@ describe('mutations', () => {
             expect(execution.result.current.data?.status).toBe('cancelled')
         })
         expect(count('GET /projects/proj_1/executions')).toBe(3)
+        expect(count('GET /executions')).toBe(3)
+        expect(count('GET /executions/status-counts')).toBe(3)
     })
 
     it('credential secrets do not outlive the mutation in the cache', async () => {

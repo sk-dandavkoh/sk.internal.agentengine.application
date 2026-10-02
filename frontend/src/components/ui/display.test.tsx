@@ -130,6 +130,10 @@ describe('Table', () => {
         expect(
             within(table).getByRole('cell', { name: 'Digest' }),
         ).toBeInTheDocument()
+        // Its scroll container is reachable by keyboard on narrow screens.
+        expect(
+            screen.getByRole('region', { name: 'Projects' }),
+        ).toHaveAttribute('tabindex', '0')
     })
 
     it('renders the empty message spanning all columns', () => {

@@ -8,7 +8,8 @@ Access policy (architecture §149), in one place:
 - every other /api/v1 route: a session (``current_identity``) with access to
   the project/execution in its path (``authorize_path``); credentials,
   users and plugins additionally need an admin (``require_admin``); the node catalog
-  (/api/v1/nodes) needs only a session
+  (/api/v1/nodes), /api/v1/system/status and the cross-project execution
+  listings (/api/v1/executions, owner-filtered) need only a session
 """
 
 import hmac
@@ -47,6 +48,14 @@ class HealthResponse(BaseModel):
 
 class ReadyResponse(BaseModel):
     status: str
+    failures: dict[str, str]
+
+
+class SystemStatus(BaseModel):
+    """/health and /ready for API clients: the UI reaches only /api/v1."""
+
+    version: str
+    ready: bool
     failures: dict[str, str]
 
 
@@ -92,6 +101,19 @@ async def _metrics_access(request: Request) -> None:
     require_admin_identity(await auth_service(request).authenticate(token))
 
 
+def create_system_router() -> APIRouter:
+    router = APIRouter(prefix="/system", tags=["system"])
+
+    @router.get("/status")
+    async def system_status(request: Request) -> SystemStatus:
+        # Same checks and reasons /ready publishes; never a 503 here, the
+        # caller asked for the status, not whether to route traffic.
+        failures = await request.app.state.container.readiness_failures()
+        return SystemStatus(version=__version__, ready=not failures, failures=failures)
+
+    return router
+
+
 def create_api_v1_router() -> APIRouter:
     """Business API under /api/v1. Protected unless listed as public above:
     a route added to a protected router inherits its guards."""
@@ -107,6 +129,7 @@ def create_api_v1_router() -> APIRouter:
     protected.include_router(create_executions_router())
     protected.include_router(create_nodes_router())
     protected.include_router(create_reports_router())
+    protected.include_router(create_system_router())
     admin_only = [Depends(require_admin)]
     protected.include_router(create_credentials_router(), dependencies=admin_only)
     protected.include_router(create_users_router(), dependencies=admin_only)
