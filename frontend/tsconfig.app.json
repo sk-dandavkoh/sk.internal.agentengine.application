@@ -24,5 +24,7 @@
         "noUnusedLocals": true,
         "noUnusedParameters": true
     },
-    "include": ["src"]
+    "include": ["src"],
+    // Node-environment tests (real HTTP server) need Node types: tsconfig.node.json.
+    "exclude": ["src/**/*.node.test.ts"]
 }

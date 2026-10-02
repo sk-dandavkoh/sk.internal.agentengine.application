@@ -1,6 +1,7 @@
 import { render, screen } from '@testing-library/react'
 import { createMemoryRouter, RouterProvider } from 'react-router'
 import { describe, expect, it, vi } from 'vitest'
+import { ApiError } from '../api/errors'
 import { routes } from './routes'
 
 // Make one area crash while rendering, so the real route tree's
@@ -9,6 +10,12 @@ vi.mock('./PlaceholderPage', () => ({
     PlaceholderPage: ({ title }: { title: string }) => {
         if (title === 'Reports') {
             throw new Error('TypeError: secret internal detail')
+        }
+        if (title === 'Monitoring') {
+            throw new ApiError({
+                kind: 'network',
+                message: 'Server unreachable.',
+            })
         }
         return <h1>{title}</h1>
     },
@@ -35,5 +42,18 @@ describe('RouteErrorBoundary', () => {
         expect(
             screen.getByRole('button', { name: 'Reload' }),
         ).toBeInTheDocument()
+    })
+
+    it('shows the user-facing message of an API failure', async () => {
+        vi.spyOn(console, 'error').mockImplementation(() => undefined)
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+        const router = createMemoryRouter(routes, {
+            initialEntries: ['/monitoring'],
+        })
+        render(<RouterProvider router={router} />)
+
+        expect(await screen.findByRole('alert')).toHaveTextContent(
+            'Server unreachable.',
+        )
     })
 })

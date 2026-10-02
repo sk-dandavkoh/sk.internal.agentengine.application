@@ -34,4 +34,20 @@ export default defineConfig([
         ],
         languageOptions: { globals: globals.browser },
     },
+    {
+        // HTTP goes through src/api (ApiClient) only: one place for auth,
+        // error mapping and response validation.
+        files: ['src/**/*.{ts,tsx}'],
+        ignores: ['src/api/**'],
+        rules: {
+            'no-restricted-globals': [
+                'error',
+                { name: 'fetch', message: 'Use the ApiClient from src/api.' },
+                {
+                    name: 'XMLHttpRequest',
+                    message: 'Use the ApiClient from src/api.',
+                },
+            ],
+        },
+    },
 ])

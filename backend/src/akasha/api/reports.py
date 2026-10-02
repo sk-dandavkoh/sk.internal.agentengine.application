@@ -24,8 +24,10 @@ Reports = Annotated[ReportService, Depends(_reports)]
 
 
 def create_reports_router() -> APIRouter:
+    # 422 too: FastAPI would otherwise document its own validation body for
+    # the path parameter, but the error handler always sends ErrorResponse.
     errors: dict[int | str, dict[str, object]] = {
-        code: {"model": ErrorResponse} for code in (404, 500)
+        code: {"model": ErrorResponse} for code in (404, 422, 500)
     }
     router = APIRouter(prefix="/reports", tags=["reports"], responses=errors)
 

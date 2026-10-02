@@ -97,6 +97,11 @@ operator lifecycle on the real image and `docker-compose.yml` (opt-in:
 builds the image, ~2 minutes). HTTP and web-search tests use an
 in-process loopback server; no test touches the public internet.
 
+`tests/test_openapi_contract.py` compares the API's OpenAPI document with the
+snapshot the frontend validates against (`frontend/src/api/openapi.json`).
+After an intended API change, regenerate the snapshot and commit it with the
+change: `AKASHA_UPDATE_OPENAPI_SNAPSHOT=1 uv run pytest tests/test_openapi_contract.py`.
+
 ## CLI
 
 `akasha` is also the operator CLI. It reads the same `AKASHA_*` variables as

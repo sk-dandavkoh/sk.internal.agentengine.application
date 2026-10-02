@@ -4,3 +4,4 @@ playwright-report
 test-results
 package-lock.json
 AGENTS.md
+src/api/openapi.json

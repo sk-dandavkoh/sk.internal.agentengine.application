@@ -1,5 +1,11 @@
 {
     "singleQuote": true,
     "semi": false,
-    "tabWidth": 4
+    "tabWidth": 4,
+    "overrides": [
+        {
+            "files": "package.json",
+            "options": { "tabWidth": 2 }
+        }
+    ]
 }
