@@ -31,7 +31,9 @@ process: the SDK is an API boundary, not a sandbox.
 from typing import Final
 
 from akasha.domain.node import (
+    CREDENTIAL_REFERENCE_FORMAT,
     MAX_EVENTS_PER_ATTEMPT,
+    ConfigIssue,
     CredentialResolver,
     Node,
     NodeCapabilities,
@@ -55,11 +57,15 @@ from akasha.errors import (
     NodeValidationError,
 )
 
-SDK_VERSION: Final = "1.0.0"
+# 1.1.0: ConfigIssue / NodeConfigSchema.issues, CREDENTIAL_REFERENCE_FORMAT,
+# nullable type lists and additionalProperties schemas (additive).
+SDK_VERSION: Final = "1.1.0"
 
 __all__ = [
+    "CREDENTIAL_REFERENCE_FORMAT",
     "MAX_EVENTS_PER_ATTEMPT",
     "SDK_VERSION",
+    "ConfigIssue",
     "CredentialResolver",
     "Node",
     "NodeCapabilities",

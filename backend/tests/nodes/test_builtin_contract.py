@@ -5,12 +5,18 @@ import pytest
 
 from akasha.bootstrap import create_container, create_node_registry
 from akasha.config import Settings
-from akasha.domain.node import NodeDefinition, NodeError, check_node_contract
+from akasha.domain.node import (
+    CREDENTIAL_REFERENCE_FORMAT,
+    NodeDefinition,
+    NodeError,
+    check_node_contract,
+)
 from akasha.domain.primitives import SEMVER_RE
 from akasha.errors import NodeConfigurationError
 from akasha.nodes.builtins import create_builtin_registry
 from akasha.nodes.llm import LlmNode
 from akasha.nodes.registry import NodeAlreadyRegisteredError, NodeRegistration
+from akasha.security.redaction import is_sensitive_key
 from tests.support import LocalHttpServer, RunNode
 
 ROADMAP_NODES = {
@@ -54,6 +60,18 @@ def test_builtin_contract(definition: NodeDefinition) -> None:
     assert definition.config_schema.json_schema["additionalProperties"] is False
     with pytest.raises(NodeConfigurationError):
         definition.validate_config({"__typo__": 1})
+
+
+@pytest.mark.parametrize("definition", BUILTINS, ids=lambda d: d.node_id)
+def test_secret_config_keys_declare_credential_references(
+    definition: NodeDefinition,
+) -> None:
+    """Forms render a credential picker only for the declared format, so a
+    sensitive key without it would invite typing a secret (§35/§36)."""
+    for key, prop in definition.config_schema.json_schema["properties"].items():
+        if is_sensitive_key(key):
+            leaf = prop.get("additionalProperties", prop)
+            assert leaf.get("format") == CREDENTIAL_REFERENCE_FORMAT, key
 
 
 def test_capabilities_are_declared_truthfully() -> None:

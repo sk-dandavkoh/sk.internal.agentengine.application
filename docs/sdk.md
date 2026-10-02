@@ -1,6 +1,6 @@
 # Python Node SDK
 
-SDK version: **1.0.0** (`akasha.sdk.SDK_VERSION`)
+SDK version: **1.1.0** (`akasha.sdk.SDK_VERSION`)
 
 The SDK is the supported way to write custom Nodes. A custom Node imports
 from two modules only:
@@ -98,7 +98,8 @@ repeat those checks.
 | `NodeInput` | An input port: `name`, `port_type`, `required=True`, `nullable`, `multiple`, `schema`, `default` (optional inputs only), `description`. |
 | `NodeOutput` | An output port: `name`, `port_type`, `nullable`, `multiple`, `schema`, `description`. Every declared output must be present in the result. |
 | `PortType` | `STRING`, `NUMBER`, `BOOLEAN`, `JSON`, `OBJECT`, `LIST`, `BINARY`, `FILE`, `ARTIFACT`, `SECRET_REFERENCE`. |
-| `NodeConfigSchema` | A JSON-Schema object. The supported keywords are `type`, `required`, `properties`, `additionalProperties`, `items`, `enum`, `minimum`, `maximum`, `minLength`, `maxItems` and `pattern`. Set `"additionalProperties": False` so a typo fails at publish. |
+| `NodeConfigSchema` | A JSON-Schema object. The supported keywords are `type` (a name, or a list such as `["integer", "null"]` for a nullable value), `required`, `properties`, `additionalProperties` (`False`, or a schema for map values), `items`, `enum`, `minimum`, `maximum`, `minLength`, `maxItems`, `pattern` and `format: CREDENTIAL_REFERENCE_FORMAT`, at every depth. Set `"additionalProperties": False` so a typo fails at publish. `title`, `description` and `default` (what the node does when the key is absent; it must be valid) are shown by the editor's inspector, which builds the settings form from this schema alone. `issues(config)` returns every violation as a `ConfigIssue`. |
+| `CREDENTIAL_REFERENCE_FORMAT` | `"credential-reference"`. Declare it on every config key that names a credential (`{"type": "string", "format": CREDENTIAL_REFERENCE_FORMAT}`, or as `additionalProperties` of a map): values must be `credential:<name>`, and the inspector offers a credential picker instead of a text field. |
 | `NodeCapabilities` | `supports_cancellation`, `has_side_effects` (relevant for retries and idempotency), `is_control_flow`, `streams_output`. |
 
 ### Execution context (`NodeExecutionContext`)

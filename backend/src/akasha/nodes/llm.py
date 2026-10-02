@@ -41,6 +41,7 @@ from akasha.errors import (
 )
 from akasha.nodes.core import MISSING, PATH, VERSION, closed_schema, lookup
 from akasha.sdk import (
+    CREDENTIAL_REFERENCE_FORMAT,
     Node,
     NodeCapabilities,
     NodeConfigSchema,
@@ -68,6 +69,9 @@ _PLACEHOLDER = re.compile(r"\{\{(.*?)\}\}", re.DOTALL)
 # so a malformed ``{{ ... }}`` is rejected when the project is published.
 _TEMPLATE = {
     "type": "string",
+    # Forms offer a prompt editor; the pattern below is the real check.
+    "format": "template",
+    "description": "Reference variables as {{ name }} or {{ lead.name }}.",
     "pattern": rf"^(?:[^{{]|\{{(?!\{{)|\{{\{{\s*{_PATH}\s*\}}\}})*$",
 }
 
@@ -140,18 +144,36 @@ class LlmNode(Node):
         ),
         config_schema=closed_schema(
             {
-                "provider": {"type": "string", "minLength": 1},
+                "provider": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Provider name, e.g. openai or anthropic.",
+                },
                 "model": {"type": "string", "minLength": 1},
-                "credential": {"type": "string", "pattern": "^credential:"},
+                "credential": {
+                    "type": "string",
+                    "format": CREDENTIAL_REFERENCE_FORMAT,
+                    "description": "Credential holding the provider API key.",
+                },
                 "system_prompt": _TEMPLATE,
                 "user_prompt": {**_TEMPLATE, "minLength": 1},
-                "temperature": {"type": "number", "minimum": 0, "maximum": 2},
+                "temperature": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 2,
+                    "description": "Empty: the provider's default.",
+                },
                 "max_tokens": {
                     "type": "integer",
                     "minimum": 1,
                     "maximum": MAX_OUTPUT_TOKENS,
+                    "description": "Empty: the provider's default.",
                 },
-                "output_schema": {"type": "object"},
+                "output_schema": {
+                    "type": "object",
+                    "description": "JSON Schema the reply must match; it is"
+                    " returned parsed on the structured output.",
+                },
                 "tools": {
                     "type": "array",
                     "maxItems": MAX_TOOLS,

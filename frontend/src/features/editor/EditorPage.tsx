@@ -21,6 +21,7 @@ import {
 import { newNodeId } from './editorState'
 import { GRID, GraphCanvas } from './GraphCanvas'
 import { nodeTitle } from './graphView'
+import { NodeInspector } from './NodeInspector'
 import { NodeLibrary } from './NodeLibrary'
 import { useDraftEditor } from './useDraftEditor'
 
@@ -78,6 +79,10 @@ function DraftEditor({
         editor.saveError instanceof ApiError &&
         editor.saveError.kind === 'conflict'
     const selected = new Set(state.selection)
+    const inspected =
+        state.selection.length === 1
+            ? state.graph.nodes.find((n) => n.id === state.selection[0])
+            : undefined
 
     function onKeyDown(event: KeyboardEvent) {
         if (!(event.ctrlKey || event.metaKey) || isTextInput(event.target))
@@ -269,53 +274,76 @@ function DraftEditor({
                         onDropNode={addNode}
                     />
                 </section>
-                {/* The canvas as a list: the graph without pointer or sight
-                    (frontend/AGENTS §100). */}
-                <section
-                    aria-labelledby="draft-nodes"
-                    className="rounded-md border border-border bg-surface p-3 lg:w-72"
-                >
-                    <h2 id="draft-nodes" className="mb-2 font-semibold">
-                        Nodes ({state.graph.nodes.length})
-                    </h2>
-                    {state.graph.nodes.length === 0 ? (
-                        <p className="text-sm text-muted">
-                            This draft has no nodes yet.
-                        </p>
-                    ) : (
-                        <ul className="flex flex-col gap-1 text-sm">
-                            {state.graph.nodes.map((node) => {
-                                const incoming = state.graph.edges.filter(
-                                    (e) => e.target_node_id === node.id,
-                                ).length
-                                const outgoing = state.graph.edges.filter(
-                                    (e) => e.source_node_id === node.id,
-                                ).length
-                                return (
-                                    <li key={node.id}>
-                                        <button
-                                            type="button"
-                                            aria-pressed={selected.has(node.id)}
-                                            onClick={() => {
-                                                focusNode(node.id)
-                                            }}
-                                            className="focus-ring w-full rounded px-2 py-1 text-left hover:bg-surface-muted aria-pressed:bg-surface-muted aria-pressed:font-semibold"
-                                        >
-                                            {nodeTitle(
-                                                node,
-                                                catalog?.get(node.node_type),
-                                            )}
-                                            <span className="block text-xs text-muted">
-                                                {node.node_type} · {incoming}{' '}
-                                                in, {outgoing} out
-                                            </span>
-                                        </button>
-                                    </li>
-                                )
-                            })}
-                        </ul>
+                <div className="flex flex-col gap-3 lg:w-96 lg:shrink-0">
+                    {inspected && (
+                        <NodeInspector
+                            // Per node: its half-typed numbers and JSON stay its own.
+                            key={inspected.id}
+                            node={inspected}
+                            definition={catalog?.get(inspected.node_type)}
+                            onConfigure={(config, field) => {
+                                dispatch({
+                                    type: 'configure',
+                                    nodeId: inspected.id,
+                                    config,
+                                    field,
+                                })
+                            }}
+                        />
                     )}
-                </section>
+                    {/* The canvas as a list: the graph without pointer or sight
+                    (frontend/AGENTS §100). */}
+                    <section
+                        aria-labelledby="draft-nodes"
+                        className="rounded-md border border-border bg-surface p-3"
+                    >
+                        <h2 id="draft-nodes" className="mb-2 font-semibold">
+                            Nodes ({state.graph.nodes.length})
+                        </h2>
+                        {state.graph.nodes.length === 0 ? (
+                            <p className="text-sm text-muted">
+                                This draft has no nodes yet.
+                            </p>
+                        ) : (
+                            <ul className="flex flex-col gap-1 text-sm">
+                                {state.graph.nodes.map((node) => {
+                                    const incoming = state.graph.edges.filter(
+                                        (e) => e.target_node_id === node.id,
+                                    ).length
+                                    const outgoing = state.graph.edges.filter(
+                                        (e) => e.source_node_id === node.id,
+                                    ).length
+                                    return (
+                                        <li key={node.id}>
+                                            <button
+                                                type="button"
+                                                aria-pressed={selected.has(
+                                                    node.id,
+                                                )}
+                                                onClick={() => {
+                                                    focusNode(node.id)
+                                                }}
+                                                className="focus-ring w-full rounded px-2 py-1 text-left hover:bg-surface-muted aria-pressed:bg-surface-muted aria-pressed:font-semibold"
+                                            >
+                                                {nodeTitle(
+                                                    node,
+                                                    catalog?.get(
+                                                        node.node_type,
+                                                    ),
+                                                )}
+                                                <span className="block text-xs text-muted">
+                                                    {node.node_type} ·{' '}
+                                                    {incoming} in, {outgoing}{' '}
+                                                    out
+                                                </span>
+                                            </button>
+                                        </li>
+                                    )
+                                })}
+                            </ul>
+                        )}
+                    </section>
+                </div>
             </div>
 
             <ConfirmDialog

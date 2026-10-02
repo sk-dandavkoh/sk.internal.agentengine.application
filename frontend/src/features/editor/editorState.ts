@@ -4,6 +4,7 @@ import type {
     NodeInstance,
     NodePosition,
 } from '../../api/projects'
+import type { JsonObject } from '../../api/schemas'
 
 // Editor state of one project draft (frontend/AGENTS §29). Pure: the hook
 // in useDraftEditor.ts owns persistence; the canvas owns rendering-only
@@ -32,6 +33,9 @@ export interface EditorState {
     clipboard: Clipboard | null
     /** Graph before the drag in progress; one drag is one undo step. */
     dragOrigin: Graph | null
+    /** `configure` field the last undo step belongs to; typing on in that
+     * field extends the step instead of adding one per keystroke. */
+    lastEdit: string | null
 }
 
 export type EditorAction =
@@ -51,6 +55,9 @@ export type EditorAction =
     | { type: 'add'; node: NodeInstance }
     /** The server stored `graph` as `revision`. */
     | { type: 'saved'; graph: Graph; revision: number }
+    /** A node's whole new config, edited through `field` (a top-level
+     * config key). Validity is the backend's call, not the reducer's. */
+    | { type: 'configure'; nodeId: string; config: JsonObject; field: string }
 
 // ponytail: fixed cap; make it a preference if users ask for deeper history.
 export const HISTORY_LIMIT = 100
@@ -71,6 +78,7 @@ export function initEditor(graph: Graph, revision: number): EditorState {
         selection: [],
         clipboard: null,
         dragOrigin: null,
+        lastEdit: null,
     }
 }
 
@@ -118,12 +126,17 @@ export function placeUnpositioned(graph: Graph): Graph {
     }
 }
 
-function commit(state: EditorState, graph: Graph, from = state.graph) {
+function commit(
+    state: EditorState,
+    graph: Graph,
+    from = state.graph,
+): EditorState {
     return {
         ...state,
         graph,
         past: [...state.past, from].slice(-HISTORY_LIMIT),
         future: [],
+        lastEdit: null,
     }
 }
 
@@ -159,7 +172,7 @@ export function editorReducer(
             return commit(next, graph, origin)
         }
         case 'select':
-            return { ...state, selection: action.nodeIds }
+            return { ...state, selection: action.nodeIds, lastEdit: null }
         case 'undo': {
             const previous = state.past.at(-1)
             if (!previous || state.dragOrigin) return state
@@ -169,6 +182,7 @@ export function editorReducer(
                 past: state.past.slice(0, -1),
                 future: [state.graph, ...state.future],
                 selection: existing(state.selection, previous),
+                lastEdit: null,
             }
         }
         case 'redo': {
@@ -180,6 +194,7 @@ export function editorReducer(
                 past: [...state.past, state.graph],
                 future: state.future.slice(1),
                 selection: existing(state.selection, next),
+                lastEdit: null,
             }
         }
         case 'copy': {
@@ -249,6 +264,19 @@ export function editorReducer(
                 }),
                 selection: [node.id],
             }
+        }
+        case 'configure': {
+            const node = state.graph.nodes.find((n) => n.id === action.nodeId)
+            if (!node || state.dragOrigin) return state
+            const graph = {
+                ...state.graph,
+                nodes: state.graph.nodes.map((n) =>
+                    n === node ? { ...n, config: action.config } : n,
+                ),
+            }
+            const edit = `${action.nodeId} ${action.field}`
+            if (state.lastEdit === edit) return { ...state, graph }
+            return { ...commit(state, graph), lastEdit: edit }
         }
         case 'saved':
             // The undo stack survives a save (frontend/AGENTS §30).

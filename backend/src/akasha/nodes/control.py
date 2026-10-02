@@ -109,8 +109,14 @@ class IfNode(Node):
         config_schema=closed_schema(
             {
                 "operator": {"type": "string", "enum": sorted(_OPERATORS)},
-                "operand": {},  # any JSON value
-                "field": PATH_SCHEMA,
+                "operand": {  # any JSON value
+                    "description": "The value compared with; unused by is_null.",
+                },
+                "field": {
+                    **PATH_SCHEMA,
+                    "description": "Test this dotted path of the value instead"
+                    " of the whole value.",
+                },
             },
             "operator",
         ),
@@ -159,7 +165,15 @@ class SwitchNode(Node):
             NodeOutput("default", J, nullable=True),
         ),
         config_schema=closed_schema(
-            {"cases": {"type": "array", "maxItems": SWITCH_CASES}}, "cases"
+            {
+                "cases": {
+                    "type": "array",
+                    "maxItems": SWITCH_CASES,
+                    "description": "Values compared with the input in order;"
+                    " the first equal one picks its case_<i> output.",
+                }
+            },
+            "cases",
         ),
         capabilities=_CONTROL_FLOW,
     )

@@ -247,7 +247,6 @@ async def test_defaults_leave_optional_parameters_to_the_provider(
     [
         ({"tools": [{"description": "no name"}]}, "LLM_CONFIGURATION_INVALID"),
         ({"output_schema": {"type": "array"}}, "LLM_CONFIGURATION_INVALID"),
-        ({"credential": "credential:Not Valid"}, "LLM_CONFIGURATION_INVALID"),
     ],
 )
 async def test_invalid_configuration_is_a_configuration_error(
@@ -270,6 +269,7 @@ async def test_invalid_configuration_is_a_configuration_error(
         {**BASE, "temperature": 3},
         {**BASE, "max_tokens": 0},
         {**BASE, "credential": "sk-plaintext-key-0123456789"},
+        {**BASE, "credential": "credential:Not Valid"},
         {**BASE, "tools": [{"name": "bad name!", "parameters": {}}]},
         {**BASE, "api_key": "x"},  # closed schema
     ],

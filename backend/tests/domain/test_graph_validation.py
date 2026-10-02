@@ -368,8 +368,12 @@ class TestInputsAndConfig:
         connect(g, a, b)
         result = validate_graph(g, CATALOG)
         issues = result.by_code(ValidationCode.INVALID_CONFIG)
-        assert issues and issues[0].node_id == b.id
-        assert "retries" in issues[0].message
+        assert {i.node_id for i in issues} == {b.id}
+        # Every violation is reported, not only the first.
+        assert [i.message for i in issues] == [
+            "invalid configuration: config.retries is required",
+            "invalid configuration: config.x is not allowed",
+        ]
 
     def test_invalid_config_wrong_type(self) -> None:
         g = Graph()

@@ -23,6 +23,7 @@ import httpx
 
 from akasha.nodes.core import VERSION, closed_schema
 from akasha.sdk import (
+    CREDENTIAL_REFERENCE_FORMAT,
     Node,
     NodeCapabilities,
     NodeDefinition,
@@ -42,6 +43,8 @@ DEFAULT_TIMEOUT_SECONDS = 30.0
 MAX_TIMEOUT_SECONDS = 120
 MAX_REDIRECTS = 5
 METHODS = ("DELETE", "GET", "HEAD", "PATCH", "POST", "PUT")
+DEFAULT_METHOD = "GET"
+DEFAULT_MAX_RESULTS = 5
 _DEFAULT_PORTS = {"http": 80, "https": 443}
 
 
@@ -311,20 +314,43 @@ class HttpNode(Node):
         ),
         config_schema=closed_schema(
             {
-                "method": {"type": "string", "enum": list(METHODS)},
+                "method": {
+                    "type": "string",
+                    "enum": list(METHODS),
+                    "default": DEFAULT_METHOD,
+                },
                 "url": {"type": "string", "pattern": "^https?://"},
-                "headers": {"type": "object"},
+                "headers": {
+                    "type": "object",
+                    "additionalProperties": {"type": "string"},
+                    "description": "Header name to value. Secret headers"
+                    " belong in header credentials.",
+                },
                 # Header name -> credential reference, e.g. Authorization ->
                 # "credential:crm-api" holding "Bearer ...". Secret headers
                 # never live in ``headers`` (project config is secret-free).
-                "header_credentials": {"type": "object"},
+                "header_credentials": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string",
+                        "format": CREDENTIAL_REFERENCE_FORMAT,
+                    },
+                    "description": "Header name to the credential holding its"
+                    " value, e.g. Authorization.",
+                },
                 "timeout_seconds": {
                     "type": "number",
                     "minimum": 0.1,
                     "maximum": MAX_TIMEOUT_SECONDS,
+                    "default": DEFAULT_TIMEOUT_SECONDS,
                 },
-                "follow_redirects": {"type": "boolean"},
-                "fail_on_error_status": {"type": "boolean"},
+                "follow_redirects": {"type": "boolean", "default": False},
+                "fail_on_error_status": {
+                    "type": "boolean",
+                    "default": True,
+                    "description": "Fail on HTTP 4xx/5xx instead of returning"
+                    " the response.",
+                },
             },
             "url",
         ),
@@ -368,7 +394,7 @@ class HttpNode(Node):
             if not any(name.lower() == "content-type" for name in headers):
                 headers = {**headers, "content-type": "application/json"}
         response = await fetch(
-            cfg.get("method", "GET"),
+            cfg.get("method", DEFAULT_METHOD),
             cfg["url"],
             policy=self._policy,
             time_limit=cfg.get("timeout_seconds", DEFAULT_TIMEOUT_SECONDS),
@@ -425,7 +451,14 @@ class WebSearchNode(Node):
             ),
         ),
         config_schema=closed_schema(
-            {"max_results": {"type": "integer", "minimum": 1, "maximum": 20}}
+            {
+                "max_results": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 20,
+                    "default": DEFAULT_MAX_RESULTS,
+                }
+            }
         ),
         capabilities=NodeCapabilities(supports_cancellation=True),
     )
@@ -465,7 +498,7 @@ class WebSearchNode(Node):
         )
         if response.status >= 400:
             raise status_error(response.status, "SEARCH_PROVIDER_ERROR")
-        limit = context.config.get("max_results", 5)
+        limit = context.config.get("max_results", DEFAULT_MAX_RESULTS)
         return NodeResult({"results": _normalize(response)[:limit]})
 
 

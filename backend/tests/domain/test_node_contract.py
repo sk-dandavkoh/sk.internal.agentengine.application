@@ -12,6 +12,7 @@ from typing import Any, cast
 import pytest
 
 from akasha.domain.node import (
+    ConfigIssue,
     Node,
     NodeCapabilities,
     NodeConfigSchema,
@@ -314,9 +315,9 @@ def test_config_required_and_unknown_keys() -> None:
         }
     )
     schema.validate_config({"url": "https://x"})
-    with pytest.raises(NodeConfigurationError, match="missing required"):
+    with pytest.raises(NodeConfigurationError, match=r"config\.url is required"):
         schema.validate_config({})
-    with pytest.raises(NodeConfigurationError, match="unknown config key"):
+    with pytest.raises(NodeConfigurationError, match=r"config\.extra is not allowed"):
         schema.validate_config({"url": "https://x", "extra": 1})
     with pytest.raises(NodeConfigurationError, match="must be string"):
         schema.validate_config({"url": 42})
@@ -427,6 +428,135 @@ def test_config_constraint_keywords() -> None:
     for config in bad:
         with pytest.raises(NodeConfigurationError):
             schema.validate_config(config)
+
+
+def test_config_issues_collects_every_violation_with_its_path() -> None:
+    schema = NodeConfigSchema(
+        {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "pattern": "^https?://"},
+                "tools": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {"name": {"type": "string", "minLength": 1}},
+                        "required": ["name"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            "required": ["method"],
+            "additionalProperties": False,
+        }
+    )
+    issues = schema.issues(
+        {"url": "ftp://x", "tools": [{"name": ""}, {"extra": 1}], "typo": 1}
+    )
+    assert issues == [
+        ConfigIssue(("method",), "is required"),
+        ConfigIssue(("url",), "does not match the required format"),
+        ConfigIssue(("tools", 0, "name"), "must have at least 1 characters"),
+        ConfigIssue(("tools", 1, "name"), "is required"),
+        ConfigIssue(("tools", 1, "extra"), "is not allowed"),
+        ConfigIssue(("typo",), "is not allowed"),
+    ]
+    assert issues[2].location == "config.tools[0].name"
+    with pytest.raises(NodeConfigurationError, match=r"^config\.method is required$"):
+        schema.validate_config({"url": "ftp://x"})
+
+
+def test_config_issues_never_echo_values() -> None:
+    schema = NodeConfigSchema(
+        {"type": "object", "properties": {"mode": {"enum": ["a", "b"]}}}
+    )
+    (issue,) = schema.issues({"mode": "sk-live-secret-value"})
+    assert "sk-live" not in issue.message
+
+
+def test_nullable_type_lists() -> None:
+    schema = NodeConfigSchema(
+        {
+            "type": "object",
+            "properties": {
+                "limit": {"type": ["integer", "null"], "minimum": 1},
+            },
+        }
+    )
+    assert schema.issues({"limit": None}) == []
+    assert schema.issues({"limit": 3}) == []
+    assert schema.issues({"limit": 0}) == [ConfigIssue(("limit",), "must be >= 1")]
+    assert schema.issues({"limit": "3"}) == [
+        ConfigIssue(("limit",), "must be integer or null")
+    ]
+
+
+@pytest.mark.parametrize("bad_type", [[], ["string", "date"], [["string"]], "date"])
+def test_unsupported_types_are_contract_errors(bad_type: object) -> None:
+    schema = NodeConfigSchema(
+        {"type": "object", "properties": {"x": {"type": bad_type}}}
+    )
+    with pytest.raises(NodeContractError, match="unsupported config schema type"):
+        schema.issues({"x": "v"})
+
+
+def test_additional_properties_schema_checks_map_values() -> None:
+    schema = NodeConfigSchema(
+        {
+            "type": "object",
+            "properties": {
+                "headers": {
+                    "type": "object",
+                    "additionalProperties": {"type": "string"},
+                }
+            },
+        }
+    )
+    assert schema.issues({"headers": {"Accept": "text/plain"}}) == []
+    assert schema.issues({"headers": {"X-Count": 3}}) == [
+        ConfigIssue(("headers", "X-Count"), "must be string")
+    ]
+
+
+def test_credential_reference_format() -> None:
+    schema = NodeConfigSchema(
+        {
+            "type": "object",
+            "properties": {
+                "credential": {"type": "string", "format": "credential-reference"}
+            },
+        }
+    )
+    assert schema.issues({"credential": "credential:smtp-main"}) == []
+    for value in ("hunter2", "credential:", "credential:UPPER", "smtp-main"):
+        (issue,) = schema.issues({"credential": value})
+        assert issue.message == "must be a credential reference (credential:<name>)"
+
+
+def test_annotations_are_not_validated_and_defaults_must_be_valid() -> None:
+    NodeConfigSchema(
+        {
+            "type": "object",
+            "properties": {
+                "level": {
+                    "type": "string",
+                    "enum": ["info", "debug"],
+                    "default": "info",
+                    "title": "Level",
+                    "description": "Log level.",
+                }
+            },
+        }
+    )
+    with pytest.raises(NodeContractError, match="default of config key 'level'"):
+        NodeConfigSchema(
+            {
+                "type": "object",
+                "properties": {
+                    "level": {"type": "string", "enum": ["info"], "default": "loud"}
+                },
+            }
+        )
 
 
 def test_json_equal_is_strict_about_booleans() -> None:

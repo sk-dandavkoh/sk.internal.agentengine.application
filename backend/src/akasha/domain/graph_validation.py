@@ -250,18 +250,20 @@ def _check_node_config(
             )
         ]
     try:
-        definition.validate_config(instance.config)
-    except AkashaError as exc:
-        # ponytail: first config violation per node only. Upgrade path: a
-        # collecting NodeConfigSchema when schemas need all-error reporting.
-        return [
-            ValidationIssue(
-                ValidationCode.INVALID_CONFIG,
-                f"invalid configuration: {exc.message}",
-                node_id=node_id,
-            )
-        ]
-    return []
+        found = definition.config_schema.issues(instance.config)
+    except AkashaError as exc:  # the node's own schema is malformed
+        messages = [exc.message]
+    else:
+        # Every violation, so one validate round shows everything to fix.
+        messages = [f"{issue.location} {issue.message}" for issue in found]
+    return [
+        ValidationIssue(
+            ValidationCode.INVALID_CONFIG,
+            f"invalid configuration: {message}",
+            node_id=node_id,
+        )
+        for message in messages
+    ]
 
 
 def _missing_endpoint(edge: Edge, graph: Graph) -> ValidationIssue | None:

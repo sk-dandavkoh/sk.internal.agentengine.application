@@ -9,7 +9,7 @@ import {
     listProjectExecutions,
     type ExecutionListParams,
 } from './executions'
-import { listNodeDefinitions } from './nodes'
+import { listNodeDefinitions, validateNodeConfig } from './nodes'
 import { listPlugins } from './plugins'
 import {
     getProject,
@@ -19,7 +19,7 @@ import {
     type ProjectListParams,
 } from './projects'
 import { getExecutionReport } from './reports'
-import type { PageParams } from './schemas'
+import type { JsonObject, PageParams } from './schemas'
 import { getSystemStatus } from './system'
 
 /**
@@ -57,6 +57,9 @@ export const queryKeys = {
             ['executions', executionId, 'report'] as const,
     },
     nodes: () => ['nodes'] as const,
+    /** Below `nodes()`: a catalog refresh re-checks configs too. */
+    nodeConfigValidation: (nodeType: string, config: JsonObject) =>
+        ['nodes', nodeType, 'config-validation', config] as const,
     system: () => ['system', 'status'] as const,
     plugins: () => ['plugins'] as const,
     credentials: {
@@ -145,6 +148,19 @@ export const nodeQueries = {
         queryOptions({
             queryKey: queryKeys.nodes(),
             queryFn: ({ signal }) => listNodeDefinitions(client, signal),
+            staleTime: INSTALLATION_STALE_TIME_MS,
+        }),
+    /** A POST without side effects, cached by config: the same config of
+     * the same node code gets the same verdict. */
+    configValidation: (
+        client: ApiClient,
+        nodeType: string,
+        config: JsonObject,
+    ) =>
+        queryOptions({
+            queryKey: queryKeys.nodeConfigValidation(nodeType, config),
+            queryFn: ({ signal }) =>
+                validateNodeConfig(client, nodeType, config, signal),
             staleTime: INSTALLATION_STALE_TIME_MS,
         }),
 }

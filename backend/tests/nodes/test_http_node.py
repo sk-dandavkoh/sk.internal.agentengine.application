@@ -12,7 +12,7 @@ from akasha.domain.node import NodeError, NodeErrorKind
 from akasha.errors import NodeConfigurationError
 from akasha.nodes.http import HttpNode
 from akasha.security.network import NetworkPolicy, check_destination
-from tests.support import LocalHttpServer, RunNode
+from tests.support import LocalHttpServer, RunNode, make_context
 
 LOCAL = NetworkPolicy(allow_private_networks=True)
 CANARY = "sk-test-canary-value-123"  # must never appear in errors
@@ -311,14 +311,29 @@ async def test_invalid_config_is_rejected_at_validation(
         await run_node(local_node(), config=config)
 
 
-async def test_non_string_header_values_are_rejected(run_node: RunNode) -> None:
-    error = await failure(
-        run_node, local_node(), url="http://127.0.0.1:1/", headers={"X-N": 1}
-    )
-    assert (error.code, error.kind) == (
+async def test_non_string_header_values_are_rejected() -> None:
+    config = {"url": "http://127.0.0.1:1/", "headers": {"X-N": 1}}
+    # The schema rejects them at publish ...
+    with pytest.raises(NodeConfigurationError, match=r"config\.headers\.X-N"):
+        HttpNode.definition.validate_config(config)
+    # ... and the node still refuses them in versions published before the
+    # schema typed header values (the runtime does not re-validate config).
+    node = local_node()
+    with pytest.raises(NodeError) as exc:
+        await node.execute(make_context(node, config=config))
+    assert (exc.value.code, exc.value.kind) == (
         "HTTP_INVALID_HEADERS",
         NodeErrorKind.CONFIGURATION,
     )
+
+
+def test_header_credentials_must_be_references() -> None:
+    schema = HttpNode.definition.config_schema
+    ok = {"url": "https://x", "header_credentials": {"Authorization": "credential:crm"}}
+    assert schema.issues(ok) == []
+    (issue,) = schema.issues({**ok, "header_credentials": {"Authorization": CANARY}})
+    assert issue.path == ("header_credentials", "Authorization")
+    assert CANARY not in issue.message
 
 
 async def test_credentials_in_urls_are_rejected(run_node: RunNode) -> None:

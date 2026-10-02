@@ -30,6 +30,7 @@ from email.utils import formatdate
 
 from akasha.nodes.core import VERSION, closed_schema
 from akasha.sdk import (
+    CREDENTIAL_REFERENCE_FORMAT,
     Node,
     NodeCapabilities,
     NodeDefinition,
@@ -47,6 +48,8 @@ from akasha.security.network import NetworkPolicy, check_destination
 MAX_RECIPIENTS = 50
 _ADDRESS = {"type": "string", "pattern": r"^[^\s@<>,]+@[^\s@<>,]+$"}
 _DEFAULT_PORTS = {"none": 25, "starttls": 587, "tls": 465}
+DEFAULT_SECURITY = "starttls"
+DEFAULT_TIMEOUT_SECONDS = 30
 
 
 def _error(message: str, kind: NodeErrorKind, code: str) -> NodeError:
@@ -75,17 +78,35 @@ class SmtpNode(Node):
         config_schema=closed_schema(
             {
                 "host": {"type": "string", "minLength": 1},
-                "port": {"type": "integer", "minimum": 1, "maximum": 65535},
-                "security": {"type": "string", "enum": sorted(_DEFAULT_PORTS)},
+                "port": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 65535,
+                    "description": "Empty: 587 for starttls, 465 for tls, 25 for none.",
+                },
+                "security": {
+                    "type": "string",
+                    "enum": sorted(_DEFAULT_PORTS),
+                    "default": DEFAULT_SECURITY,
+                },
                 "username": {"type": "string", "minLength": 1},
-                "password_credential": {"type": "string", "minLength": 1},
+                "password_credential": {
+                    "type": "string",
+                    "format": CREDENTIAL_REFERENCE_FORMAT,
+                    "description": "Credential holding the SMTP password.",
+                },
                 "sender": _ADDRESS,
                 "recipients": {
                     "type": "array",
                     "items": _ADDRESS,
                     "maxItems": MAX_RECIPIENTS,
                 },
-                "timeout_seconds": {"type": "number", "minimum": 1, "maximum": 120},
+                "timeout_seconds": {
+                    "type": "number",
+                    "minimum": 1,
+                    "maximum": 120,
+                    "default": DEFAULT_TIMEOUT_SECONDS,
+                },
             },
             "host",
             "sender",
@@ -105,7 +126,7 @@ class SmtpNode(Node):
                 NodeErrorKind.CONFIGURATION,
                 "SMTP_NO_RECIPIENTS",
             )
-        security = cfg.get("security", "starttls")
+        security = cfg.get("security", DEFAULT_SECURITY)
         host, port = cfg["host"], cfg.get("port", _DEFAULT_PORTS[security])
         # Destination first: nothing is decrypted for a host never contacted.
         addresses = await check_destination(host, port, self._policy)
@@ -126,7 +147,7 @@ class SmtpNode(Node):
             security=security,
             username=cfg.get("username"),
             password=password,
-            timeout=cfg.get("timeout_seconds", 30),
+            timeout=cfg.get("timeout_seconds", DEFAULT_TIMEOUT_SECONDS),
         )
         return NodeResult(
             {

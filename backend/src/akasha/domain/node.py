@@ -21,6 +21,10 @@ from dataclasses import dataclass, field
 from enum import StrEnum, auto
 from typing import Any, ClassVar, Protocol
 
+from akasha.domain.credentials import (
+    is_credential_reference,
+    plaintext_secret_locations,
+)
 from akasha.domain.primitives import SEMVER_RE, validate_name
 from akasha.errors import (
     AkashaError,
@@ -121,13 +125,38 @@ class NodeCapabilities:
     streams_output: bool = False
 
 
+# ``format`` of a string holding a credential reference (``credential:<name>``)
+# instead of a secret: enforced by validation, and the hint forms use to offer
+# a credential picker rather than a text field (architecture §32).
+CREDENTIAL_REFERENCE_FORMAT = "credential-reference"
+
+
+@dataclass(frozen=True)
+class ConfigIssue:
+    """One config violation. ``path`` locates it (keys and list indexes, empty
+    for the config itself); ``message`` says what is wrong there. Values are
+    never echoed, so an issue is safe to show next to a form field."""
+
+    path: tuple[str | int, ...]
+    message: str
+
+    @property
+    def location(self) -> str:
+        """``config.tools[0].name``: the path as messages have always said it."""
+        return "config" + "".join(
+            f"[{p}]" if isinstance(p, int) else f".{p}" for p in self.path
+        )
+
+
 @dataclass(frozen=True)
 class NodeConfigSchema:
     """Machine-readable configuration schema, usable by backend validation,
     frontend forms and project import alike (architecture §3.5).
 
     Expressed as a JSON-Schema object; validation intentionally supports only
-    the structural subset checked by ``validate_config``.
+    the structural subset checked by ``issues``. ``title``, ``description``
+    and ``default`` are annotations for forms; ``default`` documents what the
+    node does when the key is absent (validation never inserts it).
     """
 
     json_schema: dict[str, Any] = field(default_factory=lambda: {"type": "object"})
@@ -135,42 +164,40 @@ class NodeConfigSchema:
     def __post_init__(self) -> None:
         if self.json_schema.get("type") != "object":
             raise NodeContractError("config schema must be a JSON-Schema object")
-        for fname in ("properties", "required", "additionalProperties"):
-            if fname == "properties" and not isinstance(
-                self.json_schema.get(fname, {}), dict
-            ):
-                raise NodeContractError("config schema 'properties' must be an object")
-            if fname == "required" and not isinstance(
-                self.json_schema.get(fname, []), list
-            ):
-                raise NodeContractError("config schema 'required' must be a list")
+        properties = self.json_schema.get("properties", {})
+        if not isinstance(properties, dict):
+            raise NodeContractError("config schema 'properties' must be an object")
+        if not isinstance(self.json_schema.get("required", []), list):
+            raise NodeContractError("config schema 'required' must be a list")
+        # A form advertises the default; one the schema itself rejects would
+        # make the form lie about what a valid configuration is.
+        for key, prop in properties.items():
+            if isinstance(prop, dict) and "default" in prop:
+                if found := _issues(prop["default"], prop, (key,)):
+                    raise NodeContractError(
+                        f"default of config key {key!r} {found[0].message}"
+                    )
 
     def validate_config(self, config: Mapping[str, Any]) -> None:
-        """Reject configs violating the schema's supported subset.
+        """Reject configs violating the schema (the first issue is reported)."""
+        if found := self.issues(config):
+            first = found[0]
+            raise NodeConfigurationError(
+                f"{first.location} {first.message}", details={"path": first.location}
+            )
 
-        ponytail: enforced keywords are ``type``, ``required``, ``properties``
-        (recursively), ``additionalProperties``, ``items``, ``enum``,
-        ``minimum``, ``maximum``, ``minLength``, ``maxItems`` and ``pattern``
-        — a subset of JSON Schema. Upgrade path: adopt the ``jsonschema``
-        package when formats or combinators (oneOf/anyOf) become requirements.
+    def issues(self, config: Mapping[str, Any]) -> list[ConfigIssue]:
+        """Every violation of the schema's supported subset.
+
+        ponytail: enforced keywords are ``type`` (a name or a list such as
+        ``["string", "null"]``), ``required``, ``properties``,
+        ``additionalProperties`` (``false`` or a schema), ``items``, ``enum``,
+        ``minimum``, ``maximum``, ``minLength``, ``maxItems``, ``pattern`` and
+        ``format: credential-reference`` — a subset of JSON Schema, applied at
+        every depth. Upgrade path: adopt the ``jsonschema`` package when other
+        formats or combinators (oneOf/anyOf) become requirements.
         """
-        props: dict[str, Any] = self.json_schema.get("properties", {})
-        for key in self.json_schema.get("required", []):
-            if key not in config:
-                raise NodeConfigurationError(
-                    f"missing required config key: {key}",
-                    details={"key": key},
-                )
-        closed = self.json_schema.get("additionalProperties", True) is False
-        for key, value in config.items():
-            if key not in props:
-                if closed:
-                    raise NodeConfigurationError(
-                        f"unknown config key: {key}",
-                        details={"key": key},
-                    )
-                continue
-            _check_json_type(value, props[key], f"config.{key}")
+        return _issues(config, self.json_schema, ())
 
 
 def json_equal(a: Any, b: Any) -> bool:
@@ -191,60 +218,74 @@ def _is_number(value: Any) -> bool:
     return isinstance(value, int | float) and not isinstance(value, bool)
 
 
-def _check_json_type(value: Any, schema: Mapping[str, Any], path: str) -> None:
+_JSON_TYPES: dict[str, Callable[[Any], bool]] = {
+    "string": lambda v: isinstance(v, str),
+    "integer": lambda v: isinstance(v, int) and not isinstance(v, bool),
+    "number": _is_number,
+    "boolean": lambda v: isinstance(v, bool),
+    "object": lambda v: isinstance(v, Mapping),
+    "array": lambda v: isinstance(v, list),
+    "null": lambda v: v is None,
+}
+
+
+def _issues(
+    value: Any, schema: Mapping[str, Any], path: tuple[str | int, ...]
+) -> list[ConfigIssue]:
     expected = schema.get("type")
     if expected is not None:
-        _check_type_keyword(value, expected, path)
-    _check_constraints(value, schema, path)
-    if expected == "object":
-        for key, item in value.items():
-            _check_json_type(
-                item, schema.get("properties", {}).get(key, {}), f"{path}.{key}"
+        types = expected if isinstance(expected, list) else [expected]
+        if not types or not all(isinstance(t, str) and t in _JSON_TYPES for t in types):
+            location = ConfigIssue(path, "").location
+            raise NodeContractError(
+                f"unsupported config schema type: {expected!r} at {location}"
             )
-    if expected == "array" and "items" in schema:
+        if not any(_JSON_TYPES[t](value) for t in types):
+            # Nothing below applies to a value of the wrong type.
+            return [ConfigIssue(path, f"must be {' or '.join(types)}")]
+    found = [ConfigIssue(path, m) for m in _constraint_messages(value, schema)]
+    if isinstance(value, Mapping):
+        props: Mapping[str, Any] = schema.get("properties", {})
+        extra = schema.get("additionalProperties", True)
+        found += [
+            ConfigIssue((*path, key), "is required")
+            for key in schema.get("required", [])
+            if key not in value
+        ]
+        for key, item in value.items():
+            if key in props:
+                found += _issues(item, props[key], (*path, key))
+            elif extra is False:
+                found.append(ConfigIssue((*path, key), "is not allowed"))
+            elif isinstance(extra, Mapping):
+                found += _issues(item, extra, (*path, key))
+    if isinstance(value, list) and isinstance(schema.get("items"), Mapping):
         for i, item in enumerate(value):
-            _check_json_type(item, schema["items"], f"{path}[{i}]")
+            found += _issues(item, schema["items"], (*path, i))
+    return found
 
 
-def _check_constraints(value: Any, schema: Mapping[str, Any], path: str) -> None:
-    def fail(reason: str) -> None:
-        raise NodeConfigurationError(f"{path} {reason}", details={"path": path})
-
+def _constraint_messages(value: Any, schema: Mapping[str, Any]) -> list[str]:
+    found: list[str] = []
     if "enum" in schema and not any(json_equal(value, c) for c in schema["enum"]):
-        fail("is not one of the allowed values")
+        found.append("is not one of the allowed values")
     if _is_number(value):
         if "minimum" in schema and value < schema["minimum"]:
-            fail(f"must be >= {schema['minimum']}")
+            found.append(f"must be >= {schema['minimum']}")
         if "maximum" in schema and value > schema["maximum"]:
-            fail(f"must be <= {schema['maximum']}")
+            found.append(f"must be <= {schema['maximum']}")
     if isinstance(value, str):
         if len(value) < schema.get("minLength", 0):
-            fail(f"must have at least {schema['minLength']} characters")
+            found.append(f"must have at least {schema['minLength']} characters")
         # Patterns come from node authors (trusted code), never from users.
         if "pattern" in schema and not re.search(schema["pattern"], value):
-            fail("does not match the required format")
+            found.append("does not match the required format")
+        is_reference = schema.get("format") == CREDENTIAL_REFERENCE_FORMAT
+        if is_reference and not is_credential_reference(value):
+            found.append("must be a credential reference (credential:<name>)")
     if isinstance(value, list) and len(value) > schema.get("maxItems", len(value)):
-        fail(f"must have at most {schema['maxItems']} items")
-
-
-def _check_type_keyword(value: Any, expected: Any, path: str) -> None:
-    ok = {
-        "string": isinstance(value, str),
-        "integer": isinstance(value, int) and not isinstance(value, bool),
-        "number": isinstance(value, (int, float)) and not isinstance(value, bool),
-        "boolean": isinstance(value, bool),
-        "object": isinstance(value, dict),
-        "array": isinstance(value, list),
-        "null": value is None,
-    }.get(expected)
-    if ok is None:
-        raise NodeContractError(
-            f"unsupported config schema type: {expected!r} at {path}"
-        )
-    if not ok:
-        raise NodeConfigurationError(
-            f"{path} must be {expected}", details={"path": path, "expected": expected}
-        )
+        found.append(f"must have at most {schema['maxItems']} items")
+    return found
 
 
 @dataclass(frozen=True)
@@ -291,6 +332,15 @@ class NodeDefinition:
 
     def validate_config(self, config: Mapping[str, Any]) -> None:
         self.config_schema.validate_config(config)
+
+    def config_issues(self, config: Mapping[str, Any]) -> list[ConfigIssue]:
+        """Everything publish would reject in ``config``, per location:
+        plaintext secrets first, then schema violations."""
+        secrets = [
+            ConfigIssue(path, "contains a secret value; use a credential reference")
+            for path in plaintext_secret_locations(config)
+        ]
+        return secrets + self.config_schema.issues(config)
 
     def validate_inputs(self, values: Mapping[str, Any]) -> None:
         self._validate_ports(self.inputs, values, "input")

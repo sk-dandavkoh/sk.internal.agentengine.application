@@ -221,6 +221,56 @@ test('the node library lists the backend registry and adds to the draft', async 
     expect(body.draft.graph.nodes.map((n) => n.node_type)).toEqual(['core.log'])
 })
 
+test('the inspector configures a built-in node from its backend schema', async ({
+    page: p,
+}) => {
+    const project = await createViaApi(unique('Inspector'))
+    await p.goto(`/projects/${project.id}/editor`)
+    const library = p.getByRole('region', { name: 'Node library' })
+    await library
+        .getByRole('searchbox', { name: 'Search nodes' })
+        .fill('core.http')
+    await library
+        .getByRole('button', { name: 'Add HTTP Request to graph' })
+        .click()
+    const inspector = p.getByRole('region', { name: /^Settings: HTTP Request/ })
+
+    // The real backend judges the config, field by field.
+    await expect(
+        inspector.getByText(/publishing would be rejected/),
+    ).toBeVisible()
+    const url = inspector.getByRole('textbox', { name: /^Url/ })
+    await url.fill('ftp://example.com')
+    await expect(url).toHaveAccessibleDescription(
+        /does not match the required format/,
+    )
+    await url.fill('https://example.com/hook')
+    await inspector
+        .getByRole('combobox', { name: /^Method/ })
+        .selectOption('POST')
+    const secrets = inspector.getByRole('group', { name: 'Header credentials' })
+    await secrets
+        .getByRole('textbox', { name: 'New Header credentials entry' })
+        .fill('Authorization')
+    await secrets.getByRole('button', { name: 'Add entry' }).click()
+    await secrets
+        .getByRole('combobox', { name: /^Authorization/ })
+        .fill('crm-api')
+    await expect(inspector.getByText('Configuration valid')).toBeVisible()
+    await p.keyboard.press('ControlOrMeta+s')
+    await expect(p.getByText('All changes saved to draft')).toBeVisible()
+
+    const saved = await api.get(`/api/v1/projects/${project.id}`)
+    const body = (await saved.json()) as {
+        draft: { graph: { nodes: { config: unknown }[] } }
+    }
+    expect(body.draft.graph.nodes[0]?.config).toEqual({
+        url: 'https://example.com/hook',
+        method: 'POST',
+        header_credentials: { Authorization: 'credential:crm-api' },
+    })
+})
+
 test('without a session the backend refuses and the UI says so', async ({
     browser,
 }) => {

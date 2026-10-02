@@ -73,6 +73,21 @@ class NodeTypeOut(BaseModel):
         )
 
 
+class ConfigValidationRequest(BaseModel):
+    config: dict[str, JsonValue]
+
+
+class ConfigIssueOut(BaseModel):
+    # Keys and list indexes from the config root; [] is the config itself.
+    path: list[str | int]
+    message: str
+
+
+class ConfigValidationOut(BaseModel):
+    valid: bool
+    issues: list[ConfigIssueOut]
+
+
 class NodeCatalog(BaseModel):
     # ponytail: unpaginated — the catalog is bounded by installed code (tens
     # of types), not by user data. Paginate if plugin catalogs grow large.
@@ -88,5 +103,23 @@ def create_nodes_router() -> APIRouter:
         registry: NodeRegistry = request.app.state.container.nodes
         definitions = sorted(registry.list_nodes(), key=lambda d: d.node_id)
         return NodeCatalog(items=[NodeTypeOut.from_definition(d) for d in definitions])
+
+    @router.post(
+        "/{node_type}/config/validate",
+        responses={404: {"model": ErrorResponse}, 422: {"model": ErrorResponse}},
+    )
+    async def validate_node_config(
+        node_type: str, body: ConfigValidationRequest, request: Request
+    ) -> ConfigValidationOut:
+        """Every issue publish would find in one node's config, located for
+        form fields. Stateless: nothing is stored, and no value is echoed."""
+        registry: NodeRegistry = request.app.state.container.nodes
+        issues = registry.get(node_type).definition.config_issues(body.config)
+        return ConfigValidationOut(
+            valid=not issues,
+            issues=[
+                ConfigIssueOut(path=list(i.path), message=i.message) for i in issues
+            ],
+        )
 
     return router

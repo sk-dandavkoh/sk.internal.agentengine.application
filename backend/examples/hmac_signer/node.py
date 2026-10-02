@@ -10,6 +10,7 @@ import hmac
 import json
 
 from akasha.sdk import (
+    CREDENTIAL_REFERENCE_FORMAT,
     Node,
     NodeConfigSchema,
     NodeDefinition,
@@ -53,9 +54,12 @@ class HmacSignNode(Node):
             {
                 "type": "object",
                 "properties": {
-                    # A credential reference ("credential:<name>"); the engine
-                    # rejects plaintext secrets here at publish time.
-                    "secret_credential": {"type": "string"},
+                    # A credential reference ("credential:<name>"): the format
+                    # is validated and makes forms offer a credential picker.
+                    "secret_credential": {
+                        "type": "string",
+                        "format": CREDENTIAL_REFERENCE_FORMAT,
+                    },
                     "algorithm": {"type": "string", "enum": ["sha256", "sha512"]},
                     "max_payload_bytes": {
                         "type": "integer",

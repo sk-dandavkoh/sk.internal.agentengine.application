@@ -298,3 +298,57 @@ describe('saved', () => {
 it('newNodeId has the backend id shape', () => {
     expect(newNodeId()).toMatch(/^node_[0-9a-f]{32}$/)
 })
+
+describe('configure', () => {
+    const configure = (
+        nodeId: string,
+        config: Record<string, string>,
+        field: string,
+    ): EditorAction => ({ type: 'configure', nodeId, config, field })
+    const configOf = (state: EditorState, id: string) =>
+        state.graph.nodes.find((n) => n.id === id)?.config
+
+    it('replaces only the node config and is an unsaved, undoable edit', () => {
+        const start = initEditor(graph(), 1)
+        const state = run(start, configure('a', { message: 'hi' }, 'message'))
+        expect(configOf(state, 'a')).toEqual({ message: 'hi' })
+        expect(state.graph.nodes[1]).toBe(start.graph.nodes[1])
+        expect(state.graph.edges).toBe(start.graph.edges)
+        expect(isDirty(state)).toBe(true)
+        const undone = run(state, { type: 'undo' })
+        expect(undone.graph).toBe(start.graph)
+        expect(isDirty(undone)).toBe(false)
+    })
+
+    it('typing on in one field is one undo step; another field is a new one', () => {
+        const start = initEditor(graph(), 1)
+        const typed = run(
+            start,
+            configure('a', { message: 'h' }, 'message'),
+            configure('a', { message: 'hi' }, 'message'),
+            configure('a', { message: 'hi', level: 'info' }, 'level'),
+        )
+        expect(typed.past).toHaveLength(2)
+        const once = run(typed, { type: 'undo' })
+        expect(configOf(once, 'a')).toEqual({ message: 'hi' })
+        expect(run(once, { type: 'undo' }).graph).toBe(start.graph)
+    })
+
+    it('selecting or undoing ends the step', () => {
+        const start = initEditor(graph(), 1)
+        const state = run(
+            start,
+            configure('a', { message: 'h' }, 'message'),
+            { type: 'select', nodeIds: ['a'] },
+            configure('a', { message: 'hi' }, 'message'),
+        )
+        expect(state.past).toHaveLength(2)
+    })
+
+    it('ignores unknown nodes and edits during a drag', () => {
+        const start = initEditor(graph(), 1)
+        expect(run(start, configure('zz', { x: 'y' }, 'x'))).toBe(start)
+        const dragging = run(start, drag('a', 5, 5, false))
+        expect(run(dragging, configure('a', { x: 'y' }, 'x'))).toBe(dragging)
+    })
+})

@@ -329,6 +329,46 @@ frontend change. Unknown categories and capabilities are shown humanized.
   the draft). New nodes start with empty config; configuring them is the
   inspector (Phase 09), validity is the backend's `/validate`.
 
+## Node inspector
+
+`features/editor/NodeInspector.tsx`, beside the canvas while exactly one
+node is selected. Its form is generated from the node's `config_schema`
+(`configSchema.ts` reads the schema, `ConfigForm.tsx` renders it); no node
+has a form of its own, so a new backend or plugin node is configurable
+without a frontend change.
+
+- Field kinds: text, prompt template (`format: template`), number/integer,
+  boolean, select (`enum`), credential reference (`format:
+credential-reference`), nested object, list (`items`, `maxItems`), map
+  (`additionalProperties` schema) and JSON for anything else (no type,
+  type unions, free-form objects). `type: [..., "null"]` adds a "no value
+  (null)" toggle.
+- Required fields are marked; `description` and `default` are shown.
+  Defaults are never written: an unset field is absent and the node uses
+  its default ("Use default" removes a set value). Clearing an optional
+  field removes the key.
+- Validation is the backend's: the config is sent to `POST
+/nodes/{type}/config/validate` 400 ms after typing settles (cached per
+  config), and each issue shows at its field and in a list. Locally only
+  unparsable input is caught (a number or JSON being typed); it is not
+  committed, so the draft keeps the last valid value.
+- Credentials: the field takes a credential name and stores
+  `credential:<name>`; names are suggested from the credential list (admin
+  only; members type the name). A stored value that is not a reference is
+  hidden, never shown, since it might be a secret.
+- Schema changes: keys the schema does not know stay visible (as JSON,
+  with Remove), and a value of the wrong type is shown as JSON instead of
+  being dropped. A node type missing from the catalog shows no form.
+- Edits are draft changes like any other: saved by save/autosave, and
+  undoable. Typing on in one field is one undo step.
+
+Tests: `configSchema.test.ts` (schema reading), `editorState.test.ts`
+(the `configure` action), `NodeInspector.test.tsx` (the route against a
+stub backend: every field kind, nesting, defaults, null, validation,
+credentials, invalid input, save failure, schema changes) and
+`tests/fullstack/projects.spec.ts` (core.http configured against the real
+backend).
+
 ## Design system
 
 All UI is composed from `src/components/ui` (`import { Button, Dialog } from

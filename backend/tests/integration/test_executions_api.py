@@ -391,6 +391,84 @@ async def test_node_catalog_lists_every_registered_type(env: Env) -> None:
     assert search["outputs"][0]["schema"]["type"] == "array"
     flags = next(n for n in items if n["node_type"] == "core.if")["capabilities"]
     assert flags["is_control_flow"] is True
+    smtp = next(n for n in items if n["node_type"] == "core.smtp")["config_schema"]
+    assert smtp["properties"]["password_credential"]["format"] == (
+        "credential-reference"
+    )
+    assert smtp["properties"]["security"]["default"] == "starttls"
+
+
+async def validate_config(
+    env: Env, node_type: str, config: object, **kwargs: Any
+) -> httpx.Response:
+    return await env.client.post(
+        f"/api/v1/nodes/{node_type}/config/validate", json={"config": config}, **kwargs
+    )
+
+
+async def test_validate_config_reports_every_issue_with_its_path(env: Env) -> None:
+    member = await env.kit.member_headers(env.admin, "member")
+    config = {
+        "url": "ftp://example.com",
+        "headers": {"X-Count": 3},
+        "header_credentials": {"Authorization": "credential:crm-api"},
+        "typo": True,
+    }
+
+    response = await validate_config(env, "core.http", config, headers=member)
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "valid": False,
+        "issues": [
+            {"path": ["url"], "message": "does not match the required format"},
+            {"path": ["headers", "X-Count"], "message": "must be string"},
+            {"path": ["typo"], "message": "is not allowed"},
+        ],
+    }
+    ok = await validate_config(env, "core.http", {"url": "https://example.com"})
+    assert ok.json() == {"valid": True, "issues": []}
+
+
+async def test_validate_config_locates_secrets_without_echoing_them(env: Env) -> None:
+    response = await validate_config(
+        env,
+        "core.smtp",
+        {
+            "host": "mail.example.com",
+            "sender": "a@example.com",
+            "recipients": ["b@example.com"],
+            "password_credential": SECRET,
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["issues"] == [
+        {
+            "path": ["password_credential"],
+            "message": "contains a secret value; use a credential reference",
+        },
+        {
+            "path": ["password_credential"],
+            "message": "must be a credential reference (credential:<name>)",
+        },
+    ]
+    assert SECRET not in response.text
+
+
+async def test_validate_config_errors(env: Env) -> None:
+    assert_error(await validate_config(env, "acme.missing", {}), 404, "NODE_NOT_FOUND")
+    assert_error(
+        await validate_config(env, "core.http", ["not", "an", "object"]),
+        422,
+        "VALIDATION_ERROR",
+    )
+    unauthenticated = await env.client.post(
+        "/api/v1/nodes/core.http/config/validate",
+        json={"config": {}},
+        headers={"Authorization": ""},
+    )
+    assert unauthenticated.status_code == 401
 
 
 # -- system status ----------------------------------------------------------------

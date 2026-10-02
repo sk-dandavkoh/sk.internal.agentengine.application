@@ -239,6 +239,32 @@ The same schema should be usable by:
 
 The frontend should not duplicate Node configuration definitions manually.
 
+Implementation (frontend Phase 09):
+
+- `NodeConfigSchema` (`akasha.domain.node`) validates a JSON-Schema subset:
+  `type` (a name or a list; `["string", "null"]` makes a value nullable),
+  `required`, `properties`, `additionalProperties` (`false`, or a schema
+  for the values of a map such as HTTP headers), `items`, `enum`,
+  `minimum`, `maximum`, `minLength`, `maxItems`, `pattern`, and
+  `format: "credential-reference"` (the value must be `credential:<name>`).
+  The keywords apply at every depth.
+- `title`, `description` and `default` are form annotations. `default` is
+  what the node does when the key is absent; validation never inserts it,
+  and a schema whose default it would reject fails as a `NodeContractError`.
+  `format: "template"` marks prompt templates (shown as a prompt editor).
+- `NodeConfigSchema.issues` returns every violation as a `ConfigIssue`
+  (key/index path + message, never the value); `validate_config` raises the
+  first. `NodeDefinition.config_issues` adds plaintext-secret locations, i.e.
+  everything publish would reject in one node's config.
+- `POST /api/v1/nodes/{node_type}/config/validate` (`{config}` → `{valid,
+  issues[{path, message}]}`) exposes that check to the inspector. It is
+  stateless, stores nothing and echoes no value; publish stays the
+  authoritative gate. Graph validation (`/validate`, publish) reports every
+  schema violation of a node as its own `invalid_config` issue; a node with
+  plaintext secrets gets one `plaintext_secret` issue listing their locations.
+- Built-in nodes declare `format: credential-reference` on every sensitive
+  config key (tested). Unknown formats are annotations only.
+
 ----------
 
 ## 3.6 Explicit State
@@ -1229,6 +1255,7 @@ Implemented in V1 (Phase 27 closed the gaps the frontend needs):
 /api/v1/executions/status-counts                 executions per status (same visibility)
 /api/v1/executions/{id}[/events|/cancel]         state, event history, cancel
 /api/v1/nodes                                    node catalog (ports, config schema)
+/api/v1/nodes/{type}/config/validate             config issues per field (stateless, §3.5)
 /api/v1/plugins                                  installed plugins (admin, read-only)
 /api/v1/credentials                              admin only, values never returned
 /api/v1/reports/executions/{id}                  execution report

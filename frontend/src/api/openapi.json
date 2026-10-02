@@ -59,6 +59,71 @@
         "title": "ChangePasswordRequest",
         "type": "object"
       },
+      "ConfigIssueOut": {
+        "properties": {
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "path": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Path",
+            "type": "array"
+          }
+        },
+        "required": [
+          "path",
+          "message"
+        ],
+        "title": "ConfigIssueOut",
+        "type": "object"
+      },
+      "ConfigValidationOut": {
+        "properties": {
+          "issues": {
+            "items": {
+              "$ref": "#/components/schemas/ConfigIssueOut"
+            },
+            "title": "Issues",
+            "type": "array"
+          },
+          "valid": {
+            "title": "Valid",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "valid",
+          "issues"
+        ],
+        "title": "ConfigValidationOut",
+        "type": "object"
+      },
+      "ConfigValidationRequest": {
+        "properties": {
+          "config": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "title": "Config",
+            "type": "object"
+          }
+        },
+        "required": [
+          "config"
+        ],
+        "title": "ConfigValidationRequest",
+        "type": "object"
+      },
       "CostReport": {
         "additionalProperties": false,
         "description": "A list-price estimate, never billing data (see ``CostEstimate``).",
@@ -3347,6 +3412,79 @@
           }
         },
         "summary": "List Node Types",
+        "tags": [
+          "nodes"
+        ]
+      }
+    },
+    "/api/v1/nodes/{node_type}/config/validate": {
+      "post": {
+        "description": "Every issue publish would find in one node's config, located for\nform fields. Stateless: nothing is stored, and no value is echoed.",
+        "operationId": "validate_node_config_api_v1_nodes__node_type__config_validate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "node_type",
+            "required": true,
+            "schema": {
+              "title": "Node Type",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfigValidationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConfigValidationOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Validate Node Config",
         "tags": [
           "nodes"
         ]

@@ -143,25 +143,36 @@ def credential_references(config: object) -> frozenset[str]:
     return frozenset().union(*(credential_references(v) for v in values))
 
 
-def plaintext_secret_paths(config: Mapping[str, object]) -> list[str]:
-    """Locations (never values) of secret material in a config document.
+def plaintext_secret_locations(
+    config: Mapping[str, object],
+) -> list[tuple[str | int, ...]]:
+    """Locations (never values) of secret material in a config document, as
+    key/index paths.
 
     Structural, like redaction: a string under a sensitive key (at any depth)
     must be a credential reference; any other string must not be
     credential-shaped (``Bearer ...``, ``sk-...``, URL userinfo, ...).
     """
-    found: list[str] = []
+    found: list[tuple[str | int, ...]] = []
 
-    def walk(value: object, path: str, sensitive: bool) -> None:
+    def walk(value: object, path: tuple[str | int, ...], sensitive: bool) -> None:
         if isinstance(value, Mapping):
             for key, item in value.items():
-                walk(item, f"{path}.{key}", sensitive or is_sensitive_key(str(key)))
+                walk(item, (*path, key), sensitive or is_sensitive_key(str(key)))
         elif isinstance(value, list | tuple):
             for i, item in enumerate(value):
-                walk(item, f"{path}[{i}]", sensitive)
+                walk(item, (*path, i), sensitive)
         elif isinstance(value, str) and not is_credential_reference(value):
             if sensitive or redact_text(value) != value:
                 found.append(path)
 
-    walk(config, "", False)
+    walk(config, (), False)
     return found
+
+
+def plaintext_secret_paths(config: Mapping[str, object]) -> list[str]:
+    """``plaintext_secret_locations`` as ``.key[0].key`` strings."""
+    return [
+        "".join(f"[{p}]" if isinstance(p, int) else f".{p}" for p in path)
+        for path in plaintext_secret_locations(config)
+    ]

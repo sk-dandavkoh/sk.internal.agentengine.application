@@ -242,6 +242,7 @@ void executions.executeProjectVersion(recorder, 'p', 1, { k: 'v' })
 void executions.invokeTrigger(recorder, 'p', 't', { k: 'v' })
 void reports.getExecutionReport(recorder, 'e')
 void nodes.listNodeDefinitions(recorder)
+void nodes.validateNodeConfig(recorder, 'core.http', { url: 'https://x' })
 void credentials.listCredentials(recorder)
 void credentials.getCredential(recorder, 'c')
 void credentials.createCredential(recorder, {

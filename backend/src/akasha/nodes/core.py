@@ -83,7 +83,16 @@ class InputNode(Node):
             category="input",
         ),
         outputs=(VALUE_OUT,),
-        config_schema=closed_schema({"field": {"type": "string", "minLength": 1}}),
+        config_schema=closed_schema(
+            {
+                "field": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Emit only this top-level field of the"
+                    " execution input. Empty: the whole input.",
+                }
+            }
+        ),
     )
 
     async def execute(self, context: NodeExecutionContext) -> NodeResult:
@@ -122,6 +131,7 @@ class OutputNode(Node):
         return NodeResult({"value": context.inputs["value"]})
 
 
+DEFAULT_LEVEL = "info"
 _LEVELS = {
     "debug": logging.DEBUG,
     "info": logging.INFO,
@@ -150,8 +160,17 @@ class LogNode(Node):
         config_schema=closed_schema(
             {
                 "message": {"type": "string", "minLength": 1},
-                "level": {"type": "string", "enum": sorted(_LEVELS)},
-                "include_value": {"type": "boolean"},
+                "level": {
+                    "type": "string",
+                    "enum": sorted(_LEVELS),
+                    "default": DEFAULT_LEVEL,
+                },
+                "include_value": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Also log the value itself. It may hold"
+                    " sensitive data; only its type is logged otherwise.",
+                },
             },
             "message",
         ),
@@ -168,7 +187,7 @@ class LogNode(Node):
         }
         if context.config.get("include_value", False):
             extra["value"] = value
-        level = _LEVELS[context.config.get("level", "info")]
+        level = _LEVELS[context.config.get("level", DEFAULT_LEVEL)]
         context.logger.log(level, context.config["message"], extra=extra)
         return NodeResult({"value": value})
 
@@ -190,6 +209,7 @@ class DelayNode(Node):
                     "type": "number",
                     "minimum": 0,
                     "maximum": MAX_DELAY_SECONDS,
+                    "description": "How long to wait before passing the value on.",
                 }
             },
             "seconds",
@@ -243,7 +263,17 @@ class SetNode(Node):
         inputs=(value_in(required=False),),
         outputs=(NodeOutput("value", PortType.OBJECT),),
         config_schema=closed_schema(
-            {"fields": {"type": "object"}, "key": {"type": "string", "minLength": 1}}
+            {
+                "fields": {
+                    "type": "object",
+                    "description": "Static fields of the built object.",
+                },
+                "key": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Field the input value is stored under.",
+                },
+            }
         ),
     )
 
@@ -277,7 +307,16 @@ class PickNode(Node):
         ),
         inputs=(value_in(),),
         outputs=(VALUE_OUT,),
-        config_schema=closed_schema({"path": PATH_SCHEMA}, "path"),
+        config_schema=closed_schema(
+            {
+                "path": {
+                    **PATH_SCHEMA,
+                    "description": "Dotted path into the input, e.g."
+                    " lead.contacts.0.name (digits index lists).",
+                }
+            },
+            "path",
+        ),
     )
 
     async def execute(self, context: NodeExecutionContext) -> NodeResult:

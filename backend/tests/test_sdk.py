@@ -40,7 +40,9 @@ BACKEND = Path(__file__).parent.parent
 # The SDK compatibility contract: removing or renaming any of these is a
 # breaking change and needs a major SDK_VERSION bump (docs/sdk.md).
 PUBLIC_API = {
+    "CREDENTIAL_REFERENCE_FORMAT",
     "MAX_EVENTS_PER_ATTEMPT",
+    "ConfigIssue",
     "SDK_VERSION",
     "CredentialResolver",
     "Node",
