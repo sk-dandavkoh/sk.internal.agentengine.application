@@ -92,6 +92,26 @@ def ports_compatible(source: NodeOutput, target: NodeInput) -> bool:
     )
 
 
+def port_signature(port: NodeInput | NodeOutput) -> str:
+    """The value shape ``ports_compatible`` decides on: the port type, with a
+    ``[]`` suffix for a ``multiple`` (list) port, e.g. ``"string[]"``."""
+    return port.port_type.value + ("[]" if port.multiple else "")
+
+
+def port_compatibility() -> dict[str, list[str]]:
+    """``ports_compatible`` as data: each output signature mapped to the input
+    signatures it may feed, in ``PortType`` order. Published with the node
+    catalog so editors check connections against this rule instead of a copy
+    of it (AGENTS §4)."""
+    shapes = [(t, m) for t in PortType for m in (False, True)]
+    outputs = [NodeOutput("o", t, multiple=m) for t, m in shapes]
+    inputs = [NodeInput("i", t, multiple=m) for t, m in shapes]
+    return {
+        port_signature(o): [port_signature(i) for i in inputs if ports_compatible(o, i)]
+        for o in outputs
+    }
+
+
 def resolve_ports(
     edge: Edge, graph: Graph, definitions: Mapping[str, NodeDefinition]
 ) -> tuple[NodeOutput, NodeInput]:

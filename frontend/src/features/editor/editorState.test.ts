@@ -352,3 +352,173 @@ describe('configure', () => {
         expect(run(dragging, configure('a', { x: 'y' }, 'x'))).toBe(dragging)
     })
 })
+
+describe('connect', () => {
+    const three = () =>
+        initEditor({ ...graph(), nodes: [...graph().nodes, node('c')] }, 1)
+
+    it('adds the edge as one undoable step', () => {
+        const state = run(three(), { type: 'connect', edge: edge('b', 'c') })
+        expect(state.graph.edges).toEqual([edge('a', 'b'), edge('b', 'c')])
+        expect(isDirty(state)).toBe(true)
+        const undone = run(state, { type: 'undo' })
+        expect(isDirty(undone)).toBe(false)
+        expect(run(undone, { type: 'redo' }).graph.edges).toHaveLength(2)
+    })
+
+    it('refuses what the backend would refuse to store', () => {
+        const start = three()
+        for (const e of [
+            edge('a', 'a'), // self-edge
+            edge('a', 'b'), // duplicate
+            edge('a', 'gone'), // dangling
+        ])
+            expect(run(start, { type: 'connect', edge: e })).toBe(start)
+        const dragging = run(start, drag('a', 5, 5))
+        expect(run(dragging, { type: 'connect', edge: edge('b', 'c') })).toBe(
+            dragging,
+        )
+    })
+})
+
+describe('reconnect', () => {
+    const start = () =>
+        run(
+            initEditor(
+                {
+                    nodes: [node('a'), node('b'), node('c')],
+                    edges: [edge('a', 'b'), edge('b', 'c')],
+                },
+                1,
+            ),
+            { type: 'select', edgeKeys: ['a:out->b:in'] },
+        )
+
+    it('moves the edge in place, keeps it selected, undoably', () => {
+        const state = run(start(), {
+            type: 'reconnect',
+            from: edge('a', 'b'),
+            edge: edge('a', 'c'),
+        })
+        expect(state.graph.edges).toEqual([edge('a', 'c'), edge('b', 'c')])
+        expect(state.edgeSelection).toEqual(['a:out->c:in'])
+        expect(run(state, { type: 'undo' }).graph.edges[0]).toEqual(
+            edge('a', 'b'),
+        )
+    })
+
+    it('refuses unknown edges, no-op moves, duplicates and self-edges', () => {
+        const s = start()
+        const bad: [string, string, string, string][] = [
+            ['c', 'a', 'a', 'c'], // `from` does not exist
+            ['a', 'b', 'a', 'b'], // to where it is
+            ['a', 'b', 'b', 'c'], // onto an existing edge
+            ['a', 'b', 'b', 'b'], // self-edge
+        ]
+        for (const [fs, ft, s2, t2] of bad)
+            expect(
+                run(s, {
+                    type: 'reconnect',
+                    from: edge(fs, ft),
+                    edge: edge(s2, t2),
+                }),
+            ).toBe(s)
+    })
+})
+
+describe('delete', () => {
+    it('removes nodes with every edge they touch, plus chosen edges, as one step', () => {
+        const start = run(
+            initEditor(
+                {
+                    nodes: [node('a'), node('b'), node('c'), node('d')],
+                    edges: [edge('a', 'b'), edge('b', 'c'), edge('c', 'd')],
+                },
+                1,
+            ),
+            { type: 'select', nodeIds: ['b', 'd'], edgeKeys: ['c:out->d:in'] },
+        )
+        const state = run(start, {
+            type: 'delete',
+            nodeIds: ['b'],
+            edgeKeys: ['c:out->d:in'],
+        })
+        expect(state.graph.nodes.map((n) => n.id)).toEqual(['a', 'c', 'd'])
+        expect(state.graph.edges).toEqual([])
+        expect(state.selection).toEqual(['d'])
+        expect(state.edgeSelection).toEqual([])
+        expect(state.past).toHaveLength(1)
+        const undone = run(state, { type: 'undo' })
+        expect(undone.graph).toBe(start.graph)
+        expect(isDirty(undone)).toBe(false)
+    })
+
+    it('deleting nothing (or unknown ids) is no edit', () => {
+        const start = initEditor(graph(), 1)
+        expect(
+            run(start, { type: 'delete', nodeIds: ['x'], edgeKeys: ['y'] }),
+        ).toBe(start)
+    })
+})
+
+describe('duplicate', () => {
+    it('copies the selection with its inner edges, leaving the clipboard alone', () => {
+        const start = run(
+            initEditor(
+                {
+                    nodes: [node('a'), node('b', { x: 300, y: 0 }), node('c')],
+                    edges: [edge('a', 'b'), edge('b', 'c')],
+                },
+                1,
+            ),
+            { type: 'select', nodeIds: ['a', 'b'] },
+        )
+        const state = run(start, {
+            type: 'duplicate',
+            ids: { a: 'a2', b: 'b2' },
+        })
+        expect(state.graph.nodes.map((n) => n.id)).toEqual([
+            'a',
+            'b',
+            'c',
+            'a2',
+            'b2',
+        ])
+        expect(at(state, 'b2')).toEqual({
+            x: 300 + PASTE_OFFSET,
+            y: PASTE_OFFSET,
+        })
+        expect(state.graph.edges.at(-1)).toEqual(edge('a2', 'b2'))
+        expect(state.graph.edges).toHaveLength(3)
+        expect(state.selection).toEqual(['a2', 'b2'])
+        expect(state.clipboard).toBeNull()
+        expect(state.past).toHaveLength(1)
+    })
+
+    it('without selection is a no-op', () => {
+        const start = initEditor(graph(), 1)
+        expect(run(start, { type: 'duplicate', ids: {} })).toBe(start)
+    })
+})
+
+describe('edge selection', () => {
+    it('is kept separately, never history, and filtered on undo', () => {
+        const start = initEditor(graph(), 1)
+        const selected = run(start, {
+            type: 'select',
+            edgeKeys: ['a:out->b:in'],
+        })
+        expect(selected.edgeSelection).toEqual(['a:out->b:in'])
+        expect(selected.past).toEqual([])
+        // Selecting nodes only keeps the edge selection.
+        expect(
+            run(selected, { type: 'select', nodeIds: ['a'] }).edgeSelection,
+        ).toEqual(['a:out->b:in'])
+        const removed = run(
+            selected,
+            { type: 'delete', nodeIds: [], edgeKeys: ['a:out->b:in'] },
+            { type: 'redo' },
+        )
+        expect(removed.edgeSelection).toEqual([])
+    })
+})

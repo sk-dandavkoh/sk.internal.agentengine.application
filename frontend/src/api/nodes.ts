@@ -34,7 +34,11 @@ export type NodeDefinition = z.infer<typeof nodeDefinitionSchema>
 
 export const nodeCatalogSchema = z.object({
     items: z.array(nodeDefinitionSchema),
+    /** The backend's port rule as data: output signature (`portSignature`)
+     * to the input signatures it may connect to. */
+    port_compatibility: z.record(z.string(), z.array(z.string())),
 })
+export type NodeCatalog = z.infer<typeof nodeCatalogSchema>
 
 export function listNodeDefinitions(client: ApiClient, signal?: AbortSignal) {
     return client.request('GET', '/nodes', nodeCatalogSchema, { signal })

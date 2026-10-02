@@ -1117,10 +1117,21 @@
             },
             "title": "Items",
             "type": "array"
+          },
+          "port_compatibility": {
+            "additionalProperties": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "title": "Port Compatibility",
+            "type": "object"
           }
         },
         "required": [
-          "items"
+          "items",
+          "port_compatibility"
         ],
         "title": "NodeCatalog",
         "type": "object"

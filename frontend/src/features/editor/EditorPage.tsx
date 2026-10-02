@@ -1,11 +1,11 @@
 import { useQuery, type UseQueryResult } from '@tanstack/react-query'
 import { ReactFlowProvider, useReactFlow } from '@xyflow/react'
-import { useMemo, useRef, useState, type KeyboardEvent } from 'react'
+import { Fragment, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { useParams } from 'react-router'
 import { useApiClient } from '../../api/context'
 import { ApiError, errorMessage } from '../../api/errors'
-import type { NodeDefinition } from '../../api/nodes'
-import type { NodePosition, Project } from '../../api/projects'
+import type { NodeCatalog } from '../../api/nodes'
+import type { Edge, NodePosition, Project } from '../../api/projects'
 import { nodeQueries, projectQueries } from '../../api/queries'
 import { QuerySection } from '../../components/QuerySection'
 import {
@@ -18,9 +18,11 @@ import {
     TextLink,
     useToast,
 } from '../../components/ui'
+import type { ConnectionRules } from './connections'
+import { ConnectionsPanel } from './ConnectionsPanel'
 import { newNodeId } from './editorState'
 import { GRID, GraphCanvas } from './GraphCanvas'
-import { nodeTitle } from './graphView'
+import { edgeKey, nodeTitle } from './graphView'
 import { NodeInspector } from './NodeInspector'
 import { NodeLibrary } from './NodeLibrary'
 import { useDraftEditor } from './useDraftEditor'
@@ -61,17 +63,18 @@ function isTextInput(target: EventTarget) {
 
 function DraftEditor({
     project,
-    catalog,
+    rules,
     catalogQuery,
     onReload,
 }: {
     project: Project
-    catalog: ReadonlyMap<string, NodeDefinition> | undefined
-    catalogQuery: UseQueryResult<{ items: NodeDefinition[] }>
+    rules: ConnectionRules
+    catalogQuery: UseQueryResult<NodeCatalog>
     onReload: () => void
 }) {
     const editor = useDraftEditor(project)
     const { state, dispatch } = editor
+    const { catalog } = rules
     const { setCenter, screenToFlowPosition } = useReactFlow()
     const { notify } = useToast()
     const canvasRef = useRef<HTMLElement>(null)
@@ -84,9 +87,57 @@ function DraftEditor({
             ? state.graph.nodes.find((n) => n.id === state.selection[0])
             : undefined
 
+    const hasSelection =
+        state.selection.length > 0 || state.edgeSelection.length > 0
+    function deleteSelection() {
+        // The focused node or edge is about to disappear; without this,
+        // focus falls to <body> and the editor's shortcuts stop working.
+        if (canvasRef.current?.contains(document.activeElement))
+            canvasRef.current.focus()
+        dispatch({
+            type: 'delete',
+            nodeIds: state.selection,
+            edgeKeys: state.edgeSelection,
+        })
+    }
+    function selectAll() {
+        dispatch({
+            type: 'select',
+            nodeIds: state.graph.nodes.map((n) => n.id),
+            edgeKeys: state.graph.edges.map(edgeKey),
+        })
+    }
+    function connect(edge: Edge) {
+        dispatch({ type: 'connect', edge })
+    }
+
     function onKeyDown(event: KeyboardEvent) {
-        if (!(event.ctrlKey || event.metaKey) || isTextInput(event.target))
+        if (isTextInput(event.target)) return
+        // Keys without a modifier act only on the canvas, so Backspace on a
+        // focused inspector button never deletes nodes.
+        const onCanvas =
+            event.target instanceof Node &&
+            canvasRef.current?.contains(event.target) === true
+        if (!(event.ctrlKey || event.metaKey)) {
+            const plain =
+                !onCanvas || event.altKey
+                    ? null
+                    : event.key === 'Delete' || event.key === 'Backspace'
+                      ? deleteSelection
+                      : event.key === 'Escape'
+                        ? () => {
+                              dispatch({
+                                  type: 'select',
+                                  nodeIds: [],
+                                  edgeKeys: [],
+                              })
+                          }
+                        : null
+            if (!plain) return
+            event.preventDefault()
+            plain()
             return
+        }
         const key = event.key.toLowerCase()
         // Selected page text is copied by the browser, not as nodes.
         if (key === 'c' && window.getSelection()?.isCollapsed === false) return
@@ -107,7 +158,11 @@ function DraftEditor({
                       ? editor.paste
                       : key === 's'
                         ? editor.save
-                        : null
+                        : key === 'd'
+                          ? editor.duplicate
+                          : key === 'a' && onCanvas
+                            ? selectAll
+                            : null
         if (!action) return
         event.preventDefault()
         action()
@@ -148,7 +203,7 @@ function DraftEditor({
     }
 
     function focusNode(nodeId: string) {
-        dispatch({ type: 'select', nodeIds: [nodeId] })
+        dispatch({ type: 'select', nodeIds: [nodeId], edgeKeys: [] })
         const position = state.graph.nodes.find(
             (n) => n.id === nodeId,
         )?.position
@@ -206,6 +261,22 @@ function DraftEditor({
                 </Button>
                 <Button
                     size="sm"
+                    onClick={editor.duplicate}
+                    disabled={state.selection.length === 0}
+                    aria-keyshortcuts="Control+D Meta+D"
+                >
+                    Duplicate
+                </Button>
+                <Button
+                    size="sm"
+                    onClick={deleteSelection}
+                    disabled={!hasSelection}
+                    aria-keyshortcuts="Delete Backspace"
+                >
+                    Delete
+                </Button>
+                <Button
+                    size="sm"
                     variant="primary"
                     onClick={editor.save}
                     loading={editor.saving}
@@ -258,38 +329,71 @@ function DraftEditor({
                 />
                 <section
                     ref={canvasRef}
+                    // Focusable, so a click on the empty pane still lands
+                    // keyboard shortcuts here.
+                    tabIndex={-1}
                     aria-label="Graph canvas"
                     className="h-[32rem] min-w-0 flex-1 overflow-hidden rounded-md border border-border bg-canvas lg:h-auto"
                 >
                     <GraphCanvas
                         graph={state.graph}
                         selection={state.selection}
-                        catalog={catalog}
+                        edgeSelection={state.edgeSelection}
+                        rules={rules}
                         onMove={(positions, done) => {
                             dispatch({ type: 'move', positions, done })
                         }}
                         onSelect={(nodeIds) => {
                             dispatch({ type: 'select', nodeIds })
                         }}
+                        onSelectEdges={(edgeKeys) => {
+                            dispatch({ type: 'select', edgeKeys })
+                        }}
                         onDropNode={addNode}
+                        onConnect={connect}
+                        onReconnect={(from, edge) => {
+                            dispatch({ type: 'reconnect', from, edge })
+                        }}
+                        onRefuse={(problem) => {
+                            notify({
+                                tone: 'warning',
+                                title: 'Not connected',
+                                description: problem.message,
+                            })
+                        }}
                     />
                 </section>
                 <div className="flex flex-col gap-3 lg:w-96 lg:shrink-0">
                     {inspected && (
-                        <NodeInspector
-                            // Per node: its half-typed numbers and JSON stay its own.
-                            key={inspected.id}
-                            node={inspected}
-                            definition={catalog?.get(inspected.node_type)}
-                            onConfigure={(config, field) => {
-                                dispatch({
-                                    type: 'configure',
-                                    nodeId: inspected.id,
-                                    config,
-                                    field,
-                                })
-                            }}
-                        />
+                        // One key for both panels: per node, so its half-typed
+                        // numbers and JSON stay its own.
+                        <Fragment key={inspected.id}>
+                            <NodeInspector
+                                node={inspected}
+                                definition={catalog?.get(inspected.node_type)}
+                                onConfigure={(config, field) => {
+                                    dispatch({
+                                        type: 'configure',
+                                        nodeId: inspected.id,
+                                        config,
+                                        field,
+                                    })
+                                }}
+                            />
+                            <ConnectionsPanel
+                                node={inspected}
+                                graph={state.graph}
+                                rules={rules}
+                                onConnect={connect}
+                                onRemove={(edge) => {
+                                    dispatch({
+                                        type: 'delete',
+                                        nodeIds: [],
+                                        edgeKeys: [edgeKey(edge)],
+                                    })
+                                }}
+                            />
+                        </Fragment>
                     )}
                     {/* The canvas as a list: the graph without pointer or sight
                     (frontend/AGENTS §100). */}
@@ -404,10 +508,13 @@ export function EditorPage() {
     })
     const nodes = useQuery(nodeQueries.catalog(client))
     const [session, setSession] = useState(0)
-    const catalog = useMemo(
-        () =>
-            nodes.data &&
-            new Map(nodes.data.items.map((d) => [d.node_type, d])),
+    const rules = useMemo(
+        (): ConnectionRules => ({
+            catalog:
+                nodes.data &&
+                new Map(nodes.data.items.map((d) => [d.node_type, d])),
+            compatibility: nodes.data?.port_compatibility,
+        }),
         [nodes.data],
     )
 
@@ -441,14 +548,15 @@ export function EditorPage() {
                         {nodes.isError && nodes.data === undefined && (
                             <Alert tone="warning" className="mb-3">
                                 The node catalog could not be loaded, so ports
-                                without connections are not shown and no nodes
-                                can be added. {errorMessage(nodes.error)}
+                                without connections are not shown, and no nodes
+                                can be added or connected.{' '}
+                                {errorMessage(nodes.error)}
                             </Alert>
                         )}
                         <ReactFlowProvider key={session}>
                             <DraftEditor
                                 project={project}
-                                catalog={catalog}
+                                rules={rules}
                                 catalogQuery={nodes}
                                 onReload={() => void reload()}
                             />

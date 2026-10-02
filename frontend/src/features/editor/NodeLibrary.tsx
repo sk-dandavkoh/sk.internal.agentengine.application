@@ -1,8 +1,9 @@
 import type { UseQueryResult } from '@tanstack/react-query'
 import { useState } from 'react'
-import type { NodeDefinition, NodePort } from '../../api/nodes'
+import type { NodeCatalog, NodeDefinition, NodePort } from '../../api/nodes'
 import { QuerySection } from '../../components/QuerySection'
 import { Badge, Button, EmptyState, Input, Select } from '../../components/ui'
+import { cardPort } from './graphView'
 import { CategoryIcon, NodeCard } from './NodeCard'
 
 // The node catalog as a browsable library (frontend/AGENTS §24). Everything
@@ -157,8 +158,8 @@ function LibraryItem({
                             title={d.name}
                             nodeType={d.node_type}
                             category={d.category}
-                            inputs={d.inputs.map((p) => p.name)}
-                            outputs={d.outputs.map((p) => p.name)}
+                            inputs={d.inputs.map((p) => cardPort(p))}
+                            outputs={d.outputs.map((p) => cardPort(p, false))}
                         />
                     </div>
                     <Ports title="Inputs" ports={d.inputs} />
@@ -191,7 +192,7 @@ export function NodeLibrary({
     query,
     onAdd,
 }: {
-    query: UseQueryResult<{ items: NodeDefinition[] }>
+    query: UseQueryResult<NodeCatalog>
     onAdd: (d: NodeDefinition) => void
 }) {
     const [search, setSearch] = useState('')

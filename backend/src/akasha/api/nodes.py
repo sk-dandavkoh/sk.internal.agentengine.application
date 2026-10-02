@@ -9,6 +9,7 @@ from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field, JsonValue
 
 from akasha.api.schemas import ErrorResponse
+from akasha.domain.graph_validation import port_compatibility
 from akasha.domain.node import NodeDefinition, NodeInput, NodeOutput
 from akasha.nodes.registry import NodeRegistry
 
@@ -92,6 +93,9 @@ class NodeCatalog(BaseModel):
     # ponytail: unpaginated — the catalog is bounded by installed code (tens
     # of types), not by user data. Paginate if plugin catalogs grow large.
     items: list[NodeTypeOut]
+    # Output port signature (type, "[]" suffix when multiple) -> the input
+    # signatures it may connect to: the backend's connection rule as data.
+    port_compatibility: dict[str, list[str]]
 
 
 def create_nodes_router() -> APIRouter:
@@ -102,7 +106,10 @@ def create_nodes_router() -> APIRouter:
     async def list_node_types(request: Request) -> NodeCatalog:
         registry: NodeRegistry = request.app.state.container.nodes
         definitions = sorted(registry.list_nodes(), key=lambda d: d.node_id)
-        return NodeCatalog(items=[NodeTypeOut.from_definition(d) for d in definitions])
+        return NodeCatalog(
+            items=[NodeTypeOut.from_definition(d) for d in definitions],
+            port_compatibility=port_compatibility(),
+        )
 
     @router.post(
         "/{node_type}/config/validate",

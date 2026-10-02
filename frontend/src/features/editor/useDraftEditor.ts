@@ -90,12 +90,20 @@ export function useDraftEditor(project: Project) {
         }
     }, [unsafeToLeave])
 
+    // Ids are made here so the reducer stays pure.
+    const freshIds = (ids: readonly string[]) =>
+        Object.fromEntries(ids.map((id) => [id, newNodeId()]))
+
     function paste() {
         if (!state.clipboard) return
-        const ids = Object.fromEntries(
-            state.clipboard.nodes.map((n) => [n.id, newNodeId()]),
-        )
-        dispatch({ type: 'paste', ids })
+        dispatch({
+            type: 'paste',
+            ids: freshIds(state.clipboard.nodes.map((n) => n.id)),
+        })
+    }
+
+    function duplicate() {
+        dispatch({ type: 'duplicate', ids: freshIds(state.selection) })
     }
 
     return {
@@ -106,6 +114,7 @@ export function useDraftEditor(project: Project) {
         saveError,
         save,
         paste,
+        duplicate,
         blocker,
     }
 }

@@ -52,6 +52,11 @@ if (typeof window !== 'undefined') {
             this.m22 = scale ? Number(scale) : 1
         }
     } as unknown as typeof DOMMatrixReadOnly
+    // Edge labels measure their text.
+    Object.defineProperty(SVGElement.prototype, 'getBBox', {
+        configurable: true,
+        value: () => new DOMRect(0, 0, 40, 12),
+    })
     for (const property of ['offsetWidth', 'offsetHeight'] as const)
         Object.defineProperty(HTMLElement.prototype, property, {
             configurable: true,

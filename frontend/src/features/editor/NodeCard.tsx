@@ -39,13 +39,24 @@ export function CategoryIcon({ category }: { category: string }) {
     return <Icon>{CATEGORY_GLYPHS[category] ?? GENERIC_GLYPH}</Icon>
 }
 
+export interface CardPort {
+    name: string
+    /** Port signature (`portSignature`); undefined if the contract lacks it. */
+    type?: string | undefined
+    required?: boolean
+    /** While a connection is being drawn: whether this port can take it. */
+    fit?: 'compatible' | 'incompatible' | undefined
+}
+
 export interface NodeCardProps {
     title: string
     nodeType: string
     /** undefined: the type is unknown, so no category is known either. */
     category: string | undefined
-    inputs: readonly string[]
-    outputs: readonly string[]
+    inputs: readonly CardPort[]
+    outputs: readonly CardPort[]
+    /** Required inputs without a connection. */
+    missing?: readonly string[]
     selected?: boolean
     unknown?: boolean
     /** React Flow connection handles; only inside a ReactFlow canvas. */
@@ -58,6 +69,7 @@ export function NodeCard({
     category,
     inputs,
     outputs,
+    missing = [],
     selected = false,
     unknown = false,
     handles = false,
@@ -92,35 +104,73 @@ export function NodeCard({
             <div className="flex justify-between gap-4 py-1.5 text-xs">
                 <ul aria-label="Inputs">
                     {inputs.map((port) => (
-                        <li key={port} className="relative px-3 py-0.5">
-                            {handles && (
-                                <Handle
-                                    type="target"
-                                    id={port}
-                                    position={Position.Left}
-                                    isConnectable={false}
-                                />
-                            )}
-                            {port}
-                        </li>
+                        <PortItem
+                            key={port.name}
+                            port={port}
+                            side="target"
+                            handles={handles}
+                            missing={missing.includes(port.name)}
+                        />
                     ))}
                 </ul>
                 <ul aria-label="Outputs" className="text-right">
                     {outputs.map((port) => (
-                        <li key={port} className="relative px-3 py-0.5">
-                            {handles && (
-                                <Handle
-                                    type="source"
-                                    id={port}
-                                    position={Position.Right}
-                                    isConnectable={false}
-                                />
-                            )}
-                            {port}
-                        </li>
+                        <PortItem
+                            key={port.name}
+                            port={port}
+                            side="source"
+                            handles={handles}
+                            missing={false}
+                        />
                     ))}
                 </ul>
             </div>
+            {missing.length > 0 && (
+                <p className="border-t border-border px-3 py-1 text-xs font-medium text-warning-text">
+                    Missing required input: {missing.join(', ')}
+                </p>
+            )}
         </div>
+    )
+}
+
+function PortItem({
+    port,
+    side,
+    handles,
+    missing,
+}: {
+    port: CardPort
+    side: 'source' | 'target'
+    handles: boolean
+    missing: boolean
+}) {
+    return (
+        <li className="relative px-3 py-0.5">
+            {handles && (
+                <Handle
+                    type={side}
+                    id={port.name}
+                    position={
+                        side === 'target' ? Position.Left : Position.Right
+                    }
+                    className={port.fit && `port-${port.fit}`}
+                />
+            )}
+            <span className={cx(missing && 'text-warning-text')}>
+                {port.name}
+                {port.required && (
+                    <>
+                        <span aria-hidden="true">*</span>
+                        <span className="sr-only"> (required)</span>
+                    </>
+                )}
+            </span>
+            {port.type !== undefined && (
+                <span className="ml-1 font-mono text-[10px] text-muted">
+                    {port.type}
+                </span>
+            )}
+        </li>
     )
 }

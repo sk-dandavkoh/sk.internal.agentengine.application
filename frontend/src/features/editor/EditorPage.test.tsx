@@ -1,4 +1,11 @@
-import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
+import {
+    act,
+    cleanup,
+    fireEvent,
+    screen,
+    waitFor,
+    within,
+} from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
     apiError,
@@ -66,7 +73,7 @@ function project(overrides: object = {}) {
 
 const port = (name: string) => ({
     name,
-    type: 'any',
+    type: 'json',
     required: false,
     nullable: true,
     multiple: false,
@@ -88,7 +95,10 @@ function definition(node_type: string, name: string) {
     }
 }
 
-const catalog = ok({ items: [definition('core.input', 'Input')] })
+const catalog = ok({
+    items: [definition('core.input', 'Input')],
+    port_compatibility: { json: ['json', 'json[]'] },
+})
 
 interface PutBody {
     name: string
@@ -97,14 +107,15 @@ interface PutBody {
     draft: {
         graph: {
             nodes: { id: string; position: { x: number; y: number } | null }[]
+            edges: unknown[]
         }
         triggers: unknown[]
     }
 }
 
 /** A backend whose PUT enforces revisions like the real one. */
-function backend(overrides: Record<string, Handler> = {}) {
-    let current = project()
+function backend(overrides: Record<string, Handler> = {}, initial = project()) {
+    let current = initial
     const puts: PutBody[] = []
     const requests = stubBackend({
         'GET /projects/p1': () => ok(current),
@@ -152,7 +163,7 @@ const button = (name: string) => screen.getByRole('button', { name })
 
 /** Moves node A one step right with the keyboard, as React Flow allows. */
 async function moveNodeA() {
-    const node = await canvas().findByRole('group', { name: /Lead in/ })
+    const node = await canvas().findByRole('group', { name: /^Lead in/ })
     fireEvent.click(node)
     fireEvent.keyDown(node, { key: 'ArrowRight' })
     await waitFor(() => {
@@ -182,19 +193,19 @@ describe('EditorPage', () => {
 
         // Label, catalog name or type, in that order; connections counted.
         const list = nodeList()
-        expect(list.getByRole('button', { name: /Lead in/ })).toHaveTextContent(
-            'core.input · 0 in, 1 out',
-        )
         expect(
-            list.getByRole('button', { name: /core\.log/ }),
+            list.getByRole('button', { name: /^Lead in/ }),
+        ).toHaveTextContent('core.input · 0 in, 1 out')
+        expect(
+            list.getByRole('button', { name: /^core\.log/ }),
         ).toHaveTextContent('core.log · 1 in, 0 out')
         // Nodes render on the canvas with their ports.
-        const lead = await canvas().findByRole('group', { name: /Lead in/ })
+        const lead = await canvas().findByRole('group', { name: /^Lead in/ })
         expect(
             within(lead).getByRole('list', { name: 'Outputs' }),
         ).toHaveTextContent('value')
         // core.log is not in the catalog: said in text, not only by style.
-        const log = canvas().getByRole('group', { name: /core\.log/ })
+        const log = canvas().getByRole('group', { name: /^core\.log/ })
         expect(within(log).getByText('Unknown node type')).toBeInTheDocument()
         // The edge's ports render even though the type is unknown.
         expect(
@@ -216,23 +227,25 @@ describe('EditorPage', () => {
     it('selects nodes from the canvas and from the node list', async () => {
         backend()
         await openEditor()
-        const inList = nodeList().getByRole('button', { name: /Lead in/ })
+        const inList = nodeList().getByRole('button', { name: /^Lead in/ })
         expect(inList).toHaveAttribute('aria-pressed', 'false')
 
-        fireEvent.click(await canvas().findByRole('group', { name: /Lead in/ }))
+        fireEvent.click(
+            await canvas().findByRole('group', { name: /^Lead in/ }),
+        )
         await waitFor(() => {
             expect(inList).toHaveAttribute('aria-pressed', 'true')
         })
         expect(button('Copy')).toBeEnabled()
 
-        fireEvent.click(nodeList().getByRole('button', { name: /core\.log/ }))
+        fireEvent.click(nodeList().getByRole('button', { name: /^core\.log/ }))
         expect(inList).toHaveAttribute('aria-pressed', 'false')
         expect(
-            nodeList().getByRole('button', { name: /core\.log/ }),
+            nodeList().getByRole('button', { name: /^core\.log/ }),
         ).toHaveAttribute('aria-pressed', 'true')
         await waitFor(() => {
             expect(
-                canvas().getByRole('group', { name: /core\.log/ }),
+                canvas().getByRole('group', { name: /^core\.log/ }),
             ).toHaveClass('selected')
         })
         // Selecting is not an edit.
@@ -290,7 +303,7 @@ describe('EditorPage', () => {
     it('copy shortcut leaves selected page text to the browser', async () => {
         backend()
         await openEditor()
-        fireEvent.click(nodeList().getByRole('button', { name: /Lead in/ }))
+        fireEvent.click(nodeList().getByRole('button', { name: /^Lead in/ }))
         const toolbar = screen.getByRole('toolbar', { name: 'Editor' })
 
         window
@@ -449,7 +462,7 @@ describe('EditorPage', () => {
     it('copies and pastes nodes as an unsaved change with fresh ids', async () => {
         const server = backend()
         await openEditor()
-        fireEvent.click(nodeList().getByRole('button', { name: /Lead in/ }))
+        fireEvent.click(nodeList().getByRole('button', { name: /^Lead in/ }))
         fireEvent.click(button('Copy'))
         fireEvent.click(button('Paste'))
 
@@ -543,7 +556,9 @@ describe('Node library', () => {
     }
     const items = [definition('core.input', 'Input'), llm, http]
 
-    async function openLibrary(nodes: Handler = () => ok({ items })) {
+    async function openLibrary(
+        nodes: Handler = () => ok({ items, port_compatibility: {} }),
+    ) {
         const server = backend({ 'GET /nodes': nodes })
         await openEditor()
         return server
@@ -561,7 +576,7 @@ describe('Node library', () => {
             library().getByText('Loading the node library…'),
         ).toBeInTheDocument()
         act(() => {
-            release(ok({ items }))
+            release(ok({ items, port_compatibility: {} }))
         })
         expect(await library().findByText('3 of 3 nodes')).toBeInTheDocument()
         expect(
@@ -639,7 +654,7 @@ describe('Node library', () => {
     })
 
     it('says when the registry has no nodes', async () => {
-        await openLibrary(() => ok({ items: [] }))
+        await openLibrary(() => ok({ items: [], port_compatibility: {} }))
         expect(
             await library().findByRole('heading', {
                 name: 'No nodes registered',
@@ -652,7 +667,7 @@ describe('Node library', () => {
         await openLibrary(() =>
             fail
                 ? apiError(500, 'INTERNAL_ERROR', 'Registry down.')
-                : ok({ items }),
+                : ok({ items, port_compatibility: {} }),
         )
         expect(
             await library().findByRole('heading', {
@@ -715,5 +730,323 @@ describe('Node library', () => {
         drop('plugin.removed')
         expect(await screen.findByText('Node not added')).toBeInTheDocument()
         expect(nodeList().getAllByRole('listitem')).toHaveLength(3)
+    })
+})
+
+describe('Graph editing', () => {
+    const SRC = `node_${'c'.repeat(32)}`
+    const SINK = `node_${'d'.repeat(32)}`
+    const typed = (
+        name: string,
+        type: string,
+        extra: Partial<ReturnType<typeof port>> = {},
+    ) => ({ ...port(name), type, nullable: false, ...extra })
+    const nodes = ok({
+        items: [
+            {
+                ...definition('t.text', 'Text'),
+                inputs: [],
+                outputs: [
+                    typed('text', 'string'),
+                    typed('lines', 'string', { multiple: true }),
+                ],
+            },
+            {
+                ...definition('t.sink', 'Sink'),
+                inputs: [
+                    typed('n', 'number', { required: true }),
+                    typed('s', 'string'),
+                    typed('all', 'string', { multiple: true }),
+                ],
+                outputs: [],
+            },
+        ],
+        // An excerpt of the backend's table.
+        port_compatibility: {
+            string: ['string', 'string[]', 'json'],
+            'string[]': ['string[]', 'json'],
+        },
+    })
+    const wire = (source_port: string, target_port: string) => ({
+        source_node_id: SRC,
+        source_port,
+        target_node_id: SINK,
+        target_port,
+    })
+
+    function graphBackend(edges: ReturnType<typeof wire>[] = []) {
+        const base = project()
+        return backend(
+            { 'GET /nodes': () => nodes },
+            {
+                ...base,
+                draft: {
+                    ...base.draft,
+                    graph: {
+                        nodes: [
+                            {
+                                id: SRC,
+                                node_type: 't.text',
+                                config: {},
+                                label: 'Source',
+                                position: { x: 0, y: 0 },
+                            },
+                            {
+                                id: SINK,
+                                node_type: 't.sink',
+                                config: {},
+                                label: 'Target',
+                                position: { x: 400, y: 0 },
+                            },
+                        ],
+                        edges,
+                    },
+                },
+            },
+        )
+    }
+
+    const nodeOnCanvas = (name: RegExp) =>
+        canvas().findByRole('group', { name })
+    const connections = () =>
+        within(screen.getByRole('region', { name: /^Connections:/ }))
+    const edgeOnCanvas = (name: RegExp) =>
+        canvas().findByRole('group', { name })
+    const save = async () => {
+        fireEvent.click(button('Save draft'))
+        await waitFor(() => {
+            expect(status()).toHaveTextContent('All changes saved to draft')
+        })
+    }
+
+    it('connects from the panel, offering inputs with their fit, and saves the edge', async () => {
+        const server = graphBackend()
+        await openEditor()
+        fireEvent.click(await nodeOnCanvas(/^Source/))
+
+        const panel = connections()
+        const to = panel.getByRole('combobox', { name: 'To input' })
+        const option = (name: RegExp) =>
+            within(to).getByRole<HTMLOptionElement>('option', { name })
+        expect(option(/^Target › n \(incompatible type\)$/).disabled).toBe(true)
+        expect(option(/^Target › s$/).disabled).toBe(false)
+        expect(panel.getByRole('button', { name: 'Connect' })).toBeDisabled()
+
+        fireEvent.change(to, {
+            target: { value: option(/^Target › s$/).value },
+        })
+        fireEvent.click(panel.getByRole('button', { name: 'Connect' }))
+
+        expect(
+            await edgeOnCanvas(/^Connection from Source text to Target s$/),
+        ).toBeInTheDocument()
+        // The same edge again is offered, but not choosable: a duplicate.
+        expect(option(/^Target › s \(already connected\)$/).disabled).toBe(true)
+        expect(nodeList().getByText(/0 in, 1 out/)).toBeInTheDocument()
+
+        await save()
+        expect(server.puts[0]?.draft.graph.edges).toEqual([wire('text', 's')])
+    })
+
+    it('switching nodes shows one settings and one connections panel', async () => {
+        graphBackend()
+        await openEditor()
+        fireEvent.click(await nodeOnCanvas(/^Source/))
+        fireEvent.click(await nodeOnCanvas(/^Target/))
+        fireEvent.click(await nodeOnCanvas(/^Source/))
+        expect(
+            screen.getAllByRole('region', { name: /^(Settings|Connections):/ }),
+        ).toHaveLength(2)
+        expect(
+            connections().getByRole('heading', { level: 2 }),
+        ).toHaveTextContent('Connections: Source')
+    })
+
+    it('a list output only fits list inputs', async () => {
+        graphBackend()
+        await openEditor()
+        fireEvent.click(await nodeOnCanvas(/^Source/))
+        const panel = connections()
+        fireEvent.change(panel.getByRole('combobox', { name: 'From output' }), {
+            target: { value: 'lines' },
+        })
+        const to = panel.getByRole('combobox', { name: 'To input' })
+        expect(
+            within(to).getByRole<HTMLOptionElement>('option', {
+                name: 'Target › s (incompatible type)',
+            }).disabled,
+        ).toBe(true)
+        expect(
+            within(to).getByRole<HTMLOptionElement>('option', {
+                name: 'Target › all',
+            }).disabled,
+        ).toBe(false)
+    })
+
+    it('shows required inputs that are not connected, on the card and in the panel', async () => {
+        graphBackend()
+        await openEditor()
+        const sink = await nodeOnCanvas(/^Target/)
+        expect(
+            within(sink).getByText('Missing required input: n'),
+        ).toBeVisible()
+        fireEvent.click(sink)
+        expect(
+            connections().getByText(
+                'Missing required input: n. Publishing would be rejected.',
+            ),
+        ).toBeInTheDocument()
+    })
+
+    it('labels a stored edge the contract does not allow, in text', async () => {
+        graphBackend([wire('text', 'n')])
+        await openEditor()
+        expect(
+            await edgeOnCanvas(
+                /^Connection from Source text to Target n, invalid: Output "text" \(string\) cannot feed input "n" \(number\)\.$/,
+            ),
+        ).toBeInTheDocument()
+        expect(canvas().getByText('incompatible type')).toBeInTheDocument()
+    })
+
+    it('removes a connection from the panel; undo and redo replay it', async () => {
+        graphBackend([wire('text', 's')])
+        await openEditor()
+        fireEvent.click(await nodeOnCanvas(/^Source/))
+        fireEvent.click(
+            connections().getByRole('button', {
+                name: 'Remove connection Source text to Target s',
+            }),
+        )
+        await waitFor(() => {
+            expect(
+                canvas().queryByRole('group', { name: /^Connection/ }),
+            ).not.toBeInTheDocument()
+        })
+        expect(status()).toHaveTextContent('Unsaved changes')
+        fireEvent.click(button('Undo'))
+        expect(
+            await edgeOnCanvas(/^Connection from Source/),
+        ).toBeInTheDocument()
+        expect(status()).toHaveTextContent('All changes saved to draft')
+        fireEvent.click(button('Redo'))
+        await waitFor(() => {
+            expect(
+                canvas().queryByRole('group', { name: /^Connection/ }),
+            ).not.toBeInTheDocument()
+        })
+    })
+
+    it('Delete on the canvas removes the selected node with its edges; undo restores both', async () => {
+        const server = graphBackend([wire('text', 's'), wire('text', 'all')])
+        await openEditor()
+        const source = await nodeOnCanvas(/^Source/)
+        fireEvent.click(source)
+        // Outside the canvas, Delete and Backspace keep their usual meaning.
+        fireEvent.keyDown(button('Undo'), { key: 'Delete' })
+        expect(nodeList().getAllByRole('button')).toHaveLength(2)
+
+        fireEvent.keyDown(source, { key: 'Delete' })
+        await waitFor(() => {
+            expect(nodeList().getAllByRole('button')).toHaveLength(1)
+        })
+        expect(
+            canvas().queryByRole('group', { name: /^Connection/ }),
+        ).not.toBeInTheDocument()
+        expect(
+            screen.queryByRole('region', { name: /^Connections:/ }),
+        ).toBeNull()
+
+        fireEvent.click(button('Undo'))
+        expect(
+            await canvas().findAllByRole('group', { name: /^Connection/ }),
+        ).toHaveLength(2)
+
+        fireEvent.click(button('Redo'))
+        await save()
+        expect(server.puts[0]?.draft.graph).toMatchObject({
+            nodes: [{ id: SINK }],
+            edges: [],
+        })
+    })
+
+    it('selects an edge on the canvas and deletes it with the toolbar', async () => {
+        graphBackend([wire('text', 's')])
+        await openEditor()
+        expect(button('Delete')).toBeDisabled()
+        fireEvent.click(await edgeOnCanvas(/^Connection from Source/))
+        await waitFor(() => {
+            expect(button('Delete')).toBeEnabled()
+        })
+        fireEvent.click(button('Delete'))
+        await waitFor(() => {
+            expect(
+                canvas().queryByRole('group', { name: /^Connection/ }),
+            ).not.toBeInTheDocument()
+        })
+        // Both nodes stay.
+        expect(nodeList().getAllByRole('button')).toHaveLength(2)
+    })
+
+    it('select all, duplicate and escape from the keyboard', async () => {
+        const server = graphBackend([wire('text', 's')])
+        await openEditor()
+        const source = await nodeOnCanvas(/^Source/)
+        fireEvent.keyDown(source, { key: 'a', ctrlKey: true })
+        await waitFor(() => {
+            expect(
+                nodeList()
+                    .getAllByRole('button')
+                    .every((b) => b.getAttribute('aria-pressed') === 'true'),
+            ).toBe(true)
+        })
+
+        fireEvent.keyDown(source, { key: 'd', metaKey: true })
+        await waitFor(() => {
+            expect(nodeList().getAllByRole('button')).toHaveLength(4)
+        })
+        // The copies are the selection, with their own edge.
+        expect(
+            nodeList()
+                .getAllByRole('button', { pressed: true })
+                .map((b) => b.textContent),
+        ).toEqual(['Sourcet.text · 0 in, 1 out', 'Targett.sink · 1 in, 0 out'])
+
+        fireEvent.keyDown(source, { key: 'Escape' })
+        await waitFor(() => {
+            expect(
+                nodeList().queryAllByRole('button', { pressed: true }),
+            ).toHaveLength(0)
+        })
+        expect(button('Duplicate')).toBeDisabled()
+
+        await save()
+        const saved = server.puts[0]?.draft.graph
+        expect(saved?.nodes).toHaveLength(4)
+        expect(saved?.edges).toHaveLength(2)
+    })
+
+    it('a saved graph comes back the same after reopening the editor', async () => {
+        graphBackend()
+        await openEditor()
+        fireEvent.click(await nodeOnCanvas(/^Source/))
+        const to = connections().getByRole('combobox', { name: 'To input' })
+        fireEvent.change(to, {
+            target: {
+                value: within(to).getByRole<HTMLOptionElement>('option', {
+                    name: 'Target › all',
+                }).value,
+            },
+        })
+        fireEvent.click(connections().getByRole('button', { name: 'Connect' }))
+        await save()
+
+        cleanup()
+        await openEditor()
+        expect(
+            await edgeOnCanvas(/^Connection from Source text to Target all$/),
+        ).toBeInTheDocument()
+        expect(status()).toHaveTextContent('All changes saved to draft')
+        expect(screen.getByText(/revision 4/)).toBeInTheDocument()
     })
 })

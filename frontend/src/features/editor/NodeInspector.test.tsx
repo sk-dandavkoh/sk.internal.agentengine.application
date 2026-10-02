@@ -103,7 +103,11 @@ function backend({
     const validated: JsonObject[] = []
     const requests = stubBackend({
         'GET /projects/p1': () => ok(project(config, nodeType)),
-        'GET /nodes': () => ok({ items: [definition('acme.rich', schema)] }),
+        'GET /nodes': () =>
+            ok({
+                items: [definition('acme.rich', schema)],
+                port_compatibility: {},
+            }),
         'GET /credentials': () => ok({ items: [], page: page() }),
         'POST /nodes/acme.rich/config/validate': (_url, init) => {
             const body = JSON.parse(init.body as string) as {
@@ -502,7 +506,10 @@ describe('NodeInspector', () => {
             config: { url: 'https://old.test' },
             handlers: {
                 'GET /nodes': () =>
-                    ok({ items: [definition('acme.rich', schema)] }),
+                    ok({
+                        items: [definition('acme.rich', schema)],
+                        port_compatibility: {},
+                    }),
             },
         })
         const { inspector, queryClient } = await openInspector()

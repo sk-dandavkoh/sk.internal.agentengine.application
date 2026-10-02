@@ -271,6 +271,130 @@ test('the inspector configures a built-in node from its backend schema', async (
     })
 })
 
+test('a graph connected by dragging is stored, validates and reloads the same', async ({
+    page: p,
+}) => {
+    // Three unconnected built-ins, placed apart: the connecting is the UI's.
+    const project = await createViaApi(unique('Pipeline'))
+    const nodes = ['core.input', 'core.log', 'core.output'].map((type, i) => ({
+        id: `node_${String(i + 1).repeat(32)}`,
+        node_type: type,
+        config: type === 'core.log' ? { message: 'lead seen' } : {},
+        label: '',
+        position: { x: i * 60, y: i * 170 },
+    }))
+    const seeded = await api.put(`/api/v1/projects/${project.id}`, {
+        data: {
+            name: project.name,
+            description: '',
+            draft: {
+                graph: { nodes, edges: [] },
+                triggers: [],
+                dependencies: [],
+            },
+            expected_revision: project.revision,
+        },
+    })
+    expect(seeded.status()).toBe(200)
+    await p.goto(`/projects/${project.id}/editor`)
+    const card = (name: string) =>
+        p.locator('.react-flow__node').filter({ hasText: name })
+    await expect(p.locator('.react-flow__node')).toHaveCount(3)
+
+    const port = (name: string, side: 'source' | 'target') =>
+        card(name).locator(`.react-flow__handle.${side}[data-handleid="value"]`)
+    async function connect(from: string, to: string) {
+        const a = await port(from, 'source').boundingBox()
+        const b = await port(to, 'target').boundingBox()
+        if (!a || !b) throw new Error('handle not rendered')
+        await p.mouse.move(a.x + a.width / 2, a.y + a.height / 2)
+        await p.mouse.down()
+        await p.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 10 })
+        await p.mouse.up()
+    }
+    await expect(card('Log')).toContainText('Missing required input: value')
+    await connect('core.input', 'core.log')
+    await connect('core.log', 'core.output')
+    await expect(p.locator('.react-flow__edge')).toHaveCount(2)
+    await expect(card('Log')).not.toContainText('Missing required input')
+    await p.keyboard.press('ControlOrMeta+s')
+    await expect(p.getByText('All changes saved to draft')).toBeVisible()
+
+    // The backend stored the edges and judges the graph publishable.
+    const stored = (await (
+        await api.get(`/api/v1/projects/${project.id}`)
+    ).json()) as {
+        draft: {
+            graph: {
+                nodes: { id: string; node_type: string }[]
+                edges: { source_node_id: string; target_node_id: string }[]
+            }
+        }
+    }
+    const typeOf = (id: string) =>
+        stored.draft.graph.nodes.find((n) => n.id === id)?.node_type
+    expect(
+        stored.draft.graph.edges.map(
+            (e) =>
+                `${String(typeOf(e.source_node_id))}>${String(typeOf(e.target_node_id))}`,
+        ),
+    ).toEqual(['core.input>core.log', 'core.log>core.output'])
+    const validation = await api.post(`/api/v1/projects/${project.id}/validate`)
+    expect(await validation.json()).toMatchObject({ valid: true, issues: [] })
+
+    // A reload shows exactly what was stored.
+    await p.reload()
+    await expect(p.locator('.react-flow__edge')).toHaveCount(2)
+    await expect(
+        p.getByRole('group', {
+            name: 'Connection from Input value to Log value',
+        }),
+    ).toBeVisible()
+    await expect(p.getByText('All changes saved to draft')).toBeVisible()
+})
+
+test('the backend port rule decides which inputs an output may feed', async ({
+    page: p,
+}) => {
+    const project = await createViaApi(unique('Ports'))
+    await p.goto(`/projects/${project.id}/editor`)
+    const library = p.getByRole('region', { name: 'Node library' })
+    const added: [string, string][] = [
+        ['core.http', 'HTTP Request'],
+        ['core.web_search', 'Web Search'],
+    ]
+    for (const [type, name] of added) {
+        await library
+            .getByRole('searchbox', { name: 'Search nodes' })
+            .fill(type)
+        await library
+            .getByRole('button', { name: `Add ${name} to graph` })
+            .click()
+    }
+    await p
+        .getByRole('region', { name: /^Nodes/ })
+        .getByRole('button', { name: /^HTTP Request/ })
+        .click()
+    const panel = p.getByRole('region', { name: /^Connections: HTTP Request/ })
+    const to = panel.getByRole('combobox', { name: 'To input' })
+    // number → string: refused by the real compatibility table.
+    await panel
+        .getByRole('combobox', { name: 'From output' })
+        .selectOption('status')
+    await expect(
+        to.getByRole('option', {
+            name: 'Web Search › query (incompatible type)',
+        }),
+    ).toBeDisabled()
+    // json → string: the generic type connects anywhere.
+    await panel
+        .getByRole('combobox', { name: 'From output' })
+        .selectOption('body')
+    await to.selectOption({ label: 'Web Search › query' })
+    await panel.getByRole('button', { name: 'Connect' }).click()
+    await expect(p.locator('.react-flow__edge')).toHaveCount(1)
+})
+
 test('without a session the backend refuses and the UI says so', async ({
     browser,
 }) => {

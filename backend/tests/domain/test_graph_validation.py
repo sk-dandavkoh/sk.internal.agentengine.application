@@ -17,6 +17,8 @@ from hypothesis import strategies as st
 from akasha.domain.graph import Edge, Graph, NodeInstance
 from akasha.domain.graph_validation import (
     ValidationCode,
+    port_compatibility,
+    port_signature,
     ports_compatible,
     resolve_ports,
     validate_graph,
@@ -314,6 +316,21 @@ class TestPortCompatibility:
             NodeOutput("o", PortType.STRING, multiple=True),
             NodeInput("i", PortType.STRING),
         )
+
+    def test_port_compatibility_is_ports_compatible_as_data(self) -> None:
+        table = port_compatibility()
+        shapes = [(t, m) for t in PortType for m in (False, True)]
+        assert len(table) == len(shapes)
+        for t, m in shapes:
+            out = NodeOutput("o", t, multiple=m)
+            for tt, mm in shapes:
+                inp = NodeInput("i", tt, multiple=mm)
+                assert (port_signature(inp) in table[port_signature(out)]) is (
+                    ports_compatible(out, inp)
+                )
+        assert table["string"][:3] == ["string", "string[]", "json"]
+        assert "string" not in table["string[]"]
+        assert port_signature(NodeInput("i", PortType.FILE, multiple=True)) == "file[]"
 
 
 class TestResolvePorts:

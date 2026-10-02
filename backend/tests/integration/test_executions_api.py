@@ -20,6 +20,7 @@ from akasha.application.projects import ProjectService
 from akasha.application.triggers import TriggerRegistry, TriggerService
 from akasha.bootstrap import Container
 from akasha.config import Settings
+from akasha.domain.graph_validation import port_compatibility
 from akasha.domain.node import Node, NodeExecutionContext, NodeResult
 from akasha.errors import InvalidStateTransitionError
 from akasha.infrastructure.database import Database
@@ -396,6 +397,9 @@ async def test_node_catalog_lists_every_registered_type(env: Env) -> None:
         "credential-reference"
     )
     assert smtp["properties"]["security"]["default"] == "starttls"
+    compatibility = response.json()["port_compatibility"]
+    assert compatibility == port_compatibility()
+    assert "number" not in compatibility["string"]
 
 
 async def validate_config(

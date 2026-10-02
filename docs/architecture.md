@@ -1254,7 +1254,7 @@ Implemented in V1 (Phase 27 closed the gaps the frontend needs):
 /api/v1/executions?status=                       across the caller's projects, newest first
 /api/v1/executions/status-counts                 executions per status (same visibility)
 /api/v1/executions/{id}[/events|/cancel]         state, event history, cancel
-/api/v1/nodes                                    node catalog (ports, config schema)
+/api/v1/nodes                                    node catalog (ports, config schema, port rule §45)
 /api/v1/nodes/{type}/config/validate             config issues per field (stateless, §3.5)
 /api/v1/plugins                                  installed plugins (admin, read-only)
 /api/v1/credentials                              admin only, values never returned
@@ -2176,6 +2176,25 @@ Plugin compatibility
 Credential availability
 Engine compatibility
 ```
+
+Port compatibility has one definition: `ports_compatible` in
+`akasha.domain.graph_validation` (same type, or either side `json`; a list
+output never feeds a scalar input). `GET /api/v1/nodes` publishes it as data
+next to the catalog items, so editors check connections against the
+backend's rule instead of a copy of it:
+
+```json
+{
+  "items": [...],
+  "port_compatibility": {"string": ["string", "string[]", "json"], "string[]": ["string[]", "json"], ...}
+}
+```
+
+Keys and values are port signatures (`port_signature`: the port type, with
+`[]` for a `multiple` port). The graph editor (frontend Phase 10) refuses
+connections the table rejects, plus self-edges, duplicates and a second
+edge into a single (non-`multiple`) input, and flags unconnected required
+inputs. These are UX pre-checks; `/validate` and publish decide.
 
 Validation errors should be structured.
 

@@ -264,11 +264,17 @@ Request validation errors (`details["body.name"]`) appear at their field.
 that published versions stay unchanged. Saving never publishes.
 
 - `editorState.ts`: the pure editor state and reducer (graph, saved graph,
-  revision, undo/redo stacks, selection, clipboard, drag origin). Graphs are
+  revision, undo/redo stacks, node and edge selection, clipboard, drag
+  origin). Graphs are
   immutable values. Dirty means `graph !== saved`, so undoing back to the
   saved graph makes the editor clean again. One drag is one undo step, and
   history keeps 100 steps. Copy/paste is an internal clipboard: pasted nodes
-  get fresh `node_<32 hex>` ids and remapped edges.
+  get fresh `node_<32 hex>` ids and remapped edges. Duplicate is copy and
+  paste in one step that leaves the clipboard alone. Connect, reconnect
+  (the edge keeps its place) and delete (nodes with every edge they touch,
+  plus selected edges) are single undo steps. The reducer refuses only
+  what the backend would refuse to store (self-edges, duplicate edges,
+  dangling ends).
 - `useDraftEditor.ts`: persistence. A save is `PUT /projects/{id}` with the
   whole draft (only the graph changed) and the `expected_revision` the
   editor last saw. Only one save runs at a time, and a 409 is never
@@ -279,16 +285,35 @@ that published versions stay unchanged. Saving never publishes.
 - `GraphCanvas.tsx`: React Flow (`@xyflow/react`), controlled. Positions
   and selection come from the editor state. Measured node sizes are
   rendering state and stay local. Pan, zoom (0.2–2×, controls, wheel), grid,
-  minimap, and node selection (click or keyboard; arrow keys move nodes).
-  Connecting and deleting are off until Phase 10. Library nodes can be
+  minimap, and node and edge selection (click, Ctrl/⌘-click, Shift-drag a
+  box; arrow keys move nodes). Drag from an output to an input to connect,
+  or drag an edge end to reconnect it. Library nodes can be
   dropped onto it (see Node library). Ports come from the node
   catalog, plus any port an edge uses, so every stored edge is drawn.
-  Unknown node types are marked in text.
+  Unknown node types are marked in text. Port types are shown on the card,
+  and required inputs are starred. A required input with no connection is
+  named on the card ("Missing required input").
+- `connections.ts`: whether a connection may be drawn. It uses the node
+  contracts and the backend's `port_compatibility` table from `GET /nodes`
+  (architecture §45), so the type rule is never copied into the frontend. It
+  reports self, duplicate, input already connected, incompatible type,
+  unknown port or type, and catalog not loaded. While a drag runs, the
+  ports that fit grow and turn green, the others fade, and the drawn line
+  is solid or dashed red. A drop on a port that refuses shows the reason
+  in a toast. Stored edges the rule rejects (imports, contract changes)
+  are drawn dashed with a text label.
+- `ConnectionsPanel.tsx`: the selected node's connections as lists with
+  Remove buttons, plus a "New connection" form. The form lists every input
+  of every other node, with the reason when one cannot take the chosen
+  output. It is the keyboard and screen-reader way to edit edges, checked
+  by the same rules as dragging.
 - Node positions are part of the backend graph (`position: {x, y} | null`,
   architecture §7.2). Never-placed nodes are laid out on load and saved with
   the next edit.
 - Shortcuts (on the editor, never in text fields): Ctrl/⌘+Z undo,
-  Ctrl/⌘+Shift+Z or Ctrl+Y redo, Ctrl/⌘+C/V copy/paste, Ctrl/⌘+S save.
+  Ctrl/⌘+Shift+Z or Ctrl+Y redo, Ctrl/⌘+C/V copy/paste, Ctrl/⌘+D
+  duplicate, Ctrl/⌘+S save. On the canvas only: Delete/Backspace delete
+  the selection, Ctrl/⌘+A selects all, Escape clears the selection.
 - The node list beside the canvas is the non-visual view of the graph
   (AGENTS §100): every node with type and connection counts. Selecting a
   node there selects and centers it on the canvas.
@@ -296,8 +321,14 @@ that published versions stay unchanged. Saving never publishes.
 Tests: `editorState.test.ts` covers the reducer. `EditorPage.test.tsx` runs
 the real route against a stub backend that enforces revisions (load, select,
 zoom, move, undo/redo, save, autosave, failures, conflict, leave guard).
+`connections.test.ts` covers the connection rules. Graph editing in
+`EditorPage.test.tsx` covers the panel, delete, duplicate, select all,
+undo/redo, invalid stored edges and reload consistency.
 `tests/e2e/editor.spec.ts` covers what needs real layout: drag, pan, edge
-paths, minimap and the saved positions.
+paths, minimap, saved positions, drag-to-connect with fit feedback, refused
+drops, reconnect, edge delete and box selection.
+`tests/fullstack/projects.spec.ts` connects built-ins by dragging against
+the real backend, checks `/validate` and reloads.
 
 ## Node library
 

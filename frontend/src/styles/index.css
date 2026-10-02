@@ -123,3 +123,43 @@
     );
     --xy-selection-border: 1px dotted var(--color-primary);
 }
+
+/* Connecting: ports and the drawn line say whether a connection fits.
+   Size and dashes back up the colors, which are never the only cue. */
+.draft-canvas .react-flow__handle {
+    width: 9px;
+    height: 9px;
+}
+.draft-canvas .react-flow__handle.port-compatible {
+    width: 13px;
+    height: 13px;
+    background: var(--color-success-text);
+}
+.draft-canvas .react-flow__handle.port-incompatible {
+    opacity: 0.3;
+}
+.draft-canvas .react-flow__connection.valid path {
+    stroke: var(--color-success-text);
+    stroke-width: 2;
+}
+.draft-canvas .react-flow__connection.invalid path {
+    stroke: var(--color-danger);
+    stroke-width: 2;
+    stroke-dasharray: 6 4;
+}
+.draft-canvas {
+    --xy-edge-stroke-selected: var(--color-primary);
+}
+.draft-canvas .react-flow__edge.selected path.react-flow__edge-path {
+    stroke-width: 2.5;
+}
+.draft-canvas .react-flow__edge.edge-invalid path.react-flow__edge-path {
+    stroke: var(--color-danger);
+    stroke-dasharray: 6 4;
+}
+.draft-canvas .react-flow__edge-textbg {
+    fill: var(--color-danger-soft);
+}
+.draft-canvas .react-flow__edge-text {
+    fill: var(--color-danger-text);
+}
