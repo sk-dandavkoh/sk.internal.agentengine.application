@@ -1277,6 +1277,21 @@ Users are disabled, never deleted, so the reference stays valid (`RESTRICT`).
 The API returns it as `{"id", "username"}`: anyone who may see the version
 may see who published it.
 
+Every execution response (listings, detail, execute, invoke, cancel)
+carries `cancellable`: whether the state machine allows the `cancel`
+action from the current status (`EXECUTION_ACTIONS["cancel"]`, i.e. not
+terminal). Clients offer cancel from this flag instead of mirroring the
+state machine. Cancelling a run owned by a live worker answers 202 with the
+execution still `RUNNING`; it becomes `CANCELLED` at the worker's next
+check.
+
+Execution listings (`/executions`, `/projects/{id}/executions`) return
+`ExecutionListItem`: the execution plus `project_name`, the project's
+current name, joined in the listing query (versions RESTRICT project
+deletion, so the row always exists). Single-execution responses omit it:
+they are built from the domain aggregate, which has no project name, and
+the public webhook response must not disclose it.
+
 Versions are never edited, but they can be copied (`ProjectVersion.to_draft`):
 `POST .../versions/{n}/restore` replaces the project's draft with the copy
 (guarded by `expected_revision` like any draft write; publishing it makes a

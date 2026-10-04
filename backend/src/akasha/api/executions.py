@@ -25,7 +25,7 @@ from akasha.api.auth import CurrentIdentity
 from akasha.api.project_schemas import PageInfo
 from akasha.api.projects import Limit, Offset
 from akasha.api.schemas import ErrorResponse
-from akasha.api.trigger_schemas import ExecutionDetail
+from akasha.api.trigger_schemas import ExecutionDetail, ExecutionListItem
 from akasha.application.auth import AuthorizationService
 from akasha.application.executions import ExecutionService
 from akasha.application.persistence import ExecutionSummary
@@ -56,13 +56,13 @@ Runtime = Annotated[ExecutionRuntime, Depends(_runtime)]
 
 
 class ExecutionPage(BaseModel):
-    items: list[ExecutionDetail]
+    items: list[ExecutionListItem]
     page: PageInfo
 
     @classmethod
     def from_page(cls, page: Page[ExecutionSummary]) -> "ExecutionPage":
         return cls(
-            items=[ExecutionDetail.from_summary(s) for s in page.items],
+            items=[ExecutionListItem.from_summary(s) for s in page.items],
             page=PageInfo(offset=page.offset, limit=page.limit, has_more=page.has_more),
         )
 

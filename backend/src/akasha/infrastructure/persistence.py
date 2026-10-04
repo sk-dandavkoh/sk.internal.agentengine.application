@@ -435,22 +435,25 @@ class SqlAlchemyExecutionRepository(ExecutionRepository):
         limit: int = 100,
     ) -> Sequence[ExecutionSummary]:
         e = m.executions.c
+        p = m.projects.c
         # ponytail: no index on created_at; the cross-project listing sorts
         # the (owner's) history per page. Add ix_executions_created_at when
         # dashboard latency shows up in the request timings.
-        query = _owned(
-            select(
-                e.id,
-                e.project_id,
-                e.project_version,
-                e.status,
-                e.metadata,
-                e.created_at,
-                e.started_at,
-                e.finished_at,
-            ),
-            owner_id,
-        )
+        # Inner join: versions RESTRICT project deletion, so every execution
+        # has its project row.
+        query = select(
+            e.id,
+            e.project_id,
+            p.name.label("project_name"),
+            e.project_version,
+            e.status,
+            e.metadata,
+            e.created_at,
+            e.started_at,
+            e.finished_at,
+        ).select_from(m.executions.join(m.projects, p.id == e.project_id))
+        if owner_id is not None:
+            query = query.where(p.owner_id == owner_id)
         if project_id is not None:
             query = query.where(e.project_id == project_id)
         if project_version is not None:
@@ -468,6 +471,7 @@ class SqlAlchemyExecutionRepository(ExecutionRepository):
             ExecutionSummary(
                 id=r["id"],
                 project_id=r["project_id"],
+                project_name=r["project_name"],
                 project_version=r["project_version"],
                 status=ExecutionStatus(r["status"]),
                 metadata=_metadata(r["metadata"]),

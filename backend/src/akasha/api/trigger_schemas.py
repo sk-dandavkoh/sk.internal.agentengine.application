@@ -5,8 +5,12 @@ from datetime import datetime
 from pydantic import BaseModel
 
 from akasha.application.persistence import ExecutionSummary
-from akasha.domain.execution import Execution, ExecutionStatus
+from akasha.domain.execution import EXECUTION_ACTIONS, Execution, ExecutionStatus
 from akasha.domain.trigger import TriggerType
+
+
+def _cancellable(status: ExecutionStatus) -> bool:
+    return status in EXECUTION_ACTIONS["cancel"][0]
 
 
 class ExecutionDetail(BaseModel):
@@ -23,6 +27,9 @@ class ExecutionDetail(BaseModel):
     created_at: datetime
     started_at: datetime | None
     finished_at: datetime | None
+    # The state machine's answer, so clients offer cancel only where
+    # POST /executions/{id}/cancel can succeed (they never re-derive it).
+    cancellable: bool
 
     @classmethod
     def from_domain(cls, execution: Execution) -> "ExecutionDetail":
@@ -37,13 +44,23 @@ class ExecutionDetail(BaseModel):
             created_at=execution.created_at,
             started_at=execution.started_at,
             finished_at=execution.finished_at,
+            cancellable=_cancellable(execution.status),
         )
 
+
+class ExecutionListItem(ExecutionDetail):
+    """An execution in a listing: the canonical representation plus its
+    project's current name, joined in the same query. Single-execution
+    responses omit it; the public webhook response must not disclose it."""
+
+    project_name: str
+
     @classmethod
-    def from_summary(cls, summary: ExecutionSummary) -> "ExecutionDetail":
+    def from_summary(cls, summary: ExecutionSummary) -> "ExecutionListItem":
         return cls(
             id=summary.id,
             project_id=summary.project_id,
+            project_name=summary.project_name,
             version=summary.project_version,
             status=summary.status,
             trigger_type=summary.metadata.trigger_type,
@@ -52,4 +69,5 @@ class ExecutionDetail(BaseModel):
             created_at=summary.created_at,
             started_at=summary.started_at,
             finished_at=summary.finished_at,
+            cancellable=_cancellable(summary.status),
         )

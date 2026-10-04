@@ -585,3 +585,46 @@ test('versions are listed, inspected, compared and show their runs', async ({
         'Renamed in v2',
     )
 })
+
+test('a run started in the UI is listed, opened and cancelled', async ({
+    page: p,
+}) => {
+    // The suite runs no worker, so the run stays QUEUED until cancelled:
+    // every state shown below is the backend's, not a client guess.
+    const project = await createViaApi(unique('Runnable'))
+    await publishHelloWorld(project)
+
+    await p.goto(`/projects/${project.id}/versions/1`)
+    await p.getByRole('button', { name: 'Run…' }).click()
+    await p.getByRole('button', { name: 'Start execution' }).click()
+    await expect(p).toHaveURL(/\/executions\/exec_\w+$/)
+    const executionId = p.url().split('/').pop() ?? ''
+    await expect(
+        p.getByRole('heading', { name: 'Execution', level: 1 }),
+    ).toBeVisible()
+    await expect(p.getByText('Queued').first()).toBeVisible()
+
+    await p.goto('/executions')
+    const row = p
+        .getByRole('table', { name: 'Executions' })
+        .getByRole('row')
+        .filter({ hasText: executionId })
+    await expect(row.getByText('Queued')).toBeVisible()
+    await expect(row.getByText(project.name)).toBeVisible()
+    await row.getByRole('link', { name: executionId }).click()
+
+    await p
+        .getByRole('button', { name: `Cancel execution ${executionId}` })
+        .click()
+    await p
+        .getByRole('button', { name: 'Cancel execution', exact: true })
+        .click()
+    await expect(p.getByText('Execution cancelled')).toBeVisible()
+    await expect(
+        p.getByRole('button', { name: `Cancel execution ${executionId}` }),
+    ).toHaveCount(0)
+    const stored = (await (
+        await api.get(`/api/v1/executions/${executionId}`)
+    ).json()) as { status: string; cancellable: boolean }
+    expect(stored).toMatchObject({ status: 'cancelled', cancellable: false })
+})

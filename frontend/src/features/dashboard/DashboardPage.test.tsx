@@ -34,6 +34,7 @@ function execution(id: string, overrides: Record<string, unknown> = {}) {
     return {
         id,
         project_id: 'proj_1',
+        project_name: 'Invoice triage',
         version: 2,
         status: 'completed',
         trigger_type: 'manual',
@@ -42,6 +43,7 @@ function execution(id: string, overrides: Record<string, unknown> = {}) {
         created_at: AT,
         started_at: '2026-10-02T08:00:01Z',
         finished_at: '2026-10-02T08:00:43Z',
+        cancellable: false,
         ...overrides,
     }
 }
@@ -183,6 +185,7 @@ function populated(): Record<string, Handler> {
                 execution('exec_q', {
                     status: 'queued',
                     project_id: 'proj_unknown',
+                    project_name: 'Beyond the project sample',
                     started_at: null,
                     finished_at: null,
                 }),
@@ -240,8 +243,9 @@ describe('Dashboard', () => {
         expect(running).toHaveTextContent('Invoice triage')
         expect(running).toHaveTextContent('Running')
         expect(running).toHaveTextContent('In progress')
-        // An unknown project falls back to its id; unstarted runs say so.
-        expect(queued).toHaveTextContent('proj_unknown')
+        // The listing names the project itself, even one outside the
+        // dashboard's project sample; unstarted runs say so.
+        expect(queued).toHaveTextContent('Beyond the project sample')
         expect(queued).toHaveTextContent('Queued')
         expect(queued).toHaveTextContent('Not started')
 

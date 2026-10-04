@@ -51,12 +51,30 @@ export const routes: RouteObject[] = [
                             return { Component: ProjectDetailPage }
                         },
                     },
+                    {
+                        path: '/executions',
+                        lazy: async () => {
+                            const { ExecutionsPage } =
+                                await import('../features/executions/ExecutionsPage')
+                            return { Component: ExecutionsPage }
+                        },
+                    },
+                    {
+                        path: '/executions/:executionId',
+                        lazy: async () => {
+                            const { ExecutionDetailPage } =
+                                await import('../features/executions/ExecutionDetailPage')
+                            return { Component: ExecutionDetailPage }
+                        },
+                    },
                     ...navItems
                         .filter(
                             (item) =>
-                                !['/dashboard', '/projects'].includes(
-                                    item.path,
-                                ),
+                                ![
+                                    '/dashboard',
+                                    '/projects',
+                                    '/executions',
+                                ].includes(item.path),
                         )
                         .map((item): RouteObject => ({
                             path: item.path,

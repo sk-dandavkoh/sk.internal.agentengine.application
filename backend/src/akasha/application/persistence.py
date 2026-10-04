@@ -125,6 +125,9 @@ class ExecutionSummary:
 
     id: str
     project_id: str
+    # Joined from the project row so a listing names its projects without
+    # a request per project.
+    project_name: str
     project_version: int
     status: ExecutionStatus
     metadata: ExecutionMetadata

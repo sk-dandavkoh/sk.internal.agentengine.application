@@ -39,10 +39,18 @@ export const executionSchema = z.object({
     created_at: timestamp,
     started_at: timestamp.nullable(),
     finished_at: timestamp.nullable(),
+    /** The backend state machine allows cancel now; never derived here. */
+    cancellable: z.boolean(),
 })
 export type Execution = z.infer<typeof executionSchema>
 
-export const executionPageSchema = pageSchema(executionSchema)
+/** A listed execution: listings also name the project (its current name). */
+export const executionListItemSchema = executionSchema.extend({
+    project_name: z.string(),
+})
+export type ExecutionListItem = z.infer<typeof executionListItemSchema>
+
+export const executionPageSchema = pageSchema(executionListItemSchema)
 export type ExecutionPage = z.infer<typeof executionPageSchema>
 
 /** A stored execution event; the payload is redacted by the backend. */

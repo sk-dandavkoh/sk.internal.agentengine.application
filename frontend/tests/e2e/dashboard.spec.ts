@@ -6,6 +6,7 @@ const AT = '2026-10-02T08:00:00Z'
 const execution = (id: string, status: string) => ({
     id,
     project_id: 'proj_1',
+    project_name: 'Invoice triage with a rather long project name',
     version: 2,
     status,
     trigger_type: 'manual',
@@ -14,6 +15,7 @@ const execution = (id: string, status: string) => ({
     created_at: AT,
     started_at: AT,
     finished_at: status === 'running' ? null : '2026-10-02T08:01:05Z',
+    cancellable: status === 'running',
 })
 const page = (items: unknown[]) => ({
     items,

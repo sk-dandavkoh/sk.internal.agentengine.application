@@ -71,6 +71,7 @@ function execution(id: string, n: number, status = 'completed') {
     return {
         id,
         project_id: PID,
+        project_name: 'Lead scoring',
         version: n,
         status,
         trigger_type: 'manual',
@@ -79,6 +80,7 @@ function execution(id: string, n: number, status = 'completed') {
         created_at: AT,
         started_at: AT,
         finished_at: AT,
+        cancellable: false,
     }
 }
 
@@ -564,6 +566,78 @@ describe('Restore and clone', () => {
         await waitFor(() => {
             expect(router.state.location.pathname).toBe('/projects/proj_copy')
         })
+    })
+
+    it('runs the version with a JSON input, then opens the execution', async () => {
+        const bodies: unknown[] = []
+        const queued = {
+            ...execution('exec_new', 2, 'queued'),
+            cancellable: true,
+        }
+        stubBackend({
+            ...base,
+            [routes.project]: () => ok(project()),
+            [`POST /projects/${PID}/versions/2/execute`]: (_url, init) => {
+                bodies.push(jsonBody(init))
+                return { status: 201, body: queued }
+            },
+            'GET /executions/exec_new': () => ok(queued),
+            'GET /reports/executions/exec_new': pending,
+        })
+        const { router } = renderRoute(`/projects/${PID}/versions/2`)
+
+        fireEvent.click(await screen.findByRole('button', { name: 'Run…' }))
+        const dialog = screen.getByRole('dialog', { name: 'Run v2' })
+        const input = within(dialog).getByLabelText('Input (JSON object)')
+        fireEvent.change(input, { target: { value: '[1, 2]' } })
+        fireEvent.click(
+            within(dialog).getByRole('button', { name: 'Start execution' }),
+        )
+        // Rejected locally before any request: not an object.
+        expect(
+            within(dialog).getByText(/must be a JSON object/),
+        ).toBeInTheDocument()
+        expect(bodies).toEqual([])
+
+        fireEvent.change(input, { target: { value: '{"lead": "acme"}' } })
+        fireEvent.click(
+            within(dialog).getByRole('button', { name: 'Start execution' }),
+        )
+        await waitFor(() => {
+            expect(router.state.location.pathname).toBe('/executions/exec_new')
+        })
+        expect(bodies).toEqual([{ lead: 'acme' }])
+        expect(
+            await screen.findByText('Execution of v2 started'),
+        ).toBeInTheDocument()
+        expect(
+            await screen.findByRole('button', {
+                name: 'Cancel execution exec_new',
+            }),
+        ).toBeInTheDocument()
+    })
+
+    it('shows why the backend refused to start a run', async () => {
+        stubBackend({
+            ...base,
+            [routes.project]: () => ok(project()),
+            [`POST /projects/${PID}/versions/2/execute`]: () =>
+                apiError(
+                    422,
+                    'VALIDATION_ERROR',
+                    'Input field "lead" is required.',
+                ),
+        })
+        renderRoute(`/projects/${PID}/versions/2`)
+
+        fireEvent.click(await screen.findByRole('button', { name: 'Run…' }))
+        const dialog = screen.getByRole('dialog', { name: 'Run v2' })
+        fireEvent.click(
+            within(dialog).getByRole('button', { name: 'Start execution' }),
+        )
+        expect(
+            await within(dialog).findByText(/Input field "lead" is required/),
+        ).toBeInTheDocument()
     })
 })
 

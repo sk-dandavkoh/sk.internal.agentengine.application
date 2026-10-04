@@ -54,6 +54,6 @@ export function formatDuration(startIso: string, endIso: string): string {
     return `${String(Math.floor(min / 60))} h ${String(min % 60)} min`
 }
 
-// The project page size the backend allows at most. Dashboard counts and
-// names cover this many projects; beyond it the counts say so.
+// The project page size the backend allows at most. Dashboard project
+// counts cover this many projects; beyond it the counts say so.
 export const PROJECT_SAMPLE = { limit: 100 }

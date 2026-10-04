@@ -209,6 +209,31 @@ async def test_recent_executions_span_projects_newest_first(env: Env) -> None:
     assert (first["page"]["has_more"], second["page"]["has_more"]) == (True, False)
 
 
+async def test_listings_name_each_project_by_its_current_name(env: Env) -> None:
+    pid, version, _ = await publish_with(env.client, [])
+    execution_id = await env.run(pid, version)
+    project = (await env.client.get(f"/api/v1/projects/{pid}")).json()
+    renamed = await env.client.put(
+        f"/api/v1/projects/{pid}",
+        json={
+            "expected_revision": project["revision"],
+            "name": "Renamed after the run",
+            "draft": project["draft"],
+        },
+    )
+    assert renamed.status_code == 200, renamed.text
+
+    for path in ("/api/v1/executions", f"/api/v1/projects/{pid}/executions"):
+        (item,) = (await env.client.get(path)).json()["items"]
+        assert (item["id"], item["project_name"]) == (
+            execution_id,
+            "Renamed after the run",
+        )
+    # Single-execution responses (and the public webhook) never carry it.
+    detail = (await env.client.get(f"/api/v1/executions/{execution_id}")).json()
+    assert "project_name" not in detail
+
+
 async def test_recent_executions_filter_by_status(env: Env) -> None:
     pid, version, _ = await publish_with(env.client, [])
     completed = await env.run(pid, version)
@@ -284,6 +309,7 @@ async def test_members_see_only_their_projects_executions(env: Env) -> None:
         counts = (await member.get("/api/v1/executions/status-counts")).json()
 
     assert [e["id"] for e in listed] == [own]
+    assert listed[0]["project_name"] == "t"
     assert counts["counts"]["completed"] == 1
     assert counts["counts"]["failed"] == 0
     # The admin still sees every project's runs.
@@ -359,11 +385,21 @@ async def test_cancel_queued_execution_then_conflict(env: Env) -> None:
     )
     execution_id = created.json()["id"]
     url = f"/api/v1/executions/{execution_id}/cancel"
+    # Clients offer cancel from this flag; it must match what the route allows.
+    assert (created.json()["status"], created.json()["cancellable"]) == (
+        "queued",
+        True,
+    )
+    listed = (await env.client.get(f"/api/v1/projects/{pid}/executions")).json()
+    assert listed["items"][0]["cancellable"] is True
 
     cancelled = await env.client.post(url, json={"reason": "not needed"})
 
     assert cancelled.status_code == 202, cancelled.text
-    assert cancelled.json()["status"] == "cancelled"
+    assert (cancelled.json()["status"], cancelled.json()["cancellable"]) == (
+        "cancelled",
+        False,
+    )
     events = (await env.client.get(f"/api/v1/executions/{execution_id}/events")).json()
     assert events["items"][-1]["event_type"] == "execution.cancelled"
     # A finished execution cannot be cancelled again; the runtime never
@@ -376,6 +412,8 @@ async def test_cancel_queued_execution_then_conflict(env: Env) -> None:
 async def test_cancel_completed_or_unknown_execution(env: Env) -> None:
     pid, version, _ = await publish_with(env.client, [])
     execution_id = await env.run(pid, version)
+    detail = (await env.client.get(f"/api/v1/executions/{execution_id}")).json()
+    assert (detail["status"], detail["cancellable"]) == ("completed", False)
     assert_error(
         await env.client.post(f"/api/v1/executions/{execution_id}/cancel"),
         409,

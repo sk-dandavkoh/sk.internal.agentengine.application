@@ -114,6 +114,7 @@ function executionJson(overrides: Record<string, unknown> = {}) {
     return {
         id: 'exec_1',
         project_id: 'proj_1',
+        project_name: 'Lead scoring',
         version: 1,
         status: 'queued',
         trigger_type: 'manual',
@@ -122,6 +123,7 @@ function executionJson(overrides: Record<string, unknown> = {}) {
         created_at: AT,
         started_at: null,
         finished_at: null,
+        cancellable: true,
         ...overrides,
     }
 }

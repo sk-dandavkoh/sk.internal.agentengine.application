@@ -1,37 +1,16 @@
 import { useQuery } from '@tanstack/react-query'
-import { useState } from 'react'
 import { useApiClient } from '../../api/context'
-import type {
-    Execution,
-    ExecutionListParams,
-    ExecutionStatus,
-} from '../../api/executions'
+import type { ExecutionListParams, ExecutionStatus } from '../../api/executions'
 import { projectStatusSchema, type ProjectStatus } from '../../api/projects'
 import {
     executionQueries,
     projectQueries,
     systemQueries,
 } from '../../api/queries'
-import {
-    Badge,
-    Button,
-    Card,
-    EmptyState,
-    Table,
-    TextLink,
-    type TableColumn,
-} from '../../components/ui'
-import {
-    ACTIVE_STATUSES,
-    executionStatusDisplay,
-    FAILURE_STATUSES,
-    formatDuration,
-    PROJECT_SAMPLE,
-} from './format'
-import { formatDateTime } from '../../lib/format'
+import { Badge, Card, EmptyState, TextLink } from '../../components/ui'
+import { ACTIVE_STATUSES, FAILURE_STATUSES, PROJECT_SAMPLE } from './format'
 import { projectStatusLabels } from '../projects/status'
-import { VersionLink } from '../versions/shared'
-import { FailureDetails } from './FailureDetails'
+import { ExecutionTable } from '../executions/shared'
 import { QuerySection } from '../../components/QuerySection'
 
 function useProjects() {
@@ -43,134 +22,6 @@ function ViewAll({ to, label }: { to: string; label: string }) {
         <TextLink to={to} className="text-sm">
             {label}
         </TextLink>
-    )
-}
-
-function StatusBadge({ status }: { status: ExecutionStatus }) {
-    const { label, tone } = executionStatusDisplay[status]
-    return (
-        <Badge tone={tone} dot>
-            {label}
-        </Badge>
-    )
-}
-
-function Time({ iso }: { iso: string }) {
-    return (
-        <time dateTime={iso} className="whitespace-nowrap">
-            {formatDateTime(iso)}
-        </time>
-    )
-}
-
-// -- executions ------------------------------------------------------------------
-
-function ExecutionTable({
-    caption,
-    executions,
-    errorDetails = false,
-}: {
-    caption: string
-    executions: readonly Execution[]
-    /** Rows can expand to show their recorded errors (fetched on demand). */
-    errorDetails?: boolean
-}) {
-    const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set())
-    const toggle = (id: string) => {
-        setExpanded((current) => {
-            const next = new Set(current)
-            if (!next.delete(id)) next.add(id)
-            return next
-        })
-    }
-    // Names are a convenience: without them (still loading, failed, or
-    // beyond the sample) the project id identifies the project.
-    const names = new Map(useProjects().data?.items.map((p) => [p.id, p.name]))
-    const columns: TableColumn<Execution>[] = [
-        {
-            key: 'project',
-            header: 'Project',
-            cell: (e) =>
-                names.get(e.project_id) ?? (
-                    <span
-                        title={e.project_id}
-                        className="block max-w-40 truncate font-mono text-xs"
-                    >
-                        {e.project_id}
-                    </span>
-                ),
-        },
-        {
-            key: 'version',
-            header: 'Version',
-            cell: (e) => (
-                <VersionLink projectId={e.project_id} version={e.version} />
-            ),
-        },
-        {
-            key: 'status',
-            header: 'Status',
-            cell: (e) => <StatusBadge status={e.status} />,
-        },
-        { key: 'trigger', header: 'Trigger', cell: (e) => e.trigger_type },
-        {
-            key: 'created',
-            header: 'Created',
-            cell: (e) => <Time iso={e.created_at} />,
-        },
-        {
-            key: 'duration',
-            header: 'Duration',
-            align: 'end',
-            cell: (e) => (
-                <span className="whitespace-nowrap">
-                    {e.started_at && e.finished_at
-                        ? formatDuration(e.started_at, e.finished_at)
-                        : e.started_at
-                          ? 'In progress'
-                          : 'Not started'}
-                </span>
-            ),
-        },
-    ]
-    if (errorDetails)
-        columns.push({
-            key: 'error',
-            header: <span className="sr-only">Error details</span>,
-            align: 'end',
-            cell: (e) => {
-                const open = expanded.has(e.id)
-                return (
-                    <Button
-                        size="sm"
-                        variant="ghost"
-                        // Starts with the visible text (WCAG 2.5.3); the
-                        // id tells the rows' buttons apart.
-                        aria-label={`${open ? 'Hide' : 'Show'} error of execution ${e.id}`}
-                        aria-expanded={open}
-                        aria-controls={`error-${e.id}`}
-                        onClick={() => {
-                            toggle(e.id)
-                        }}
-                    >
-                        {open ? 'Hide error' : 'Show error'}
-                    </Button>
-                )
-            },
-        })
-    return (
-        <Table
-            caption={caption}
-            hideCaption
-            columns={columns}
-            rows={executions}
-            rowKey={(e) => e.id}
-            details={(e) =>
-                expanded.has(e.id) ? (
-                    <FailureDetails id={`error-${e.id}`} executionId={e.id} />
-                ) : null
-            }
-        />
     )
 }
 

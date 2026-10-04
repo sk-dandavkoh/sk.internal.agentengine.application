@@ -38,7 +38,8 @@ import {
     useToast,
     type TableColumn,
 } from '../../components/ui'
-import { executionStatusDisplay } from '../dashboard/format'
+import { RunVersion } from '../executions/RunVersion'
+import { ExecutionLink, StatusBadge } from '../executions/shared'
 import { ProjectFormDialog } from '../projects/ProjectFormDialog'
 import { diffVersions, type Changes, type VersionDiff } from './compare'
 import { Author, ImmutableBadge, LatestBadge, Time } from './shared'
@@ -366,18 +367,15 @@ function Comparison({
 }
 
 const executionColumns: TableColumn<Execution>[] = [
-    { key: 'id', header: 'Execution', cell: (e) => <Mono>{e.id}</Mono> },
+    {
+        key: 'id',
+        header: 'Execution',
+        cell: (e) => <ExecutionLink id={e.id} />,
+    },
     {
         key: 'status',
         header: 'Status',
-        cell: (e) => {
-            const { label, tone } = executionStatusDisplay[e.status]
-            return (
-                <Badge tone={tone} dot>
-                    {label}
-                </Badge>
-            )
-        },
+        cell: (e) => <StatusBadge status={e.status} />,
     },
     { key: 'trigger', header: 'Trigger', cell: (e) => e.trigger_type },
     {
@@ -494,6 +492,7 @@ function VersionActions({
     }
     return (
         <>
+            <RunVersion projectId={project.id} version={version.version} />
             <Button
                 onClick={() => {
                     setAction('restore')

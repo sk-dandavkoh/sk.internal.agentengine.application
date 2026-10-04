@@ -686,6 +686,10 @@
       "ExecutionDetail": {
         "description": "The canonical execution representation: what every trigger returns\nand what execution listings contain. Node-level detail is the report.",
         "properties": {
+          "cancellable": {
+            "title": "Cancellable",
+            "type": "boolean"
+          },
           "correlation_id": {
             "anyOf": [
               {
@@ -766,16 +770,115 @@
           "correlation_id",
           "created_at",
           "started_at",
-          "finished_at"
+          "finished_at",
+          "cancellable"
         ],
         "title": "ExecutionDetail",
+        "type": "object"
+      },
+      "ExecutionListItem": {
+        "description": "An execution in a listing: the canonical representation plus its\nproject's current name, joined in the same query. Single-execution\nresponses omit it; the public webhook response must not disclose it.",
+        "properties": {
+          "cancellable": {
+            "title": "Cancellable",
+            "type": "boolean"
+          },
+          "correlation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correlation Id"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "project_id": {
+            "title": "Project Id",
+            "type": "string"
+          },
+          "project_name": {
+            "title": "Project Name",
+            "type": "string"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ExecutionStatus"
+          },
+          "trigger_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trigger Id"
+          },
+          "trigger_type": {
+            "$ref": "#/components/schemas/TriggerType"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "project_id",
+          "version",
+          "status",
+          "trigger_type",
+          "trigger_id",
+          "correlation_id",
+          "created_at",
+          "started_at",
+          "finished_at",
+          "cancellable",
+          "project_name"
+        ],
+        "title": "ExecutionListItem",
         "type": "object"
       },
       "ExecutionPage": {
         "properties": {
           "items": {
             "items": {
-              "$ref": "#/components/schemas/ExecutionDetail"
+              "$ref": "#/components/schemas/ExecutionListItem"
             },
             "title": "Items",
             "type": "array"
