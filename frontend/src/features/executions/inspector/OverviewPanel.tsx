@@ -65,7 +65,7 @@ function Details({
 const amount = (n: number) =>
     n.toLocaleString(undefined, { maximumFractionDigits: 6 })
 
-function Usage({ report }: { report: ExecutionReport }) {
+export function Usage({ report }: { report: ExecutionReport }) {
     const { usage, costs, cost_complete, node_status_counts } = report.metrics
     const cancellation = report.execution.cancellation
     const counts = Object.entries(node_status_counts).filter(([, n]) => n > 0)
@@ -116,7 +116,7 @@ function Usage({ report }: { report: ExecutionReport }) {
 }
 
 /** What ran it: reproducibility metadata (AGENTS §73). */
-function RunSnapshot({ report }: { report: ExecutionReport }) {
+export function RunSnapshot({ report }: { report: ExecutionReport }) {
     const versions = Object.entries(report.execution.node_versions)
     return (
         <div className="flex flex-col gap-4 text-sm">

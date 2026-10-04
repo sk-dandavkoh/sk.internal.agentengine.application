@@ -525,6 +525,29 @@ UI shows `[REDACTED]` as sent and stores nothing in browser storage. Node
 inputs are not shown: the backend does not persist them (the upstream
 outputs are what a node received).
 
+## Reports
+
+`/reports` (`features/reports/`) lists finished executions (completed,
+failed, timed out, cancelled), newest first. It uses the paginated
+`GET /executions?status=` list; a report exists for every execution, so no
+separate list endpoint is needed. Each row links to its report and its
+inspector. `/reports/:executionId` renders `GET /reports/executions/{id}`
+alone: summary (status, project, version, trigger, timestamps, the
+backend's `duration_ms`), usage and cost, nodes (status, attempts,
+duration, tokens, cost, outputs on demand), errors, run snapshot and the
+event timeline. It reuses the inspector panels. Logs are not part of the
+report; the page links to the inspector's Logs tab. The inspector header
+links back to the report.
+
+- Nothing is computed in the browser: every figure is the report's own.
+- **Download JSON** fetches the report again and saves the response body
+  byte for byte (`ApiClient.requestWithBody`), after schema validation. The
+  file is the backend's canonical export (sorted keys, deterministic),
+  including fields this UI does not know yet; a malformed export is a toast,
+  never a file. The file name keeps only `[A-Za-z0-9_-]` of the id.
+- The same untrusted-text rules as the inspector apply: React text only,
+  long text cut at 20,000 characters, `[REDACTED]` shown as sent.
+
 ## Credentials
 
 `/credentials` (`features/credentials/`, admin only) lists credential

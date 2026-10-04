@@ -5,6 +5,9 @@ import { FAILURE_STATUSES, formatDuration } from '../dashboard/format'
 export const executionPath = (executionId: string) =>
     `/executions/${encodeURIComponent(executionId)}`
 
+export const reportPath = (executionId: string) =>
+    `/reports/${encodeURIComponent(executionId)}`
+
 export function duration(e: Execution): string {
     if (e.started_at && e.finished_at)
         return formatDuration(e.started_at, e.finished_at)

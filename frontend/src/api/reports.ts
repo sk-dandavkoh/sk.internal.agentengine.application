@@ -131,3 +131,22 @@ export function getExecutionReport(
         { signal },
     )
 }
+
+/**
+ * The export: the backend's canonical report JSON, byte for byte (sorted
+ * keys, deterministic for the same persisted state). Validated first, so a
+ * malformed report is an error, never a saved file.
+ */
+export async function exportExecutionReport(
+    client: ApiClient,
+    executionId: string,
+    signal?: AbortSignal,
+) {
+    const { body } = await client.requestWithBody(
+        'GET',
+        `/reports/executions/${encodeURIComponent(executionId)}`,
+        executionReportSchema,
+        { signal },
+    )
+    return body
+}

@@ -191,15 +191,15 @@ interface Call {
     body: unknown
 }
 
-/** Records each request instead of sending it. */
+/** Records each request instead of sending it (`request` delegates here). */
 class RecordingClient extends ApiClient {
     readonly calls: Call[] = []
-    override request<S extends z.ZodType>(
+    override requestWithBody<S extends z.ZodType>(
         method: HttpMethod,
         path: string,
         schema: S,
         options: RequestOptions = {},
-    ): Promise<z.output<S>> {
+    ): Promise<{ data: z.output<S>; body: string }> {
         this.calls.push({ method, path, schema, body: options.body })
         return new Promise<never>(() => undefined)
     }
@@ -250,6 +250,7 @@ void executions.cancelExecution(recorder, 'e', 'r')
 void executions.executeProjectVersion(recorder, 'p', 1, { k: 'v' })
 void executions.invokeTrigger(recorder, 'p', 't', { k: 'v' })
 void reports.getExecutionReport(recorder, 'e')
+void reports.exportExecutionReport(recorder, 'e')
 void monitoring.getMonitoringSummary(recorder, {
     since: '2026-01-01T00:00:00Z',
     until: '2026-01-02T00:00:00Z',

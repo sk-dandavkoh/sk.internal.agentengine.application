@@ -55,6 +55,20 @@ export class ApiClient {
         schema: S,
         options: RequestOptions = {},
     ): Promise<z.output<S>> {
+        return (await this.requestWithBody(method, path, schema, options)).data
+    }
+
+    /**
+     * Like `request`, plus the response body exactly as the server sent it:
+     * for downloads that must keep the backend's bytes (e.g. a canonical
+     * report export), still only after the body passed `schema`.
+     */
+    async requestWithBody<S extends z.ZodType>(
+        method: HttpMethod,
+        path: string,
+        schema: S,
+        options: RequestOptions = {},
+    ): Promise<{ data: z.output<S>; body: string }> {
         const requestId = crypto.randomUUID()
         const timeout = AbortSignal.timeout(options.timeoutMs ?? this.timeoutMs)
         const signal = options.signal
@@ -109,7 +123,7 @@ export class ApiClient {
         const parsed = schema.safeParse(data)
         if (!parsed.success)
             throw malformed(response.status, responseId, parsed.error)
-        return parsed.data
+        return { data: parsed.data, body: text }
     }
 
     private url(path: string, query: RequestOptions['query']): string {

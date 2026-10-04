@@ -83,6 +83,22 @@ export const routes: RouteObject[] = [
                             return { Component: CredentialsPage }
                         },
                     },
+                    {
+                        path: '/reports',
+                        lazy: async () => {
+                            const { ReportsPage } =
+                                await import('../features/reports/ReportsPage')
+                            return { Component: ReportsPage }
+                        },
+                    },
+                    {
+                        path: '/reports/:executionId',
+                        lazy: async () => {
+                            const { ReportDetailPage } =
+                                await import('../features/reports/ReportDetailPage')
+                            return { Component: ReportDetailPage }
+                        },
+                    },
                     ...navItems
                         .filter(
                             (item) =>
@@ -92,6 +108,7 @@ export const routes: RouteObject[] = [
                                     '/executions',
                                     '/monitoring',
                                     '/credentials',
+                                    '/reports',
                                 ].includes(item.path),
                         )
                         .map((item): RouteObject => ({

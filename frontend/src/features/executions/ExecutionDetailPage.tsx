@@ -18,7 +18,7 @@ import {
 } from '../../components/ui'
 import { FailureDetails } from '../dashboard/FailureDetails'
 import { CancelExecution } from './CancelExecution'
-import { isFailure } from './format'
+import { isFailure, reportPath } from './format'
 import { Mono } from './inspector/display'
 import { GraphPanel, NodesPanel } from './inspector/FlowPanels'
 import { ErrorsPanel, EventsPanel, LogsPanel } from './inspector/HistoryPanels'
@@ -177,7 +177,8 @@ export function ExecutionDetailPage() {
                 description={
                     <>
                         <Mono>{executionId}</Mono> ·{' '}
-                        <TextLink to="/executions">All executions</TextLink>
+                        <TextLink to={reportPath(executionId)}>Report</TextLink>{' '}
+                        · <TextLink to="/executions">All executions</TextLink>
                     </>
                 }
                 actions={
