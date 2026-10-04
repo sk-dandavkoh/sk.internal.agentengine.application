@@ -36,10 +36,11 @@ run=(env -i PATH="$PATH" HOME="$HOME"
     AKASHA_HOST=127.0.0.1 AKASHA_PORT="$port"
     # Node logs are stored down to the process log level (architecture §52).
     AKASHA_LOG_LEVEL=INFO
-    # The worker runs executions; no scheduler: the suite fires no cron
-    # triggers, and it would only log failures once teardown has removed
-    # the database.
-    AKASHA_SCHEDULER_ENABLED=false
+    # The worker runs executions; the scheduler task also dispatches event
+    # triggers, which the suite fires. Like the worker, it logs failed polls
+    # once teardown has removed the database.
+    # Throwaway, like the database: credentials die with the run.
+    AKASHA_CREDENTIAL_ENCRYPTION_KEY="$(openssl rand -base64 32 | tr '+/' '-_')"
     uv run --directory "$backend" --frozen akasha)
 "${run[@]}" migrate
 # exec: Playwright stops the server by signalling this process.

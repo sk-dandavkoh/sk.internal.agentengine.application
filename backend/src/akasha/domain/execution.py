@@ -400,9 +400,13 @@ class ExecutionMetadata:
     correlation_id: str | None = None
     engine_version: str = __version__
     node_versions: Mapping[str, str] = field(default_factory=dict)
+    # Event-trigger hops that led to this run (``TriggerContext.depth``).
+    trigger_depth: int = 0
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "trigger_type", TriggerType(self.trigger_type))
+        if isinstance(self.trigger_depth, bool) or self.trigger_depth < 0:
+            raise DomainValidationError("trigger_depth must be >= 0")
         object.__setattr__(self, "node_versions", dict(self.node_versions))
         if self.trigger_id is not None:
             validate_id(self.trigger_id)

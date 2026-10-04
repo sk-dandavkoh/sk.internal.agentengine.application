@@ -2830,6 +2830,7 @@
           "invalid_dependency",
           "duplicate_trigger_id",
           "invalid_trigger_schedule",
+          "invalid_trigger_event",
           "webhook_secret_required"
         ],
         "title": "ValidationCode",

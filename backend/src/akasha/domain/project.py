@@ -41,6 +41,7 @@ from akasha.domain.trigger import (
     WEBHOOK_SIGNING_FIELD,
     Trigger,
     TriggerType,
+    event_problem,
     schedule_problem,
 )
 from akasha.errors import DomainValidationError
@@ -242,7 +243,8 @@ def validate_triggers(triggers: Iterable[Trigger]) -> tuple[ValidationIssue, ...
     Trigger ids must be unique within a project: webhook and invoke calls
     address a trigger by (project, trigger id). Schedules must be
     evaluable (``schedule_problem``). Webhooks are public URLs, so they
-    must name the credential that signs their requests. All are validation
+    must name the credential that signs their requests. Event triggers must
+    name an event they can react to (``event_problem``). All are validation
     issues, not construction errors, for the same reason as dependency
     constraints: persisted drafts must stay loadable so they can be fixed.
     """
@@ -263,6 +265,15 @@ def validate_triggers(triggers: Iterable[Trigger]) -> tuple[ValidationIssue, ...
             issues.append(
                 ValidationIssue(
                     ValidationCode.INVALID_TRIGGER_SCHEDULE,
+                    problem,
+                    trigger_id=trigger.id,
+                )
+            )
+        problem = event_problem(trigger)
+        if problem is not None:
+            issues.append(
+                ValidationIssue(
+                    ValidationCode.INVALID_TRIGGER_EVENT,
                     problem,
                     trigger_id=trigger.id,
                 )

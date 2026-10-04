@@ -4619,6 +4619,32 @@ new execution
 
 Event-triggered execution must include safeguards against accidental infinite loops.
 
+Implementation (frontend Phase 18):
+
+- An EVENT trigger's config is `{"event": "<type>"}` plus an optional
+  `"source_project_id"` (default: its own project). Triggerable types are
+  `execution.completed`, `execution.failed`, `execution.cancelled`,
+  `execution.timed_out` and `project.published`. Any other value, or a
+  malformed source id, is the validation issue `INVALID_TRIGGER_EVENT`.
+- `EventTriggerDispatcher` (`runtime/event_triggers.py`) runs next to the
+  cron scheduler (`AKASHA_SCHEDULER_ENABLED`, one replica). It reads the
+  persisted event log, not the in-process publisher, because workers run in
+  other processes. It re-reads positions it saw skipped until they commit
+  or 60 s pass: identity positions are assigned at insert, not at commit.
+- No catch-up: the first tick anchors at the end of the log. Each event
+  fires a trigger at most once; a failed fire is logged, not retried.
+- The execution input is `{"event": {type, event_id, project_id,
+  project_version, execution_id, occurred_at, data}}`, only the event's own
+  closed, secret-free fields. The source's correlation id is kept.
+- A source project other than the trigger's own must be accessible to the
+  trigger project's owner by the API's rule (`may_access_project`): an
+  admin any project, a member only their own; a disabled owner none.
+  Ownerless operator projects may chain among themselves. Checked at fire
+  time; otherwise the fire is refused (`event_trigger_source_denied`).
+- Loop protection: executions record `trigger_depth` (source depth + 1).
+  Fires beyond `AKASHA_LIMIT_EVENT_TRIGGER_DEPTH` (default 8) are refused
+  (`event_trigger_depth_exceeded`).
+
 ----------
 
 # 130. Infinite Loop Protection

@@ -145,13 +145,23 @@ class TriggerRegistry:
         """All enabled CRON/INTERVAL triggers on latest published versions,
         in a deterministic order (AGENTS §72). The same trigger id may appear
         in several projects."""
+        return await self._list_enabled(SCHEDULED_TYPES)
+
+    async def list_event_triggers(self) -> list[ResolvedTrigger]:
+        """All enabled EVENT triggers on latest published versions, in the
+        same deterministic order."""
+        return await self._list_enabled(frozenset({TriggerType.EVENT}))
+
+    async def _list_enabled(
+        self, types: frozenset[TriggerType]
+    ) -> list[ResolvedTrigger]:
         async with self._uow() as uow:
             latest = await uow.versions.list_latest()
         found = [
             ResolvedTrigger(project_id, version.version, trigger)
             for project_id, version in latest
             for trigger in version.triggers
-            if trigger.enabled and trigger.trigger_type in SCHEDULED_TYPES
+            if trigger.enabled and trigger.trigger_type in types
         ]
         return sorted(found, key=lambda r: (r.trigger.id, r.project_id))
 
@@ -226,6 +236,7 @@ class TriggerService:
                 # Scheduled runs have no inbound request: they get their
                 # own correlation root so their logs still group.
                 correlation_id=context.metadata.get("correlation_id") or new_id("corr"),
+                trigger_depth=context.depth,
             ),
             dispatch=dispatch,
         )

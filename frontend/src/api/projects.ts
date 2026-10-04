@@ -147,6 +147,7 @@ export const validationCodeSchema = z.enum([
     'invalid_dependency',
     'duplicate_trigger_id',
     'invalid_trigger_schedule',
+    'invalid_trigger_event',
     'webhook_secret_required',
 ])
 export type ValidationCode = z.infer<typeof validationCodeSchema>

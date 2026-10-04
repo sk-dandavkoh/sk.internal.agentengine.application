@@ -132,6 +132,12 @@ function ProjectView({ project }: { project: Project }) {
                         >
                             Versions
                         </TextLink>
+                        <TextLink
+                            to={`${projectPath(project.id)}/triggers`}
+                            className="self-center"
+                        >
+                            Triggers
+                        </TextLink>
                         <Button
                             onClick={() => {
                                 setAction('edit')

@@ -7,14 +7,17 @@ from typing import Any
 import pytest
 
 from akasha.domain.credentials import CredentialReference
+from akasha.domain.execution import ExecutionMetadata
 from akasha.domain.plugin import PluginMetadata
 from akasha.domain.project import Dependency
 from akasha.domain.trigger import (
     MAX_INTERVAL_SECONDS,
     MAX_PAYLOAD_DEPTH,
+    TRIGGERABLE_EVENTS,
     Trigger,
     TriggerContext,
     TriggerType,
+    event_problem,
     schedule_problem,
 )
 from akasha.errors import DomainValidationError
@@ -134,6 +137,53 @@ class TestScheduleProblem:
     )
     def test_unscheduled_types_have_no_problem(self, t: TriggerType) -> None:
         assert schedule_problem(Trigger.create(t)) is None
+
+
+class TestEventProblem:
+    @pytest.mark.parametrize("event", sorted(TRIGGERABLE_EVENTS))
+    def test_triggerable_events_have_no_problem(self, event: str) -> None:
+        assert (
+            event_problem(Trigger.create(TriggerType.EVENT, {"event": event})) is None
+        )
+
+    @pytest.mark.parametrize(
+        "event", ["node.completed", "execution.created", "lead.created"]
+    )
+    def test_other_events_never_fire(self, event: str) -> None:
+        problem = event_problem(Trigger.create(TriggerType.EVENT, {"event": event}))
+        assert problem is not None
+        assert event not in problem  # config values never reach messages
+
+    def test_source_project_must_be_a_project_id(self) -> None:
+        def problem(source: object) -> str | None:
+            return event_problem(
+                Trigger.create(
+                    TriggerType.EVENT,
+                    {"event": "execution.completed", "source_project_id": source},
+                )
+            )
+
+        assert problem("proj_" + "a" * 32) is None
+        for bad in ("trig_" + "a" * 32, "proj_x", "", 7):
+            assert problem(bad) is not None
+
+    @pytest.mark.parametrize("t", [t for t in TriggerType if t != TriggerType.EVENT])
+    def test_other_types_have_no_problem(self, t: TriggerType) -> None:
+        config = {"cron": "* * * * *", "interval_seconds": 5}
+        assert event_problem(Trigger.create(t, config)) is None
+
+
+class TestTriggerDepth:
+    def test_context_and_metadata_default_to_zero(self) -> None:
+        assert TriggerContext(trigger_type=TriggerType.EVENT).depth == 0
+        assert ExecutionMetadata().trigger_depth == 0
+
+    @pytest.mark.parametrize("depth", [-1, True])
+    def test_invalid_depth_rejected(self, depth: Any) -> None:
+        with pytest.raises(DomainValidationError):
+            TriggerContext(trigger_type=TriggerType.EVENT, depth=depth)
+        with pytest.raises(DomainValidationError):
+            ExecutionMetadata(trigger_depth=depth)
 
 
 class TestTriggerContext:

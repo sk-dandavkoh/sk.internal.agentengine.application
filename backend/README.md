@@ -73,6 +73,7 @@ maximum a request may ask for:
 | `AKASHA_LIMIT_NODE_OUTPUT_BYTES` | `1048576` | one node's outputs, as UTF-8 JSON |
 | `AKASHA_LIMIT_EXECUTION_OUTPUT_BYTES` | `16777216` | all outputs of one execution (≥ node limit) |
 | `AKASHA_LIMIT_LLM_OUTPUT_TOKENS` | `16384` | `max_tokens` per LLM request (unset → this) |
+| `AKASHA_LIMIT_EVENT_TRIGGER_DEPTH` | `8` | longest chain of event-triggered executions (1–100) |
 
 First run: `POST /api/v1/auth/setup` with `{"username", "password"}` creates
 the initial admin. It works only while no account exists, so complete it

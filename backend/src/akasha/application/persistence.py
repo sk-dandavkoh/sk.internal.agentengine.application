@@ -265,14 +265,21 @@ class EventRepository(Protocol):
         project_id: str | None = None,
         after: int = 0,
         limit: int = 100,
+        positions: Collection[int] | None = None,
     ) -> Sequence[Event]:
-        """Stored events with ``position > after``, ascending by position.
+        """Stored events with ``position > after`` (and among ``positions``
+        when given), ascending by position.
 
         Ordering is guaranteed per execution and per project (each has a
         single CAS-guarded writer). Across unrelated streams positions only
         approximate commit order, so a global "after" cursor may skip a
-        concurrently committed event.
+        concurrently committed event; ``positions`` lets such a reader
+        re-check the gaps it saw.
         """
+        ...
+
+    async def max_position(self) -> int:
+        """The highest stored position; 0 when there are no events."""
         ...
 
 

@@ -1,10 +1,6 @@
-import { useQuery } from '@tanstack/react-query'
 import { useId, useState, type ReactNode } from 'react'
-import { useApiClient } from '../../api/context'
-import { credentialQueries } from '../../api/queries'
 import { Button, Checkbox, Input, Select, Textarea } from '../../components/ui'
 import {
-    CREDENTIAL_PREFIX,
     display,
     emptyValue,
     fits,
@@ -16,6 +12,7 @@ import {
     type JsonValue,
     type Property,
 } from './configSchema'
+import { CredentialInput } from '../credentials/CredentialInput'
 
 // Renders any config schema the backend sends: one control per field kind,
 // recursing into objects, lists and maps. No node has a form of its own
@@ -240,12 +237,6 @@ function TextField({
     )
 }
 
-/**
- * A credential is chosen by name and stored as `credential:<name>`. The
- * secret never reaches the browser: the backend has no endpoint returning
- * it, and the suggestions are credential metadata (names). A stored value
- * that is not a reference is hidden, not shown, since it may be a secret.
- */
 function CredentialField({
     spec,
     label,
@@ -256,57 +247,17 @@ function CredentialField({
     onChange,
     issues,
 }: FieldProps) {
-    const client = useApiClient()
-    const listId = useId()
-    // Admin only; for members the list fails and the name is typed freely.
-    const known = useQuery({
-        ...credentialQueries.list(client, { limit: 100 }),
-        retry: false,
-    })
-    const stored = typeof value === 'string' ? value : ''
-    const isReference = stored === '' || stored.startsWith(CREDENTIAL_PREFIX)
-    const error =
-        errorFor(issues, path) ??
-        (isReference
-            ? undefined
-            : 'The stored value is not a credential reference and is hidden. Enter a credential name to replace it.')
     return (
-        <>
-            <Input
-                label={label}
-                required={required}
-                description={helpText(
-                    spec,
-                    'Enter the name of a credential; its secret is never shown here.',
-                )}
-                error={error}
-                list={listId}
-                autoComplete="off"
-                spellCheck={false}
-                value={
-                    isReference ? stored.slice(CREDENTIAL_PREFIX.length) : ''
-                }
-                onChange={(e) => {
-                    const name = e.target.value
-                        .trim()
-                        .replace(/^credential:/, '')
-                    onChange(
-                        name === ''
-                            ? optional
-                                ? undefined
-                                : ''
-                            : CREDENTIAL_PREFIX + name,
-                    )
-                }}
-            />
-            <datalist id={listId}>
-                {known.data?.items.map((c) => (
-                    <option key={c.name} value={c.name}>
-                        {c.description || c.kind}
-                    </option>
-                ))}
-            </datalist>
-        </>
+        <CredentialInput
+            label={label}
+            required={required}
+            description={helpText(spec)}
+            error={errorFor(issues, path)}
+            value={value}
+            onChange={(reference) => {
+                onChange(reference ?? (optional ? undefined : ''))
+            }}
+        />
     )
 }
 

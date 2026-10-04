@@ -805,3 +805,173 @@ test('a failed run is diagnosed in the inspector: errors, node, logs', async ({
     await expect(graph.getByText('Failed')).toBeVisible()
     await expect(graph.getByText('Completed')).toHaveCount(2)
 })
+
+interface TriggerJson {
+    id: string
+    trigger_type: string
+    config: Record<string, unknown>
+    enabled: boolean
+}
+
+test('triggers are configured, validated and stored by the backend', async ({
+    page: p,
+}) => {
+    const project = await createViaApi(unique('Triggered'))
+    await publishHelloWorld(project)
+    const secret = `hook-${randomUUID().slice(0, 8)}`
+    expect(
+        (
+            await api.post('/api/v1/credentials', {
+                data: { name: secret, value: randomUUID() },
+            })
+        ).status(),
+    ).toBe(201)
+    const onServer = async () => {
+        const body = (await (
+            await api.get(`/api/v1/projects/${project.id}`)
+        ).json()) as { draft: { triggers: TriggerJson[] } }
+        return body.draft.triggers
+    }
+    const row = (text: string) =>
+        p
+            .getByRole('table', { name: 'Triggers' })
+            .getByRole('row')
+            .filter({ hasText: text })
+
+    await p.goto(`/projects/${project.id}/triggers`)
+    const manual = row('trig_01000000000000000000000000000000')
+    await expect(manual.getByText('Published')).toBeVisible()
+    await expect(manual.getByText('Valid')).toBeVisible()
+
+    // A schedule that can never fire is saved, then reported by /validate.
+    await p.getByRole('button', { name: 'New trigger' }).click()
+    let dialog = p.getByRole('dialog', { name: 'New trigger' })
+    await dialog.getByLabel('Type').selectOption('cron')
+    await dialog.getByLabel('Cron expression').fill('0 0 31 2 *')
+    await dialog.getByRole('button', { name: 'Create trigger' }).click()
+    const cron = row('Cron')
+    await expect(
+        cron.getByText('cron expression is invalid or never fires'),
+    ).toBeVisible()
+    await expect(cron.getByText('Not published')).toBeVisible()
+
+    // Fixed; then disabled.
+    await cron.getByRole('button', { name: /^Edit trigger/ }).click()
+    dialog = p.getByRole('dialog', { name: 'Edit Cron trigger' })
+    await dialog.getByLabel('Cron expression').fill('*/5 * * * *')
+    await dialog.getByRole('button', { name: 'Save trigger' }).click()
+    await expect(cron.getByText('Valid')).toBeVisible()
+    await cron.getByRole('button', { name: /^Disable trigger/ }).click()
+    await expect(cron.getByText('Disabled')).toBeVisible()
+
+    // A webhook signed with a credential.
+    await p.getByRole('button', { name: 'New trigger' }).click()
+    dialog = p.getByRole('dialog', { name: 'New trigger' })
+    await dialog.getByLabel('Type').selectOption('webhook')
+    await dialog.getByLabel('Signing secret').fill(secret)
+    await dialog.getByRole('button', { name: 'Create trigger' }).click()
+    const webhook = row('Webhook')
+    await expect(
+        webhook.getByText(`Signed with credential:${secret}`),
+    ).toBeVisible()
+    await expect(webhook.getByText('Valid')).toBeVisible()
+
+    // Reload: the page shows what the backend stored.
+    await p.reload()
+    await expect(
+        row('Cron').getByText('Schedule: */5 * * * * (UTC)'),
+    ).toBeVisible()
+    await expect(row('Cron').getByText('Disabled')).toBeVisible()
+    const stored = await onServer()
+    expect(stored.map((t) => [t.trigger_type, t.config, t.enabled])).toEqual([
+        ['manual', {}, true],
+        ['cron', { cron: '*/5 * * * *' }, false],
+        ['webhook', { secret_credential: `credential:${secret}` }, true],
+    ])
+
+    // Published, the webhook fires only when signed.
+    expect(
+        (await api.post(`/api/v1/projects/${project.id}/publish`)).status(),
+    ).toBe(201)
+    await p.reload()
+    await expect(row('Webhook').getByText('Published')).toBeVisible()
+    const hook = stored[2]?.id ?? ''
+    expect(
+        (
+            await api.post(`/api/v1/webhooks/${project.id}/${hook}`, {
+                data: {},
+            })
+        ).status(),
+    ).toBe(401)
+
+    // Deleted from the draft, still live in the published version.
+    await row('Webhook')
+        .getByRole('button', { name: /^Delete trigger/ })
+        .click()
+    await p
+        .getByRole('dialog', { name: 'Delete trigger?' })
+        .getByRole('button', { name: 'Delete trigger' })
+        .click()
+    await expect(p.getByText('Removed from the draft')).toBeVisible()
+    expect((await onServer()).map((t) => t.trigger_type)).toEqual([
+        'manual',
+        'cron',
+    ])
+
+    // The published manual trigger runs from its row.
+    await row('trig_01000000000000000000000000000000')
+        .getByRole('button', { name: /^Run trigger/ })
+        .click()
+    await expect(p).toHaveURL(/\/executions\/exec_[0-9a-f]{32}$/)
+})
+
+test('an event trigger starts a project when another one completes', async ({
+    page: p,
+}) => {
+    const source = await createViaApi(unique('Upstream'))
+    await publishHelloWorld(source)
+    const target = await createViaApi(unique('Downstream'))
+    await publishHelloWorld(target)
+
+    await p.goto(`/projects/${target.id}/triggers`)
+    await p.getByRole('button', { name: 'New trigger' }).click()
+    const dialog = p.getByRole('dialog', { name: 'New trigger' })
+    await dialog.getByLabel('Type').selectOption('event')
+    await dialog.getByLabel(/^Event/).selectOption('execution.completed')
+    await dialog
+        .getByLabel('Source project')
+        .selectOption({ label: source.name })
+    await dialog.getByRole('button', { name: 'Create trigger' }).click()
+    const event = p
+        .getByRole('table', { name: 'Triggers' })
+        .getByRole('row')
+        .filter({ hasText: 'Event' })
+    await expect(
+        event.getByText(`On execution.completed in project ${source.id}`),
+    ).toBeVisible()
+    await expect(event.getByText('Valid')).toBeVisible()
+    expect(
+        (await api.post(`/api/v1/projects/${target.id}/publish`)).status(),
+    ).toBe(201)
+
+    // The upstream run completes in the worker; the dispatcher reads its
+    // event from the log and starts the downstream project.
+    const run = await api.post(
+        `/api/v1/projects/${source.id}/versions/1/execute`,
+        {
+            data: { name: 'e2e' },
+        },
+    )
+    expect(run.status()).toBe(201)
+    await expect
+        .poll(
+            async () => {
+                const body = (await (
+                    await api.get(`/api/v1/projects/${target.id}/executions`)
+                ).json()) as { items: { trigger_type: string }[] }
+                return body.items.map((e) => e.trigger_type)
+            },
+            { timeout: 20_000 },
+        )
+        .toEqual(['event'])
+})

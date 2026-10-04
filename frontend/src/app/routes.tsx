@@ -115,6 +115,14 @@ export const routes: RouteObject[] = [
                         },
                     },
                     {
+                        path: '/projects/:projectId/triggers',
+                        lazy: async () => {
+                            const { TriggersPage } =
+                                await import('../features/triggers/TriggersPage')
+                            return { Component: TriggersPage }
+                        },
+                    },
+                    {
                         path: '/projects/:projectId/editor',
                         lazy: async () => {
                             const { EditorPage } =

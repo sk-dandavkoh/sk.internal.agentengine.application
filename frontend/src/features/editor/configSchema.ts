@@ -11,7 +11,6 @@ export type ConfigPath = readonly (string | number)[]
 
 /** `format` of a string that holds `credential:<name>`, never a secret. */
 export const CREDENTIAL_REFERENCE_FORMAT = 'credential-reference'
-export const CREDENTIAL_PREFIX = 'credential:'
 /** `format` of a prompt template string. */
 export const TEMPLATE_FORMAT = 'template'
 

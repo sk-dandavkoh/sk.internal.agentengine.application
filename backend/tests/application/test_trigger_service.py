@@ -163,8 +163,12 @@ class FakeEvents(EventRepository):
         project_id: str | None = None,
         after: int = 0,
         limit: int = 100,
+        positions: Collection[int] | None = None,
     ) -> Sequence[Event]:
         return self.items[:limit]
+
+    async def max_position(self) -> int:
+        return len(self.items)
 
 
 class FakeNodeLogs(NodeLogRepository):

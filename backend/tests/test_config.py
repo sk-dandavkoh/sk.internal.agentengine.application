@@ -63,6 +63,8 @@ def test_resource_limits_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
         {"AKASHA_LIMIT_NODE_ATTEMPTS": "0"},
         {"AKASHA_LIMIT_EXECUTION_CONCURRENCY": "0"},
         {"AKASHA_LIMIT_LLM_OUTPUT_TOKENS": "0"},
+        {"AKASHA_LIMIT_EVENT_TRIGGER_DEPTH": "0"},
+        {"AKASHA_LIMIT_EVENT_TRIGGER_DEPTH": "101"},
         {"AKASHA_LIMIT_EXECUTION_TIMEOUT_SECONDS": "0"},
     ],
 )

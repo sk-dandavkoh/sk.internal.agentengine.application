@@ -36,6 +36,7 @@ from akasha.nodes.registry import NodeRegistry
 from akasha.observability.metrics import EngineMetrics
 from akasha.plugins.registry import PluginRegistry
 from akasha.providers.litellm_adapter import LiteLLMAdapter
+from akasha.runtime.event_triggers import EventTriggerDispatcher
 from akasha.runtime.runtime import ExecutionRuntime
 from akasha.runtime.scheduler import TriggerScheduler
 from akasha.security.crypto import SecretCipher
@@ -82,15 +83,18 @@ class Container:
     # registry's LLMClient).
     ai: AIService | None = None
     scheduler: TriggerScheduler | None = None
+    # Fires EVENT triggers from the event log; runs where the scheduler runs.
+    event_triggers: EventTriggerDispatcher | None = None
     # Authentication (Phase 20). Without them every protected route answers
     # CONFIGURATION_ERROR: the API fails closed, never open.
     auth: AuthenticationService | None = None
     authorization: AuthorizationService | None = None
     users: UserService | None = None
     ready_checks: dict[str, ReadyCheck] = field(default_factory=dict)
-    # The scheduler loop task; the container owns its lifecycle (§44/§122).
-    _scheduler_task: asyncio.Task[None] | None = field(
-        default=None, init=False, repr=False
+    # The scheduler and event-trigger loop tasks; the container owns their
+    # lifecycle (§44/§122).
+    _tasks: list[asyncio.Task[None]] = field(
+        default_factory=list, init=False, repr=False
     )
 
     async def start(self) -> None:
@@ -98,9 +102,17 @@ class Container:
         unless dedicated worker processes take the jobs, a worker."""
         if self.workers is not None and self.settings.worker_enabled:
             await self.workers.start()
-        if self.scheduler is not None and self._scheduler_task is None:
-            self._scheduler_task = asyncio.create_task(
-                self.scheduler.run(), name="trigger-scheduler"
+        if self._tasks:
+            return
+        if self.scheduler is not None:
+            self._tasks.append(
+                asyncio.create_task(self.scheduler.run(), name="trigger-scheduler")
+            )
+        if self.event_triggers is not None:
+            self._tasks.append(
+                asyncio.create_task(
+                    self.event_triggers.run(), name="event-trigger-dispatcher"
+                )
             )
 
     async def readiness_failures(self) -> dict[str, str]:
@@ -114,12 +126,11 @@ class Container:
 
     async def shutdown(self) -> None:
         """Stop background work, then release connections and pools (§48)."""
-        task = self._scheduler_task
-        if task is not None:
+        for task in self._tasks:
             task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await task
-            self._scheduler_task = None
+        self._tasks.clear()
         # Before the database closes: stopping runs persist their state.
         if self.workers is not None:
             await self.workers.stop()
@@ -220,6 +231,17 @@ def create_container(settings: Settings) -> Container:
         if settings.scheduler_enabled
         else None
     )
+    event_triggers = (
+        EventTriggerDispatcher(
+            uow,
+            trigger_registry,
+            triggers,
+            max_depth=settings.limit_event_trigger_depth,
+            poll_seconds=settings.scheduler_poll_seconds,
+        )
+        if settings.scheduler_enabled
+        else None
+    )
     return Container(
         settings=settings,
         nodes=nodes,
@@ -240,6 +262,7 @@ def create_container(settings: Settings) -> Container:
         trigger_registry=trigger_registry,
         ai=ai,
         scheduler=scheduler,
+        event_triggers=event_triggers,
         auth=auth,
         authorization=AuthorizationService(uow),
         users=UserService(uow, auth),

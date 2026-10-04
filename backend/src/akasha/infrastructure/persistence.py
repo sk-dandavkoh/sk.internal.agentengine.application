@@ -658,6 +658,7 @@ class SqlAlchemyExecutionRepository(ExecutionRepository):
                 "correlation_id": e.metadata.correlation_id,
                 "engine_version": e.metadata.engine_version,
                 "node_versions": dict(e.metadata.node_versions),
+                "trigger_depth": e.metadata.trigger_depth,
             },
             "retry_policy": {
                 "max_attempts": e.retry_policy.max_attempts,
@@ -772,6 +773,8 @@ def _metadata(doc: dict[str, Any]) -> ExecutionMetadata:
         engine_version=doc["engine_version"],
         # Absent in rows written before Phase 09 (no registry existed then).
         node_versions=doc.get("node_versions", {}),
+        # Absent in rows written before event triggers fired.
+        trigger_depth=doc.get("trigger_depth", 0),
     )
 
 
@@ -878,8 +881,11 @@ class SqlAlchemyEventRepository(EventRepository):
         project_id: str | None = None,
         after: int = 0,
         limit: int = 100,
+        positions: Collection[int] | None = None,
     ) -> Sequence[Event]:
         stmt = select(m.events).where(m.events.c.position > after)
+        if positions is not None:
+            stmt = stmt.where(m.events.c.position.in_(list(positions)))
         if execution_id is not None:
             stmt = stmt.where(m.events.c.execution_id == execution_id)
         if project_id is not None:
@@ -909,6 +915,12 @@ class SqlAlchemyEventRepository(EventRepository):
             )
             for r in rows
         ]
+
+    async def max_position(self) -> int:
+        result = await self._session.execute(
+            select(func.coalesce(func.max(m.events.c.position), 0))
+        )
+        return int(result.scalar_one())
 
 
 class SqlAlchemyNodeLogRepository(NodeLogRepository):

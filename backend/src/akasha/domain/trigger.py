@@ -20,6 +20,7 @@ from enum import StrEnum
 from typing import Any
 
 from akasha.domain.cron import cron_problem
+from akasha.domain.event import EventType
 from akasha.domain.primitives import Entity, new_id, utcnow, validate_id
 from akasha.errors import DomainValidationError
 
@@ -33,6 +34,22 @@ MAX_PAYLOAD_DEPTH = 64
 # value signs requests (HMAC-SHA256 of the raw body, ``X-Akasha-Signature:
 # sha256=<hex>``). Publishing requires it; firing verifies it.
 WEBHOOK_SIGNING_FIELD = "secret_credential"
+# EVENT config key: the project whose events fire the trigger. Absent: the
+# trigger's own project. Firing requires the trigger project's owner to
+# have access to it (``akasha.runtime.event_triggers``).
+EVENT_SOURCE_FIELD = "source_project_id"
+# Events an EVENT trigger may react to: outcomes of a whole execution, and
+# publishing. Node-level events are too frequent and too internal to be a
+# contract for other projects.
+TRIGGERABLE_EVENTS: frozenset[EventType] = frozenset(
+    {
+        EventType.EXECUTION_COMPLETED,
+        EventType.EXECUTION_FAILED,
+        EventType.EXECUTION_CANCELLED,
+        EventType.EXECUTION_TIMED_OUT,
+        EventType.PROJECT_PUBLISHED,
+    }
+)
 
 
 class TriggerType(StrEnum):
@@ -95,6 +112,31 @@ class Trigger(Entity):
         return cls(id=new_id("trig"), trigger_type=trigger_type, config=config or {})
 
 
+def event_problem(trigger: Trigger) -> str | None:
+    """Why an EVENT trigger can never fire, or None. Checked at
+    validate/publish time, like ``schedule_problem``; messages carry no
+    config values."""
+    if trigger.trigger_type is not TriggerType.EVENT:
+        return None
+    if trigger.config["event"] not in TRIGGERABLE_EVENTS:
+        names = ", ".join(sorted(TRIGGERABLE_EVENTS))
+        return f"'event' must be one of: {names}"
+    source = trigger.config.get(EVENT_SOURCE_FIELD)
+    if source is not None and not _is_id(source):
+        return f"'{EVENT_SOURCE_FIELD}' must be a project id"
+    return None
+
+
+def _is_id(value: object) -> bool:
+    if not isinstance(value, str) or not value.startswith("proj_"):
+        return False
+    try:
+        validate_id(value)
+    except DomainValidationError:
+        return False
+    return True
+
+
 def schedule_problem(trigger: Trigger) -> str | None:
     """Why a CRON/INTERVAL trigger cannot be scheduled, or None if it can.
 
@@ -125,7 +167,9 @@ class TriggerContext:
     validation and observability at the boundary. They are never persisted,
     since headers may carry secrets. ``metadata`` carries optional mechanism
     extras such as ``correlation_id``. ``source`` names the mechanism
-    (``manual`` / ``api`` / ``webhook`` / ``schedule``).
+    (``manual`` / ``api`` / ``webhook`` / ``schedule`` / ``event``).
+    ``depth`` counts the event-trigger hops that led here: 0 for anything
+    not started by an event trigger (loop protection, architecture §130).
     """
 
     trigger_type: TriggerType
@@ -134,8 +178,11 @@ class TriggerContext:
     headers: Mapping[str, str] = field(default_factory=dict)
     source: str = ""
     metadata: Mapping[str, str] = field(default_factory=dict)
+    depth: int = 0
 
     def __post_init__(self) -> None:
+        if isinstance(self.depth, bool) or self.depth < 0:
+            raise DomainValidationError("trigger depth must be >= 0")
         # dataclass is frozen: normalize via object.__setattr__.
         object.__setattr__(self, "trigger_type", TriggerType(self.trigger_type))
         if self.timestamp.tzinfo is None:

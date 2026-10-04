@@ -19,6 +19,7 @@ import {
     getProjectVersion,
     listProjects,
     listProjectVersions,
+    validateProject,
     type ProjectListParams,
 } from './projects'
 import { getMonitoringSummary, type MonitoringWindow } from './monitoring'
@@ -45,6 +46,9 @@ export const queryKeys = {
             ['projects', projectId, 'versions', version] as const,
         executions: (projectId: string) =>
             ['projects', projectId, 'executions'] as const,
+        /** The backend's verdict on one draft revision. */
+        validation: (projectId: string, revision: number) =>
+            ['projects', projectId, 'validation', revision] as const,
         executionList: (
             projectId: string,
             params: ProjectExecutionListParams,
@@ -112,6 +116,14 @@ export const projectQueries = {
                 getProjectVersion(client, projectId, version, signal),
             // Published versions are immutable: never stale.
             staleTime: Infinity,
+        }),
+    /** Validates the stored draft at `revision` (a POST without side
+     * effects); a draft changed since is a 409, never another draft's
+     * verdict. */
+    validation: (client: ApiClient, projectId: string, revision: number) =>
+        queryOptions({
+            queryKey: queryKeys.projects.validation(projectId, revision),
+            queryFn: () => validateProject(client, projectId, revision),
         }),
     executions: (
         client: ApiClient,

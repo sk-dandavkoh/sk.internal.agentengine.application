@@ -547,6 +547,46 @@ or the query/mutation cache after create, failed create and rotate.
 Not shown: which projects use a credential; the backend has no usage
 endpoint yet.
 
+## Triggers
+
+`/projects/:projectId/triggers` (`features/triggers/`, linked from the
+project page) lists the draft's triggers: type, id, configuration, the
+invoke or webhook endpoint, status and the backend's validation verdict.
+Create, edit, enable/disable and delete (confirmed) all `PUT` the whole
+draft with `expected_revision`, so a stale page gets a 409 and is reloaded
+instead of overwriting newer work. There is no separate trigger API: the
+backend stores triggers on the draft (architecture §125).
+
+- Status is read from backend state: Enabled/Disabled from the draft;
+  Published / Unpublished changes / Not published by comparing the draft
+  with the latest published version, which is the only one that fires.
+  Triggers removed from the draft but still live in that version are listed.
+- Validation is `POST /validate` pinned to the shown revision
+  (`projectQueries.validation`, keyed by revision, so every save re-checks).
+  Cron syntax, interval range and webhook secrets are decided there, never
+  in the browser. Structural errors (empty cron, interval ≤ 0) are the
+  PUT's 422 and stay in the dialog.
+- All six backend types can be created: manual, API, cron (5 fields, UTC),
+  interval (1 s to 1 year), webhook and event.
+- Event triggers pick an event (`execution.completed|failed|cancelled|
+timed_out`, `project.published`) and a source: this project, or any
+  other project the caller can access. The backend fires only if the
+  trigger project's owner can access the source (an admin any project, a
+  member only their own).
+  Stored values the pickers do not offer are shown as "Unsupported" or
+  "Unavailable" rather than silently replaced. The backend dispatcher
+  fires them and refuses chains deeper than
+  `AKASHA_LIMIT_EVENT_TRIGGER_DEPTH` (architecture §129).
+- Manual triggers whose published copy is enabled have a Run button
+  (`POST …/invoke`). It opens the new execution; a refusal is a toast.
+- Webhooks: the signing secret is a credential reference
+  (`credential:<name>`, chosen with the shared `CredentialInput`). The page
+  shows the URL and the `X-Akasha-Signature: sha256=<hex>` scheme, never a
+  value. A config holding a non-reference is shown as "not a credential
+  reference" and its input stays empty.
+- Unknown config keys are kept on edit. The type of an existing trigger is
+  fixed: delete it and create a new one instead.
+
 ## Design system
 
 All UI is composed from `src/components/ui` (`import { Button, Dialog } from

@@ -60,7 +60,8 @@ class Settings(BaseSettings):
     execution_stale_seconds: float = Field(default=60.0, gt=0)
 
     # Trigger system (Phase 10). CRON/INTERVAL triggers are fired by one
-    # in-process scheduler task per API process.
+    # in-process scheduler task per API process; EVENT triggers by a
+    # dispatcher task next to it. Both run only where this is true.
     scheduler_enabled: bool = True
     scheduler_poll_seconds: float = Field(default=1.0, gt=0)
     # Live execution WebSocket (§23): how often a subscription reads new
@@ -118,6 +119,9 @@ class Settings(BaseSettings):
     limit_execution_concurrency: int = Field(default=8, ge=1, le=256)
     # Per LLM request; requests without max_tokens get this many.
     limit_llm_output_tokens: int = Field(default=16_384, ge=1, le=1_000_000)
+    # Longest chain of event-triggered executions (architecture §130/§131):
+    # a run started by an event trigger is one deeper than its source.
+    limit_event_trigger_depth: int = Field(default=8, ge=1, le=100)
 
     @model_validator(mode="after")
     def _stale_after_heartbeats(self) -> "Settings":

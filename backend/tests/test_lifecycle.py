@@ -50,7 +50,7 @@ async def test_container_wires_project_service_with_database() -> None:
         await container.shutdown()
 
 
-async def test_scheduler_task_starts_and_stops_with_container() -> None:
+async def test_trigger_tasks_start_and_stop_with_container() -> None:
     # Long-poll keeps the task in sleep; no database connection is made
     # before cancel (a failed tick is caught and logged by the loop anyway).
     settings = Settings(
@@ -60,11 +60,17 @@ async def test_scheduler_task_starts_and_stops_with_container() -> None:
     )
     container = create_container(settings)
     await container.start()
-    task = container._scheduler_task
-    assert task is not None and not task.done()
+    tasks = list(container._tasks)
+    assert [t.get_name() for t in tasks] == [
+        "trigger-scheduler",
+        "event-trigger-dispatcher",
+    ]
+    assert not any(t.done() for t in tasks)
+    await container.start()  # idempotent: no second pair of loops
+    assert container._tasks == tasks
     await container.shutdown()
-    assert task.done()
-    assert container._scheduler_task is None
+    assert all(t.done() for t in tasks)
+    assert container._tasks == []
 
 
 async def test_scheduler_disabled_by_configuration() -> None:
@@ -76,7 +82,8 @@ async def test_scheduler_disabled_by_configuration() -> None:
     container = create_container(settings)
     try:
         assert container.scheduler is None
+        assert container.event_triggers is None
         await container.start()  # no-op without a scheduler
-        assert container._scheduler_task is None
+        assert container._tasks == []
     finally:
         await container.shutdown()
