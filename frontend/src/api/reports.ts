@@ -28,6 +28,12 @@ export const executionErrorSchema = z.object({
 })
 export type ExecutionError = z.infer<typeof executionErrorSchema>
 
+/** A failed attempt of a node; `attempt` numbers it (1 = the first). */
+export const nodeFailureSchema = executionErrorSchema.extend({
+    attempt: z.number().int(),
+})
+export type NodeFailure = z.infer<typeof nodeFailureSchema>
+
 export const tokenUsageSchema = z.object({
     input_tokens: z.number().int(),
     output_tokens: z.number().int(),
@@ -53,7 +59,7 @@ export const nodeExecutionSchema = z.object({
     finished_at: timestamp.nullable(),
     duration_ms: z.number().int().nullable(),
     error: executionErrorSchema.nullable(),
-    failures: z.array(executionErrorSchema),
+    failures: z.array(nodeFailureSchema),
     outputs: jsonObject.nullable(),
     usage: tokenUsageSchema.nullable(),
     cost: costSchema.nullable(),

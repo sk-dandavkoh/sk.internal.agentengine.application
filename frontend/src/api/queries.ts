@@ -1,13 +1,15 @@
-import { queryOptions } from '@tanstack/react-query'
+import { infiniteQueryOptions, queryOptions } from '@tanstack/react-query'
 import type { ApiClient } from './client'
 import { getCredential, listCredentials } from './credentials'
 import {
     getExecution,
     getExecutionStatusCounts,
     listExecutionEvents,
+    listExecutionLogs,
     listExecutions,
     listProjectExecutions,
     type ExecutionListParams,
+    type LogFilter,
     type ProjectExecutionListParams,
 } from './executions'
 import { listNodeDefinitions, validateNodeConfig } from './nodes'
@@ -58,6 +60,8 @@ export const queryKeys = {
             ['executions', executionId, 'events', after] as const,
         report: (executionId: string) =>
             ['executions', executionId, 'report'] as const,
+        logs: (executionId: string, filter: LogFilter) =>
+            ['executions', executionId, 'logs', filter] as const,
     },
     nodes: () => ['nodes'] as const,
     /** Below `nodes()`: a catalog refresh re-checks configs too. */
@@ -148,7 +152,25 @@ export const executionQueries = {
             queryFn: ({ signal }) =>
                 getExecutionReport(client, executionId, signal),
         }),
+    /** Node log lines, oldest first; each page continues after the last. */
+    logs: (client: ApiClient, executionId: string, filter: LogFilter = {}) =>
+        infiniteQueryOptions({
+            queryKey: queryKeys.executions.logs(executionId, filter),
+            queryFn: ({ signal, pageParam }) =>
+                listExecutionLogs(
+                    client,
+                    executionId,
+                    { ...filter, after: pageParam, limit: LOG_PAGE_SIZE },
+                    signal,
+                ),
+            initialPageParam: 0,
+            getNextPageParam: (last) =>
+                last.has_more ? last.next_after : undefined,
+        }),
 }
+
+// Lines per request: the backend's maximum page size.
+export const LOG_PAGE_SIZE = 100
 
 export const nodeQueries = {
     catalog: (client: ApiClient) =>

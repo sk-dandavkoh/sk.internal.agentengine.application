@@ -28,6 +28,8 @@ from akasha.domain.execution import (
     Execution,
     ExecutionMetadata,
     ExecutionStatus,
+    LogLevel,
+    NodeLogEntry,
     RetryPolicy,
     TimeoutPolicy,
 )
@@ -55,13 +57,15 @@ async def load_execution(uow: UnitOfWork, execution_id: str) -> Execution:
 
 
 async def save_execution(uow: UnitOfWork, execution: Execution) -> None:
-    """Stage the aggregate and its recorded events in ``uow``'s transaction.
+    """Stage the aggregate, its recorded events and node log lines in
+    ``uow``'s transaction.
 
-    The events stay pending on the aggregate: the caller publishes
-    ``execution.pull_events()`` only after ``uow.commit()`` succeeded.
+    Both stay pending on the aggregate: the caller pulls them
+    (``pull_events``/``pull_logs``) only after ``uow.commit()`` succeeded.
     """
     await uow.executions.save(execution)
     await uow.events.append(execution.pending_events)
+    await uow.node_logs.append(execution.pending_logs)
 
 
 class ExecutionService:
@@ -263,6 +267,33 @@ class ExecutionService:
         last seen ``position`` as ``after`` to resume (e.g. after a
         WebSocket reconnect, AGENTS §82). ``Page.offset`` is ``after``."""
         return (await self.follow_events(execution_id, after=after, limit=limit))[1]
+
+    async def list_logs(
+        self,
+        execution_id: str,
+        *,
+        after: int = 0,
+        limit: int = 100,
+        node_id: str | None = None,
+        min_level: LogLevel = LogLevel.DEBUG,
+        contains: str | None = None,
+    ) -> Page[NodeLogEntry]:
+        """Stored node log lines of one execution, ascending by position,
+        optionally of one node, at or above ``min_level`` and with
+        ``contains`` in the message. Resumable
+        like ``list_events``: pass the last seen position as ``after``."""
+        check_page(after, limit)
+        async with self._uow() as uow:
+            await load_execution(uow, execution_id)  # 404 before "no lines"
+            rows = await uow.node_logs.list(
+                execution_id,
+                after=after,
+                limit=limit + 1,
+                node_id=node_id,
+                levels=() if min_level is LogLevel.DEBUG else min_level.at_least(),
+                contains=contains,
+            )
+        return to_page(rows, after, limit)
 
     async def follow_events(
         self, execution_id: str, *, after: int = 0, limit: int = 100

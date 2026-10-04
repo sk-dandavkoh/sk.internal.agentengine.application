@@ -238,6 +238,13 @@ void executions.getExecutionStatusCounts(recorder)
 void executions.listProjectExecutions(recorder, 'p', { version: 1 })
 void executions.getExecution(recorder, 'e')
 void executions.listExecutionEvents(recorder, 'e', { after: 3 })
+void executions.listExecutionLogs(recorder, 'e', {
+    after: 3,
+    node_id: 'n',
+    level: 'ERROR',
+    q: 'x',
+    limit: 5,
+})
 void executions.cancelExecution(recorder, 'e', 'r')
 void executions.executeProjectVersion(recorder, 'p', 1, { k: 'v' })
 void executions.invokeTrigger(recorder, 'p', 't', { k: 'v' })

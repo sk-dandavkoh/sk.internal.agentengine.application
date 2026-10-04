@@ -1,169 +1,35 @@
 import { useQuery } from '@tanstack/react-query'
 import type { ReactNode } from 'react'
-import { useParams } from 'react-router'
+import { useParams, useSearchParams } from 'react-router'
 import { useApiClient } from '../../api/context'
 import { ApiError } from '../../api/errors'
 import type { Execution } from '../../api/executions'
 import { executionQueries } from '../../api/queries'
-import type { ExecutionReport, NodeExecution } from '../../api/reports'
+import type { ExecutionReport } from '../../api/reports'
 import { QuerySection } from '../../components/QuerySection'
 import {
     Button,
     Card,
     ErrorState,
     PageHeader,
-    Table,
+    Tabs,
     TextLink,
-    type TableColumn,
+    type TabItem,
 } from '../../components/ui'
 import { FailureDetails } from '../dashboard/FailureDetails'
-import { VersionLink } from '../versions/shared'
 import { CancelExecution } from './CancelExecution'
-import { duration, isFailure } from './format'
+import { isFailure } from './format'
+import { Mono } from './inspector/display'
+import { GraphPanel, NodesPanel } from './inspector/FlowPanels'
+import { ErrorsPanel, EventsPanel, LogsPanel } from './inspector/HistoryPanels'
+import { OverviewPanel } from './inspector/OverviewPanel'
 import { LiveActivity, LiveIndicator } from './live'
 import { useLiveExecution } from './useLiveExecution'
-import { StatusBadge, Time } from './shared'
 
-function Item({ term, children }: { term: string; children: ReactNode }) {
-    return (
-        <div className="flex flex-col gap-0.5">
-            <dt className="text-muted">{term}</dt>
-            <dd className="break-words">{children}</dd>
-        </div>
-    )
-}
-
-const Mono = ({ children }: { children: ReactNode }) => (
-    <code className="font-mono text-xs break-all">{children}</code>
-)
-
-const none = <span className="text-muted">None</span>
-
-function Details({
-    execution,
-    projectName,
-}: {
-    execution: Execution
-    projectName: string | null | undefined
-}) {
-    const e = execution
-    return (
-        <Card title="Details">
-            <dl className="grid gap-4 text-sm sm:grid-cols-2 lg:grid-cols-3">
-                <Item term="Status">
-                    <StatusBadge status={e.status} />
-                </Item>
-                <Item term="Project">
-                    <TextLink
-                        to={`/projects/${encodeURIComponent(e.project_id)}`}
-                    >
-                        {projectName ?? e.project_id}
-                    </TextLink>
-                </Item>
-                <Item term="Version">
-                    <VersionLink projectId={e.project_id} version={e.version} />
-                </Item>
-                <Item term="Trigger">
-                    {e.trigger_type}
-                    {e.trigger_id && (
-                        <>
-                            {' '}
-                            <Mono>{e.trigger_id}</Mono>
-                        </>
-                    )}
-                </Item>
-                <Item term="Created">
-                    <Time iso={e.created_at} />
-                </Item>
-                <Item term="Started">
-                    <Time iso={e.started_at} />
-                </Item>
-                <Item term="Finished">
-                    <Time iso={e.finished_at} />
-                </Item>
-                <Item term="Duration">{duration(e)}</Item>
-                <Item term="Correlation id">
-                    {e.correlation_id ? <Mono>{e.correlation_id}</Mono> : none}
-                </Item>
-            </dl>
-        </Card>
-    )
-}
-
-const amount = (n: number) =>
-    n.toLocaleString(undefined, { maximumFractionDigits: 6 })
-
-function Usage({ report }: { report: ExecutionReport }) {
-    const { usage, costs, cost_complete } = report.metrics
-    const cancellation = report.execution.cancellation
-    return (
-        <dl className="grid gap-4 text-sm sm:grid-cols-2 lg:grid-cols-3">
-            <Item term="Tokens">
-                {amount(usage.total_tokens)}{' '}
-                <span className="text-muted">
-                    ({amount(usage.input_tokens)} in,{' '}
-                    {amount(usage.output_tokens)} out)
-                </span>
-            </Item>
-            <Item term="Estimated cost">
-                {costs.length === 0
-                    ? none
-                    : costs
-                          .map((c) => `${amount(c.amount)} ${c.currency}`)
-                          .join(' + ')}
-                {!cost_complete && (
-                    <span className="block text-muted">
-                        Incomplete: some nodes reported tokens without a price.
-                    </span>
-                )}
-            </Item>
-            <Item term="Nodes">
-                {String(report.nodes.length)}{' '}
-                <span className="text-muted">
-                    ({String(report.metrics.attempts)} attempts,{' '}
-                    {String(report.metrics.retries)} retries)
-                </span>
-            </Item>
-            {cancellation && (
-                <Item term="Cancellation">
-                    Requested <Time iso={cancellation.requested_at} />
-                    {cancellation.reason && `: ${cancellation.reason}`}
-                </Item>
-            )}
-        </dl>
-    )
-}
-
-const nodeColumns: readonly TableColumn<NodeExecution>[] = [
-    {
-        key: 'node',
-        header: 'Node',
-        cell: (n) => (
-            <>
-                {n.label || n.node_id}{' '}
-                <span className="text-muted">{n.node_type}</span>
-            </>
-        ),
-    },
-    // The backend's node status, verbatim: no client-side state machine.
-    { key: 'status', header: 'Status', cell: (n) => n.status },
-    {
-        key: 'attempts',
-        header: 'Attempts',
-        align: 'end',
-        cell: (n) => String(n.attempts),
-    },
-    {
-        key: 'started',
-        header: 'Started',
-        cell: (n) => <Time iso={n.started_at} />,
-    },
-    {
-        key: 'finished',
-        header: 'Finished',
-        cell: (n) => <Time iso={n.finished_at} />,
-    },
-]
+const TABS = ['overview', 'graph', 'nodes', 'logs', 'errors', 'events'] as const
+type Tab = (typeof TABS)[number]
+const isTab = (v: string | null): v is Tab =>
+    (TABS as readonly (string | null)[]).includes(v)
 
 function ExecutionView({ execution }: { execution: Execution }) {
     const report = useQuery(
@@ -171,9 +37,95 @@ function ExecutionView({ execution }: { execution: Execution }) {
     )
     // Only unfinished runs stream; a finished one has nothing left to say.
     const live = useLiveExecution(execution.id, execution.finished_at === null)
-    const refetch = () => {
-        void report.refetch()
+    // Tab and node live in the URL: an inspected node is a shareable link.
+    const [params, setParams] = useSearchParams()
+    const tabParam = params.get('tab')
+    const tab: Tab = isTab(tabParam) ? tabParam : 'overview'
+    const node = params.get('node') ?? undefined
+    const show = (next: Tab, nodeId = node) => {
+        const p = new URLSearchParams()
+        if (next !== 'overview') p.set('tab', next)
+        if (nodeId) p.set('node', nodeId)
+        setParams(p, { replace: true })
     }
+    const inspect = (nodeId: string) => {
+        show('nodes', nodeId)
+    }
+
+    const withReport = (
+        subject: string,
+        render: (r: ExecutionReport) => ReactNode,
+    ) => (
+        <QuerySection query={report} subject={subject}>
+            {render}
+        </QuerySection>
+    )
+    const failures =
+        report.data?.nodes.reduce((n, x) => n + x.failures.length, 0) ?? 0
+    const items: TabItem[] = [
+        {
+            id: 'overview',
+            label: 'Overview',
+            content: (
+                <div className="flex flex-col gap-6">
+                    <OverviewPanel execution={execution} report={report} />
+                    {live.state !== 'idle' && (
+                        <Card
+                            title="Live activity"
+                            description="Events received while this page is open."
+                        >
+                            <LiveActivity events={live.events} />
+                        </Card>
+                    )}
+                </div>
+            ),
+        },
+        {
+            id: 'graph',
+            label: 'Graph',
+            content: withReport('the graph', (r) => (
+                <GraphPanel
+                    execution={execution}
+                    report={r}
+                    onInspect={inspect}
+                />
+            )),
+        },
+        {
+            id: 'nodes',
+            label: 'Nodes',
+            content: withReport('the nodes', (r) => (
+                <NodesPanel
+                    executionId={execution.id}
+                    report={r}
+                    selected={node}
+                    onInspect={inspect}
+                />
+            )),
+        },
+        {
+            id: 'logs',
+            label: 'Logs',
+            content: withReport('the logs', (r) => (
+                <LogsPanel executionId={execution.id} report={r} />
+            )),
+        },
+        {
+            id: 'errors',
+            // The count is text: no color-only signal.
+            label: failures > 0 ? `Errors (${String(failures)})` : 'Errors',
+            content: withReport('the errors', (r) => (
+                <ErrorsPanel report={r} onInspect={inspect} />
+            )),
+        },
+        {
+            id: 'events',
+            label: 'Events',
+            content: withReport('the events', (r) => (
+                <EventsPanel report={r} />
+            )),
+        },
+    ]
     return (
         <div className="flex flex-col gap-6">
             <LiveIndicator state={live.state} />
@@ -185,48 +137,14 @@ function ExecutionView({ execution }: { execution: Execution }) {
                     />
                 </Card>
             )}
-            <Details
-                execution={execution}
-                projectName={report.data?.project.name}
+            <Tabs
+                label="Execution inspector"
+                items={items}
+                value={tab}
+                onValueChange={(id) => {
+                    if (isTab(id)) show(id)
+                }}
             />
-            <Card
-                title="Usage"
-                description="Token usage and a list-price cost estimate, never billing data."
-                actions={
-                    <Button
-                        size="sm"
-                        onClick={refetch}
-                        loading={report.isFetching}
-                    >
-                        Refresh
-                    </Button>
-                }
-            >
-                <QuerySection query={report} subject="usage">
-                    {(r) => <Usage report={r} />}
-                </QuerySection>
-            </Card>
-            <Card title="Nodes">
-                <QuerySection query={report} subject="the nodes">
-                    {(r) => (
-                        <Table
-                            caption="Node status"
-                            hideCaption
-                            columns={nodeColumns}
-                            rows={r.nodes}
-                            rowKey={(n) => n.node_id}
-                        />
-                    )}
-                </QuerySection>
-            </Card>
-            {live.state !== 'idle' && (
-                <Card
-                    title="Live activity"
-                    description="Events received while this page is open."
-                >
-                    <LiveActivity events={live.events} />
-                </Card>
-            )}
         </div>
     )
 }

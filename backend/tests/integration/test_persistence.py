@@ -35,7 +35,7 @@ UowFactory = Callable[[], AbstractAsyncContextManager[SqlAlchemyUnitOfWork]]
 pytestmark = pytest.mark.usefixtures("clean_db")
 
 _BACKENDS_DIR = Path(__file__).resolve().parents[2]
-_HEAD = "0011_version_author"
+_HEAD = "0012_node_logs"
 
 
 def _alembic_command(verb: str, db_url: str, target: str) -> None:

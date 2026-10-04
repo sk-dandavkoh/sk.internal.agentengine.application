@@ -32,6 +32,7 @@ from akasha.domain.execution import (
     ExecutionError,
     ExecutionMetadata,
     ExecutionStatus,
+    LogLevel,
     NodeExecution,
     NodeExecutionStatus,
     RetryPolicy,
@@ -1188,6 +1189,17 @@ class TestBreakRegressions:
                 failures=[PERMANENT],
             )
 
+    def test_constructor_rejects_an_earlier_attempt_without_failure(self) -> None:
+        # Reports number failures by attempt; a gap would misnumber them.
+        with pytest.raises(DomainValidationError, match="earlier attempt"):
+            NodeExecution(
+                id="nexec_" + "a" * 32,
+                node_id="node_" + "a" * 32,
+                status=N.RUNNING,
+                attempt=3,
+                failures=[PERMANENT],
+            )
+
     def test_unknown_status_string_rejected(self) -> None:
         with pytest.raises(ValueError):
             Execution(
@@ -1269,6 +1281,31 @@ def test_only_running_nodes_record_emitted_events() -> None:
     for node_id in (first, second):  # completed / pending
         with pytest.raises(InvalidStateTransitionError):
             e.record_node_event(node_id, "tick")
+
+
+def test_running_node_records_log_lines_of_its_attempt() -> None:
+    e = _running()
+    node_id = _ids(e)[0]
+    _run_node(e, node_id)
+    e.record_node_logs(node_id, [(LogLevel.INFO, "hello", T0, {"n": 1})])
+    [entry] = e.pull_logs()
+    assert (entry.execution_id, entry.node_id, entry.attempt) == (e.id, node_id, 1)
+    assert (entry.level, entry.message, entry.fields) == (
+        LogLevel.INFO,
+        "hello",
+        {"n": 1},
+    )
+    assert e.pending_logs == ()
+
+
+def test_only_running_nodes_record_log_lines() -> None:
+    e = _running()
+    first, second = _ids(e)
+    _run_node(e, first)
+    e.complete_node(first, outputs={}, now=T0)
+    for node_id in (first, second):  # completed / pending
+        with pytest.raises(InvalidStateTransitionError):
+            e.record_node_logs(node_id, [])
 
 
 # ==========================================================================

@@ -10,7 +10,7 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { useQuery } from '@tanstack/react-query'
-import { useMemo } from 'react'
+import { useMemo, type ReactNode } from 'react'
 import { useApiClient } from '../../api/context'
 import type { NodeDefinition } from '../../api/nodes'
 import type { Graph, NodeInstance } from '../../api/projects'
@@ -26,11 +26,13 @@ interface SnapshotNodeData extends Record<string, unknown> {
     catalogLoaded: boolean
     inputs: CardPort[]
     outputs: CardPort[]
+    footer: ReactNode
 }
 type SnapshotNode = FlowNode<SnapshotNodeData, 'snapshot'>
 
 function SnapshotNodeView({ data }: NodeProps<SnapshotNode>) {
-    const { instance, definition, catalogLoaded, inputs, outputs } = data
+    const { instance, definition, catalogLoaded, inputs, outputs, footer } =
+        data
     return (
         <NodeCard
             title={nodeTitle(instance, definition)}
@@ -41,6 +43,7 @@ function SnapshotNodeView({ data }: NodeProps<SnapshotNode>) {
             unknown={catalogLoaded && !definition}
             // Edges attach to handles; nothing can be connected here.
             handles
+            footer={footer}
         />
     )
 }
@@ -53,7 +56,18 @@ const nodeTypes = { snapshot: SnapshotNodeView }
  * cards use today's catalog for names and ports; the snapshot decides
  * which nodes and edges exist.
  */
-export function SnapshotCanvas({ graph }: { graph: Graph }) {
+export function SnapshotCanvas({
+    graph,
+    label = 'Published graph (read-only)',
+    footer,
+    onNodeClick,
+}: {
+    graph: Graph
+    label?: string
+    /** Per-node extra state, e.g. its status within an execution. */
+    footer?: (nodeId: string) => ReactNode
+    onNodeClick?: (nodeId: string) => void
+}) {
     const catalog = useQuery(nodeQueries.catalog(useApiClient())).data
     const definitions = useMemo(
         () => new Map(catalog?.items.map((d) => [d.node_type, d])),
@@ -73,11 +87,12 @@ export function SnapshotCanvas({ graph }: { graph: Graph }) {
                     instance,
                     definition,
                     catalogLoaded: catalog !== undefined,
+                    footer: footer?.(instance.id),
                     ...portsOf(instance, definition, graph.edges),
                 },
             }
         })
-    }, [graph, definitions, catalog])
+    }, [graph, definitions, catalog, footer])
     const edges = useMemo(
         (): FlowEdge[] =>
             graph.edges.map((e) => ({
@@ -93,7 +108,7 @@ export function SnapshotCanvas({ graph }: { graph: Graph }) {
     return (
         <div
             role="figure"
-            aria-label="Published graph (read-only)"
+            aria-label={label}
             className="h-96 overflow-hidden rounded-md border border-border bg-canvas"
         >
             <ReactFlow<SnapshotNode>
@@ -105,6 +120,9 @@ export function SnapshotCanvas({ graph }: { graph: Graph }) {
                 elementsSelectable={false}
                 edgesReconnectable={false}
                 deleteKeyCode={null}
+                onNodeClick={(_, node) => {
+                    onNodeClick?.(node.id)
+                }}
                 minZoom={MIN_ZOOM}
                 maxZoom={MAX_ZOOM}
                 fitView

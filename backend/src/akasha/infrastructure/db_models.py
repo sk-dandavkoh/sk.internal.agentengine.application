@@ -226,6 +226,35 @@ events = Table(
     Index("ix_events_project_position", "project_id", "position"),
 )
 
+# Node log lines (frontend Phase 15): what node code wrote through
+# ``context.logger``, redacted and bounded per attempt by the runtime.
+# Deleted with their execution.
+node_logs = Table(
+    "node_logs",
+    metadata,
+    # Store-assigned order, as for events: one CAS-guarded writer per
+    # execution inserts its lines in order.
+    Column("position", BigInteger, Identity(always=True), primary_key=True),
+    Column(
+        "execution_id",
+        String,
+        ForeignKey("executions.id", ondelete="CASCADE"),
+        nullable=False,
+    ),
+    Column("node_id", String, nullable=False),
+    Column("attempt", Integer, nullable=False),
+    Column("level", String, nullable=False),
+    Column("message", String, nullable=False),
+    Column("logged_at", DateTime(timezone=True), nullable=False),
+    Column("fields", JSONB_VARIANT, nullable=False),
+    CheckConstraint("attempt >= 1", name="ck_node_logs_attempt"),
+    CheckConstraint(
+        "level IN ('DEBUG','INFO','WARNING','ERROR','CRITICAL')",
+        name="ck_node_logs_level",
+    ),
+    Index("ix_node_logs_execution_position", "execution_id", "position"),
+)
+
 _CREDENTIAL_KINDS = "'api_key','smtp','provider','generic'"
 
 # Credential Store (Phase 13). ``ciphertext`` is AES-GCM output bound to the

@@ -285,13 +285,30 @@ async def snapshot(uow: UowFactory, project_id: str, execution_id: str) -> Any:
         version = await u.versions.get(project_id, 1)
         execution = await u.executions.get(execution_id)
         events = await u.events.list(project_id=project_id)
+        logs = await u.node_logs.list(execution_id)
     assert project is not None and execution is not None
     return (
         (project.name, project.revision, project.current_version, project.draft),
         version,
         (execution.status, execution.input, execution.node_executions),
         [(e.event_id, e.event_type, e.occurred_at) for e in events],
+        logs,
     )
+
+
+def logged_graph() -> Graph:
+    """input(title) → log → output: a run that leaves a stored log line."""
+    graph = Graph()
+    source = NodeInstance.create("core.input", config={"field": "title"}, label="in")
+    log = NodeInstance.create(
+        "core.log", config={"message": "got a title", "level": "warning"}, label="log"
+    )
+    sink = NodeInstance.create("core.output", config={}, label="out")
+    for node in (source, log, sink):
+        graph.add_node(node)
+    graph.add_edge(Edge(source.id, "value", log.id, "value"))
+    graph.add_edge(Edge(log.id, "value", sink.id, "value"))
+    return graph
 
 
 async def test_backup_destroy_restore_run(
@@ -308,11 +325,12 @@ async def test_backup_destroy_restore_run(
     await credentials.create(
         "api", kind=CredentialKind.API_KEY, value=Secret("sk-backup-secret-value")
     )
-    project_id = await published(projects)
+    project_id = await published(projects, logged_graph())
     run = doc(
         await cli("project", "run", project_id, "--input", '{"title": "a"}', "--json")
     )
     before = await snapshot(uow, project_id, run["id"])
+    assert [line.message for line in before[-1]] == ["got a title"]
 
     backup = tmp_path / "engine.backup"
     written = doc(await cli("backup", "-o", str(backup), "--json"))
@@ -345,6 +363,12 @@ async def test_backup_destroy_restore_run(
         await cli("project", "run", project_id, "--input", '{"title": "b"}', "--json")
     )
     assert rerun["status"] == "completed"
+    async with uow() as u:
+        rerun_logs = await u.node_logs.list(rerun["id"])
+    # Log positions continue after the restored ones, like event positions.
+    assert (rerun_logs[0].position or 0) > max(
+        line.position or 0 for line in before[-1]
+    )
 
     # --replace overwrites a live installation atomically, to the same state.
     replaced = await cli("restore", str(backup), "--replace")

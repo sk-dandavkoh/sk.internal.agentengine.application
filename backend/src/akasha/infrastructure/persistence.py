@@ -24,6 +24,7 @@ from akasha.application.persistence import (
     EventRepository,
     ExecutionRepository,
     ExecutionSummary,
+    NodeLogRepository,
     ProjectRepository,
     ProjectSort,
     ProjectVersionRepository,
@@ -40,8 +41,10 @@ from akasha.domain.execution import (
     ExecutionError,
     ExecutionMetadata,
     ExecutionStatus,
+    LogLevel,
     NodeExecution,
     NodeExecutionStatus,
+    NodeLogEntry,
     RetryPolicy,
     TimeoutPolicy,
 )
@@ -827,6 +830,71 @@ class SqlAlchemyEventRepository(EventRepository):
         ]
 
 
+class SqlAlchemyNodeLogRepository(NodeLogRepository):
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def append(self, entries: Sequence[NodeLogEntry]) -> None:
+        if not entries:
+            return
+        # executemany runs the rows one after another in list order, so the
+        # identity values (``position``) follow the recorded order.
+        await self._session.execute(
+            m.node_logs.insert(),
+            [
+                {
+                    "execution_id": e.execution_id,
+                    "node_id": e.node_id,
+                    "attempt": e.attempt,
+                    "level": e.level.value,
+                    "message": e.message,
+                    "logged_at": e.logged_at,
+                    "fields": dict(e.fields),
+                }
+                for e in entries
+            ],
+        )
+
+    async def list(
+        self,
+        execution_id: str,
+        *,
+        after: int = 0,
+        limit: int = 100,
+        node_id: str | None = None,
+        levels: Collection[LogLevel] = (),
+        contains: str | None = None,
+    ) -> Sequence[NodeLogEntry]:
+        t = m.node_logs
+        stmt = select(t).where(t.c.execution_id == execution_id, t.c.position > after)
+        if node_id is not None:
+            stmt = stmt.where(t.c.node_id == node_id)
+        if levels:
+            stmt = stmt.where(t.c.level.in_(sorted(lv.value for lv in levels)))
+        if contains:
+            # ponytail: sequential ILIKE over one execution's lines (bounded
+            # per attempt); a trigram index if searches get slow.
+            stmt = stmt.where(t.c.message.icontains(contains, autoescape=True))
+        rows = (
+            (await self._session.execute(stmt.order_by(t.c.position).limit(limit)))
+            .mappings()
+            .all()
+        )
+        return [
+            NodeLogEntry(
+                execution_id=r["execution_id"],
+                node_id=r["node_id"],
+                attempt=r["attempt"],
+                level=LogLevel(r["level"]),
+                message=r["message"],
+                logged_at=_ensure_utc(r["logged_at"]),
+                fields=dict(r["fields"]),
+                position=r["position"],
+            )
+            for r in rows
+        ]
+
+
 class SqlAlchemyCredentialRepository(CredentialRepository):
     """Metadata reads never select ``ciphertext``: only resolution loads it."""
 
@@ -1122,6 +1190,7 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
             self._session, self.versions
         )
         self.events: EventRepository = SqlAlchemyEventRepository(self._session)
+        self.node_logs: NodeLogRepository = SqlAlchemyNodeLogRepository(self._session)
         self.credentials: CredentialRepository = SqlAlchemyCredentialRepository(
             self._session
         )

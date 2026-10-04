@@ -39,6 +39,11 @@ def log_context(**fields: object) -> Iterator[None]:
         _context.reset(token)
 
 
+def record_extras(record: logging.LogRecord) -> dict[str, object]:
+    """The fields a call site passed as ``extra`` (not the record internals)."""
+    return {k: v for k, v in record.__dict__.items() if k not in _RESERVED}
+
+
 class JsonFormatter(logging.Formatter):
     """One JSON object per line. Precedence: fixed fields < bound context <
     the record's own ``extra`` (the most specific source wins)."""
@@ -53,9 +58,7 @@ class JsonFormatter(logging.Formatter):
             "message": record.getMessage(),
             **current_log_context(),
         }
-        for key, value in record.__dict__.items():
-            if key not in _RESERVED:
-                payload[key] = value
+        payload.update(record_extras(record))
         if record.exc_info and record.exc_info[0] is not None:
             payload["exception"] = self.formatException(record.exc_info)
         return json.dumps(redact(payload))

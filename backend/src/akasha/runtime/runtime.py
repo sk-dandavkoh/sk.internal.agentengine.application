@@ -79,6 +79,7 @@ from akasha.observability.logging import log_context
 from akasha.observability.metrics import EngineMetrics
 from akasha.runtime.credentials import NodeCredentials, SecretSource
 from akasha.runtime.executor import NodeOutcome, execute_node
+from akasha.runtime.node_logs import NodeLogCapture, capturing
 from akasha.runtime.plan import (
     ExecutionGraphInvalidError,
     ExecutionPlan,
@@ -169,6 +170,7 @@ class StateManager:
         return execution
 
     async def _committed(self, execution: Execution) -> None:
+        execution.pull_logs()  # stored; nothing consumes them in process
         events = execution.pull_events()
         observe_execution(execution, events, self._metrics)
         await self._events.publish(events)
@@ -211,6 +213,7 @@ class _Attempt:
     node_id: str  # node instance id
     node_type: str
     context: NodeExecutionContext
+    logs: NodeLogCapture
 
 
 _Running = dict[asyncio.Task[NodeOutcome], _Attempt]
@@ -571,14 +574,19 @@ class ExecutionRuntime:
                 events=NodeEvents(definition.events),
             )
             # The task copies the context it is created in: every log line
-            # of the node's code (and libraries it calls) carries these ids.
-            with log_context(
-                execution_id=execution.id,
-                project_id=execution.project_id,
-                correlation_id=execution.metadata.correlation_id,
-                node_id=node_id,
-                node_execution_id=ne.id,
-                node_type=instance.node_type,
+            # of the node's code (and libraries it calls) carries these ids,
+            # and its ``context.logger`` lines reach this attempt's capture.
+            logs = NodeLogCapture(self._clock)
+            with (
+                capturing(logs),
+                log_context(
+                    execution_id=execution.id,
+                    project_id=execution.project_id,
+                    correlation_id=execution.metadata.correlation_id,
+                    node_id=node_id,
+                    node_execution_id=ne.id,
+                    node_type=instance.node_type,
+                ),
             ):
                 task = asyncio.create_task(
                     execute_node(
@@ -587,7 +595,7 @@ class ExecutionRuntime:
                         limit=execution.timeout_policy.node_timeout,
                     )
                 )
-            running[task] = _Attempt(node_id, instance.node_type, context)
+            running[task] = _Attempt(node_id, instance.node_type, context, logs)
         return True
 
     def _advance(self, execution: Execution, plan: ExecutionPlan, done: str) -> None:
@@ -669,8 +677,8 @@ class ExecutionRuntime:
 
     def _flush(self, execution: Execution, attempt: _Attempt, now: datetime) -> None:
         """Record what the node emitted through ``context.events`` /
-        ``context.metrics`` — also for failed and cancelled attempts: the
-        node really did it.
+        ``context.metrics`` / ``context.logger`` — also for failed and
+        cancelled attempts: the node really did it.
 
         Once per attempt by design: node tasks never touch the aggregate or
         the database (module docstring), and every emitted event lands in
@@ -681,6 +689,7 @@ class ExecutionRuntime:
         """
         for name in attempt.context.events.emitted:
             execution.record_node_event(attempt.node_id, name, now=now)
+        execution.record_node_logs(attempt.node_id, attempt.logs.lines())
         for name, amount in attempt.context.metrics.totals.items():
             self._metrics.node_metric.labels(attempt.node_type, name).inc(amount)
 

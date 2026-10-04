@@ -45,7 +45,11 @@ export const recentExecutions: ExecutionListParams = { limit: 10 }
 
 /** "850 ms", "42 s", "3 min 5 s", "2 h 4 min". */
 export function formatDuration(startIso: string, endIso: string): string {
-    const ms = Math.max(0, Date.parse(endIso) - Date.parse(startIso))
+    return formatMilliseconds(Date.parse(endIso) - Date.parse(startIso))
+}
+
+export function formatMilliseconds(duration: number): string {
+    const ms = Math.max(0, duration)
     if (ms < 1000) return `${String(ms)} ms`
     const s = Math.floor(ms / 1000)
     if (s < 60) return `${String(s)} s`

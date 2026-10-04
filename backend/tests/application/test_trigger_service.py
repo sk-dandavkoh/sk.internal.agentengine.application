@@ -19,6 +19,7 @@ from akasha.application.persistence import (
     EventRepository,
     ExecutionRepository,
     ExecutionSummary,
+    NodeLogRepository,
     ProjectRepository,
     ProjectVersionRepository,
     SessionRepository,
@@ -33,7 +34,7 @@ from akasha.application.triggers import (
     TriggerService,
 )
 from akasha.domain.event import Event
-from akasha.domain.execution import Execution, ExecutionStatus
+from akasha.domain.execution import Execution, ExecutionStatus, LogLevel, NodeLogEntry
 from akasha.domain.graph import Graph
 from akasha.domain.primitives import new_id
 from akasha.domain.project import Project, ProjectDraft, ProjectVersion
@@ -158,12 +159,32 @@ class FakeEvents(EventRepository):
         return self.items[:limit]
 
 
+class FakeNodeLogs(NodeLogRepository):
+    """Execution saves stage log lines; trigger paths record none."""
+
+    async def append(self, entries: Sequence[NodeLogEntry]) -> None:
+        assert not entries
+
+    async def list(
+        self,
+        execution_id: str,
+        *,
+        after: int = 0,
+        limit: int = 100,
+        node_id: str | None = None,
+        levels: Collection[LogLevel] = (),
+        contains: str | None = None,
+    ) -> Sequence[NodeLogEntry]:
+        return []
+
+
 class FakeUow(UnitOfWork):
     def __init__(self) -> None:
         self.versions = FakeVersions()
         self.executions = FakeExecutions()
         self.projects = FakeProjects()
         self.events = FakeEvents()
+        self.node_logs = FakeNodeLogs()
         # Triggers never touch credentials or accounts; any access would
         # fail loudly.
         self.credentials = cast(CredentialRepository, None)

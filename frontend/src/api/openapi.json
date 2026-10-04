@@ -1089,6 +1089,61 @@
         "title": "ExecutionStatus",
         "type": "string"
       },
+      "FailureReport": {
+        "additionalProperties": false,
+        "description": "A failed attempt of a node. ``attempt`` is derived, not stored: the\nonly way back to READY is ``retry``, which records the failure, so the\nn-th recorded failure always ended attempt n (``NODE_ACTIONS``).",
+        "properties": {
+          "attempt": {
+            "title": "Attempt",
+            "type": "integer"
+          },
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "details": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Details",
+            "type": "object"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "node_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Node Id"
+          },
+          "retryable": {
+            "title": "Retryable",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "kind",
+          "retryable",
+          "node_id",
+          "details",
+          "attempt"
+        ],
+        "title": "FailureReport",
+        "type": "object"
+      },
       "GraphBody": {
         "additionalProperties": false,
         "properties": {
@@ -1154,6 +1209,92 @@
         "type": "object"
       },
       "JsonValue": {},
+      "LogLevel": {
+        "description": "Python's level names; the order is severity (``at_least``).",
+        "enum": [
+          "DEBUG",
+          "INFO",
+          "WARNING",
+          "ERROR",
+          "CRITICAL"
+        ],
+        "title": "LogLevel",
+        "type": "string"
+      },
+      "LogLineOut": {
+        "description": "A stored node log line. Redacted again on the way out, like events:\nthe runtime redacted it when it was captured, this guards older rows\nagainst rules added since.",
+        "properties": {
+          "attempt": {
+            "title": "Attempt",
+            "type": "integer"
+          },
+          "fields": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "title": "Fields",
+            "type": "object"
+          },
+          "level": {
+            "$ref": "#/components/schemas/LogLevel"
+          },
+          "logged_at": {
+            "format": "date-time",
+            "title": "Logged At",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "node_id": {
+            "title": "Node Id",
+            "type": "string"
+          },
+          "position": {
+            "title": "Position",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "position",
+          "node_id",
+          "attempt",
+          "level",
+          "message",
+          "logged_at",
+          "fields"
+        ],
+        "title": "LogLineOut",
+        "type": "object"
+      },
+      "LogPage": {
+        "description": "Paged like ``EventPage``: pass ``next_after`` as ``after``.",
+        "properties": {
+          "has_more": {
+            "title": "Has More",
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/LogLineOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_after": {
+            "title": "Next After",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "next_after",
+          "has_more"
+        ],
+        "title": "LogPage",
+        "type": "object"
+      },
       "LoginRequest": {
         "properties": {
           "password": {
@@ -1371,7 +1512,7 @@
           },
           "failures": {
             "items": {
-              "$ref": "#/components/schemas/ErrorReport"
+              "$ref": "#/components/schemas/FailureReport"
             },
             "title": "Failures",
             "type": "array"
@@ -3591,6 +3732,150 @@
           }
         },
         "summary": "List Events",
+        "tags": [
+          "executions"
+        ]
+      }
+    },
+    "/api/v1/executions/{execution_id}/logs": {
+      "get": {
+        "operationId": "list_logs_api_v1_executions__execution_id__logs_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "execution_id",
+            "required": true,
+            "schema": {
+              "title": "Execution Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "after",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "After",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Only lines of this node",
+            "in": "query",
+            "name": "node_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only lines of this node",
+              "title": "Node Id"
+            }
+          },
+          {
+            "description": "Only lines at or above this level",
+            "in": "query",
+            "name": "level",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/LogLevel",
+              "default": "DEBUG",
+              "description": "Only lines at or above this level"
+            }
+          },
+          {
+            "description": "Only lines whose message contains this text (case-insensitive)",
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only lines whose message contains this text (case-insensitive)",
+              "title": "Q"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LogPage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "List Logs",
         "tags": [
           "executions"
         ]

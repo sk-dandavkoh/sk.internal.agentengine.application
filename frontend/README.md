@@ -42,12 +42,14 @@ npm run format:check && npm run lint && npm run typecheck && npm test && npm run
 
 **Full-stack suite** (`tests/fullstack/`, `playwright.fullstack.config.ts`):
 the production bundle against the backend of this checkout, nothing
-stubbed. `backend.sh` starts PostgreSQL 17.2 in a labelled container with
-tmpfs storage, migrates and serves the backend on port 8765 (preview on
-4174); every run starts with an empty database. The suite creates the
+stubbed. `backend.sh` starts PostgreSQL 17.2 (tmpfs storage) and Redis in
+labelled containers, migrates and serves the backend with its in-process
+worker on port 8765 (preview on 4174), so executions really run; every run
+starts with an empty database. Specs that need a run to stay RUNNING use a
+long `core.delay` node and cancel it. The suite creates the
 first admin through `/auth/setup` and, until the login UI exists (Phase
 21), the browser sends that admin's token as a request header.
-`globalTeardown` removes the container; `backend.sh` also removes leftovers
+`globalTeardown` removes the containers; `backend.sh` also removes leftovers
 of a crashed run. Needs Docker and `uv`.
 
 ## Configuration
@@ -199,8 +201,7 @@ store.
 only through `useUpdateProject`; it never writes into the query cache.
 
 Not covered: project import/export (binary ZIP bodies; the client speaks
-JSON only), user management (Phase 21). Logs are the execution events; the
-backend has no separate log API.
+JSON only), user management (Phase 21).
 
 Tests: `client.node.test.ts` runs the client against a real local HTTP server
 (Vitest `node` environment; typechecked by `tsconfig.node.json`).
@@ -485,7 +486,10 @@ state:
   never says Live without a subscription. Refresh still works throughout;
 - "Live activity" lists the events received (last 200) in words per
   backend event type; unknown types show their raw name. "Nodes" lists the
-  report's node statuses verbatim.
+  report's node statuses verbatim;
+- events only say when to look again: refetches of the execution, report
+  and logs are throttled to one per second (`RECONCILE_INTERVAL_MS`), the
+  first immediately; the end of the stream refetches at once.
 
 The session token goes in the subscribe frame, never the URL. Until the
 login UI (Phase 21) wires `getToken`, the frame carries no token and the
@@ -495,6 +499,31 @@ token with `page.routeWebSocket`, as it injects the HTTP header.
 Tests drive a hand-controlled `FakeWebSocket` (`src/test/websocket.ts`,
 installed for every test, so none reaches a network) and fake timers for
 the backoff; no sleeps.
+
+## Execution inspector
+
+`/executions/:id` is the inspector (`features/executions/inspector/`), tabs
+in the URL (`?tab=nodes&node=<id>`, shareable). Everything comes from the
+backend: the execution, its report (`/reports/executions/{id}`), its pinned
+version's graph and its node logs (`/executions/{id}/logs`):
+
+- **Overview**: details, usage/cost, run snapshot (engine and node
+  versions, redacted input), live activity while it runs;
+- **Graph**: the version's graph with each node's state; a click opens it;
+- **Nodes**: node table and the node inspector (status, attempts and
+  retries, timing, error, failed attempts by number, outputs, usage, cost
+  and the node's logs);
+- **Logs**: node log lines, filtered by level, node and message text on the
+  backend, 100 per page;
+- **Errors**: the execution error and every failed attempt per node;
+- **Events**: the report's event timeline, 200 at a time.
+
+Untrusted content (outputs, log messages and fields, error texts, labels)
+renders as React text only, never as HTML or Markdown; text over 20,000
+characters is cut with a "Show all" toggle. Redaction is the backend's; the
+UI shows `[REDACTED]` as sent and stores nothing in browser storage. Node
+inputs are not shown: the backend does not persist them (the upstream
+outputs are what a node received).
 
 ## Design system
 

@@ -166,6 +166,54 @@ async function publishHelloWorld(
     return revision + 2
 }
 
+/** Publishes `nodes` as v1, chained in order: each `value` output feeds
+ * the next node's `input` (default `value`). */
+async function publishChain(
+    project: ProjectJson,
+    nodes: {
+        node_type: string
+        label: string
+        config: object
+        input?: string
+    }[],
+): Promise<void> {
+    const ids = nodes.map((_, i) => `node_02${String(i).padStart(30, '0')}`)
+    const graph = {
+        nodes: nodes.map(({ node_type, label, config }, i) => ({
+            id: ids[i],
+            node_type,
+            label,
+            config,
+        })),
+        edges: ids.slice(1).map((target, i) => ({
+            source_node_id: ids[i],
+            source_port: 'value',
+            target_node_id: target,
+            target_port: nodes[i + 1]?.input ?? 'value',
+        })),
+    }
+    const put = await api.put(`/api/v1/projects/${project.id}`, {
+        data: {
+            expected_revision: project.revision,
+            name: project.name,
+            draft: { graph, triggers: [], dependencies: [] },
+        },
+    })
+    expect(put.status()).toBe(200)
+    expect(
+        (await api.post(`/api/v1/projects/${project.id}/publish`)).status(),
+    ).toBe(201)
+}
+
+/** A run that stays RUNNING until it is cancelled: the worker runs it. */
+async function publishSlow(project: ProjectJson): Promise<void> {
+    await publishChain(project, [
+        // No input node: runs started with `{}` must not fail on input.
+        { node_type: 'core.delay', label: 'wait', config: { seconds: 600 } },
+        { node_type: 'core.output', label: 'out', config: {} },
+    ])
+}
+
 test('a published project cannot be deleted', async ({ page: p }) => {
     const project = await createViaApi(unique('Published'))
     await publishHelloWorld(project)
@@ -590,10 +638,10 @@ test('versions are listed, inspected, compared and show their runs', async ({
 test('a run started in the UI is listed, opened and cancelled', async ({
     page: p,
 }) => {
-    // The suite runs no worker, so the run stays QUEUED until cancelled:
-    // every state shown below is the backend's, not a client guess.
+    // The worker runs it; its delay node keeps it RUNNING until cancelled.
+    // Every state shown below is the backend's, not a client guess.
     const project = await createViaApi(unique('Runnable'))
-    await publishHelloWorld(project)
+    await publishSlow(project)
 
     await p.goto(`/projects/${project.id}/versions/1`)
     await p.getByRole('button', { name: 'Run…' }).click()
@@ -603,14 +651,14 @@ test('a run started in the UI is listed, opened and cancelled', async ({
     await expect(
         p.getByRole('heading', { name: 'Execution', level: 1 }),
     ).toBeVisible()
-    await expect(p.getByText('Queued').first()).toBeVisible()
+    await expect(p.getByText('Running').first()).toBeVisible()
 
     await p.goto('/executions')
     const row = p
         .getByRole('table', { name: 'Executions' })
         .getByRole('row')
         .filter({ hasText: executionId })
-    await expect(row.getByText('Queued')).toBeVisible()
+    await expect(row.getByText('Running')).toBeVisible()
     await expect(row.getByText(project.name)).toBeVisible()
     await row.getByRole('link', { name: executionId }).click()
 
@@ -620,7 +668,9 @@ test('a run started in the UI is listed, opened and cancelled', async ({
     await p
         .getByRole('button', { name: 'Cancel execution', exact: true })
         .click()
-    await expect(p.getByText('Execution cancelled')).toBeVisible()
+    // Running: the worker stops it cooperatively, after the request.
+    await expect(p.getByText('Cancellation requested')).toBeVisible()
+    await expect(p.getByText('Cancelled').first()).toBeVisible()
     await expect(
         p.getByRole('button', { name: `Cancel execution ${executionId}` }),
     ).toHaveCount(0)
@@ -634,7 +684,7 @@ test('a run is followed live, across a dropped connection, to its end', async ({
     page: p,
 }) => {
     const project = await createViaApi(unique('Live'))
-    await publishHelloWorld(project)
+    await publishSlow(project)
     const run = await api.post(
         `/api/v1/projects/${project.id}/versions/1/execute`,
         { data: {} },
@@ -685,4 +735,73 @@ test('a run is followed live, across a dropped connection, to its end', async ({
     await expect(activity.getByRole('listitem')).toHaveCount(
         stored.items.length,
     )
+})
+
+test('a failed run is diagnosed in the inspector: errors, node, logs', async ({
+    page: p,
+}) => {
+    // Logs, then calls a destination the SSRF guard blocks: a real failure
+    // with real stored log lines, run by the worker.
+    const project = await createViaApi(unique('Diagnosed'))
+    await publishChain(project, [
+        { node_type: 'core.input', label: 'Topic', config: { field: 'topic' } },
+        {
+            node_type: 'core.log',
+            label: 'Log topic',
+            config: {
+                message: 'topic received <b>bold?</b>',
+                level: 'warning',
+                include_value: true,
+            },
+        },
+        {
+            node_type: 'core.http',
+            label: 'Fetch leads',
+            config: { method: 'POST', url: 'http://127.0.0.1:9/leads' },
+            input: 'body',
+        },
+    ])
+    const run = await api.post(
+        `/api/v1/projects/${project.id}/versions/1/execute`,
+        { data: { topic: { password: 'hunter2-not-shown', q: 'leads' } } },
+    )
+    const { id: executionId } = (await run.json()) as { id: string }
+    await expect
+        .poll(async () => {
+            const e = (await (
+                await api.get(`/api/v1/executions/${executionId}`)
+            ).json()) as { status: string }
+            return e.status
+        })
+        .toBe('failed')
+
+    await p.goto(`/executions/${executionId}`)
+    await p.getByRole('tab', { name: 'Errors (1)' }).click()
+    const nodeErrors = p.getByRole('region', {
+        name: 'Errors of node Fetch leads',
+    })
+    await expect(nodeErrors.getByText('DESTINATION_BLOCKED')).toBeVisible()
+    await nodeErrors
+        .getByRole('button', { name: 'Inspect node Fetch leads' })
+        .click()
+    await expect(p).toHaveURL(/tab=nodes&node=node_02/)
+    await expect(
+        p.getByRole('heading', { name: 'Node: Fetch leads' }),
+    ).toBeVisible()
+
+    await p.getByRole('tab', { name: 'Logs' }).click()
+    const lines = p.getByRole('list', { name: 'Log lines' })
+    // Untrusted text stays text; the redacted input never reappears.
+    await expect(lines.getByText('topic received <b>bold?</b>')).toBeVisible()
+    await lines.getByText('Fields').click()
+    await expect(lines.getByText(/"password": "\[REDACTED\]"/)).toBeVisible()
+    await expect(p.getByText('hunter2-not-shown')).toHaveCount(0)
+    await p.getByLabel('Message contains').fill('nothing like this')
+    await p.getByRole('button', { name: 'Search' }).click()
+    await expect(p.getByText('No log lines match the filters.')).toBeVisible()
+
+    await p.getByRole('tab', { name: 'Graph' }).click()
+    const graph = p.getByRole('figure', { name: 'Execution graph (read-only)' })
+    await expect(graph.getByText('Failed')).toBeVisible()
+    await expect(graph.getByText('Completed')).toHaveCount(2)
 })

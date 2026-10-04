@@ -8,6 +8,9 @@ import { queryKeys } from '../../api/queries'
 /** Activity kept in memory; the full history is the events endpoint. */
 export const MAX_ACTIVITY = 200
 
+/** At most one refetch of the execution's queries per this many ms. */
+export const RECONCILE_INTERVAL_MS = 1_000
+
 /**
  * Live updates for a running execution. Events only trigger refetches of
  * the execution's queries (detail, report, events): what the page shows is
@@ -24,11 +27,31 @@ export function useLiveExecution(executionId: string, active: boolean) {
 
     useEffect(() => {
         if (!follow) return
-        const reconcile = () =>
+        const refetch = () =>
             void queryClient.invalidateQueries({
                 queryKey: queryKeys.executions.detail(executionId),
             })
-        return subscribeExecution(client, executionId, {
+        // A busy run sends events every poll tick, and each refetch reloads
+        // the report and the loaded log pages. At most one refetch per
+        // window: the first event refetches at once, later ones in the
+        // window are folded into one refetch at its end.
+        let timer: ReturnType<typeof setTimeout> | undefined
+        let pending = false
+        const reconcile = () => {
+            if (timer !== undefined) {
+                pending = true
+                return
+            }
+            refetch()
+            timer = setTimeout(() => {
+                timer = undefined
+                if (pending) {
+                    pending = false
+                    reconcile()
+                }
+            }, RECONCILE_INTERVAL_MS)
+        }
+        const unsubscribe = subscribeExecution(client, executionId, {
             onState: setState,
             onSubscribed: reconcile,
             onEvents: (fresh) => {
@@ -36,12 +59,20 @@ export function useLiveExecution(executionId: string, active: boolean) {
                 reconcile()
             },
             onEnd: () => {
-                reconcile()
+                // The final state: never deferred.
+                clearTimeout(timer)
+                timer = undefined
+                pending = false
+                refetch()
                 void queryClient.invalidateQueries({
                     queryKey: queryKeys.executions.overview(),
                 })
             },
         })
+        return () => {
+            clearTimeout(timer)
+            unsubscribe()
+        }
     }, [client, queryClient, executionId, follow])
 
     return { state, events }
@@ -51,12 +82,15 @@ const num = (v: unknown) => (typeof v === 'number' ? String(v) : undefined)
 const str = (v: unknown) => (typeof v === 'string' ? v : undefined)
 
 /** One line per backend event type; unknown types are shown, not guessed. */
-export function describeEvent({
-    event_type,
-    node_id,
-    payload,
-}: ExecutionEvent) {
-    const node = `Node ${node_id ?? '?'}`
+export function describeEvent(
+    {
+        event_type,
+        node_id,
+        payload,
+    }: Pick<ExecutionEvent, 'event_type' | 'node_id' | 'payload'>,
+    nodeName: (nodeId: string) => string = (id) => id,
+) {
+    const node = `Node ${node_id === null ? '?' : nodeName(node_id)}`
     const attempt = num(payload['attempt'])
     const ofAttempt = attempt ? ` (attempt ${attempt})` : ''
     const code = str(payload['error_code'])

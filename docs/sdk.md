@@ -147,6 +147,14 @@ redacted centrally.
 Still, log sizes, counts and ids, never payloads. Workflow data can be
 sensitive (AGENTS §76/§77).
 
+Lines written through `context.logger` are also stored with the execution
+and shown in the Execution Inspector (`GET /api/v1/executions/{id}/logs`):
+per attempt, at most 200 lines of at most 4,000 characters, `extra` fields
+up to 8 KiB, redacted like every other output (values you resolved from the
+credential store are masked exactly). Lines below the process log level are
+not stored either. Lines from other loggers (`logging.getLogger(__name__)`,
+libraries) reach the process log only.
+
 ## 5. Metrics
 
 Declare counter names in `definition.metrics`, then call

@@ -63,6 +63,8 @@ export interface NodeCardProps {
     unknown?: boolean
     /** React Flow connection handles; only inside a ReactFlow canvas. */
     handles?: boolean
+    /** Extra state under the ports, e.g. an execution's node status. */
+    footer?: ReactNode
 }
 
 export function NodeCard({
@@ -76,6 +78,7 @@ export function NodeCard({
     selected = false,
     unknown = false,
     handles = false,
+    footer,
 }: NodeCardProps) {
     return (
         <div
@@ -139,6 +142,11 @@ export function NodeCard({
                 <p className="border-t border-border px-3 py-1 text-xs font-medium text-warning-text">
                     Missing required input: {missing.join(', ')}
                 </p>
+            )}
+            {footer !== undefined && (
+                <div className="border-t border-border px-3 py-1.5 text-xs">
+                    {footer}
+                </div>
             )}
         </div>
     )

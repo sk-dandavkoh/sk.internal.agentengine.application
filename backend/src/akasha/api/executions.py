@@ -7,6 +7,8 @@
   newest first, optionally of one published version
 - GET  /executions/{execution_id} : one run's state
 - GET  /executions/{execution_id}/events?after=&limit= : its event history
+- GET  /executions/{execution_id}/logs?after=&limit=&node_id=&level=&q= : what
+  its nodes logged (redacted, bounded per attempt)
 - POST /executions/{execution_id}/cancel : request cooperative cancellation
 
 Where the path carries the project or execution id, ``authorize_path``
@@ -31,10 +33,10 @@ from akasha.application.executions import ExecutionService
 from akasha.application.persistence import ExecutionSummary
 from akasha.application.projects import MAX_PAGE_SIZE, Page
 from akasha.domain.event import Event
-from akasha.domain.execution import ExecutionStatus
+from akasha.domain.execution import ExecutionStatus, LogLevel, NodeLogEntry
 from akasha.errors import ConfigurationError
 from akasha.runtime.runtime import ExecutionRuntime
-from akasha.security.redaction import redact
+from akasha.security.redaction import redact, redact_text
 
 
 def _executions(request: Request) -> ExecutionService:
@@ -111,6 +113,41 @@ class EventPage(BaseModel):
     has_more: bool
 
 
+class LogLineOut(BaseModel):
+    """A stored node log line. Redacted again on the way out, like events:
+    the runtime redacted it when it was captured, this guards older rows
+    against rules added since."""
+
+    position: int
+    node_id: str
+    attempt: int
+    level: LogLevel
+    message: str
+    logged_at: datetime
+    fields: dict[str, JsonValue]
+
+    @classmethod
+    def from_domain(cls, entry: NodeLogEntry) -> "LogLineOut":
+        fields: Any = redact(dict(entry.fields))
+        return cls(
+            position=entry.position or 0,  # stored lines carry their position
+            node_id=entry.node_id,
+            attempt=entry.attempt,
+            level=entry.level,
+            message=redact_text(entry.message),
+            logged_at=entry.logged_at,
+            fields=fields,
+        )
+
+
+class LogPage(BaseModel):
+    """Paged like ``EventPage``: pass ``next_after`` as ``after``."""
+
+    items: list[LogLineOut]
+    next_after: int
+    has_more: bool
+
+
 class StatusCounts(BaseModel):
     """Every execution status with its count (zero included)."""
 
@@ -180,6 +217,43 @@ def create_executions_router() -> APIRouter:
         page = await svc.list_events(execution_id, after=after, limit=limit)
         items = [EventOut.from_domain(e) for e in page.items]
         return EventPage(
+            items=items,
+            next_after=items[-1].position if items else after,
+            has_more=page.has_more,
+        )
+
+    @router.get("/executions/{execution_id}/logs")
+    async def list_logs(
+        execution_id: str,
+        svc: Executions,
+        after: Annotated[int, Query(ge=0)] = 0,
+        limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = 100,
+        node_id: Annotated[
+            str | None, Query(description="Only lines of this node")
+        ] = None,
+        level: Annotated[
+            LogLevel, Query(description="Only lines at or above this level")
+        ] = LogLevel.DEBUG,
+        q: Annotated[
+            str | None,
+            Query(
+                min_length=1,
+                max_length=200,
+                description="Only lines whose message contains this text"
+                " (case-insensitive)",
+            ),
+        ] = None,
+    ) -> LogPage:
+        page = await svc.list_logs(
+            execution_id,
+            after=after,
+            limit=limit,
+            node_id=node_id,
+            min_level=level,
+            contains=q,
+        )
+        items = [LogLineOut.from_domain(e) for e in page.items]
+        return LogPage(
             items=items,
             next_after=items[-1].position if items else after,
             has_more=page.has_more,

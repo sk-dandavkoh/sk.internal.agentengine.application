@@ -35,7 +35,7 @@ start time, so the execution deadline still counts from the first start).
 """
 
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
@@ -171,6 +171,53 @@ NODE_INTERRUPTED: Final = "NODE_INTERRUPTED"
 # mid-attempt without a retry policy. The bound stops a node that kills its
 # worker (OOM, segfault) from being recovered forever.
 INTERRUPTED_ATTEMPTS_LIMIT: Final = 3
+
+
+class LogLevel(StrEnum):
+    """Python's level names; the order is severity (``at_least``)."""
+
+    DEBUG = "DEBUG"
+    INFO = "INFO"
+    WARNING = "WARNING"
+    ERROR = "ERROR"
+    CRITICAL = "CRITICAL"
+
+    def at_least(self) -> tuple["LogLevel", ...]:
+        levels = tuple(LogLevel)
+        return levels[levels.index(self) :]
+
+
+@dataclass(frozen=True)
+class NodeLogEntry:
+    """One log line a node attempt wrote through ``context.logger``.
+
+    History next to the state, like events, but free text: the runtime
+    redacts and bounds it before recording (``akasha.runtime.node_logs``).
+    ``position`` is assigned by the store and orders one execution's logs.
+    """
+
+    execution_id: str
+    node_id: str
+    attempt: int
+    level: LogLevel
+    message: str
+    logged_at: datetime
+    fields: Mapping[str, Any] = field(default_factory=dict)
+    position: int | None = None
+
+    def __post_init__(self) -> None:
+        validate_id(self.execution_id)
+        validate_id(self.node_id)
+        object.__setattr__(self, "level", LogLevel(self.level))
+        if self.attempt < 1:
+            raise DomainValidationError("a log line belongs to an attempt >= 1")
+        if self.logged_at.tzinfo is None:
+            raise DomainValidationError("log time must be timezone-aware")
+        object.__setattr__(self, "message", storable_text(self.message))
+        fields = dict(self.fields)
+        if not is_storable(fields):
+            raise DomainValidationError("log fields must be storable JSON")
+        object.__setattr__(self, "fields", fields)
 
 
 @dataclass(frozen=True)
@@ -398,6 +445,10 @@ class NodeExecution(Entity):
         # Rehydration must not smuggle in states the transitions can't reach.
         if self.attempt < len(self.failures):
             raise DomainValidationError("more failures than attempts")
+        # Only ``retry`` leads back to READY and it records the failure, so
+        # every attempt but the last failed; reports number failures by it.
+        if len(self.failures) < self.attempt - 1:
+            raise DomainValidationError("an earlier attempt has no failure")
         if self.status is _N.FAILED and not self.failures:
             raise DomainValidationError("failed node execution requires an error")
         if self.outputs is not None and self.status is not _N.COMPLETED:
@@ -507,6 +558,9 @@ class Execution(Entity):
     input: dict[str, Any] = field(default_factory=dict)
     # Events recorded since the last ``pull_events`` (never persisted state).
     _events: list[Event] = field(default_factory=list, init=False, repr=False)
+    # Node log lines recorded since the last ``pull_logs``; stored with the
+    # next save, like events.
+    _logs: list[NodeLogEntry] = field(default_factory=list, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.id = validate_id(self.id)
@@ -584,6 +638,15 @@ class Execution(Entity):
         """Hand over the recorded events (oldest first) and forget them."""
         events, self._events = self._events, []
         return events
+
+    @property
+    def pending_logs(self) -> tuple[NodeLogEntry, ...]:
+        return tuple(self._logs)
+
+    def pull_logs(self) -> list[NodeLogEntry]:
+        """Hand over the recorded log lines and forget them."""
+        logs, self._logs = self._logs, []
+        return logs
 
     def _emit(
         self,
@@ -877,6 +940,26 @@ class Execution(Entity):
             node_id=node_id,
             name=name,
             attempt=ne.attempt,
+        )
+
+    def record_node_logs(
+        self,
+        node_id: str,
+        lines: Sequence[tuple[LogLevel, str, datetime, Mapping[str, Any]]],
+    ) -> None:
+        """What the running node logged in its current attempt; the runtime
+        records it before the attempt's outcome, like ``record_node_event``."""
+        ne = self._node_for(node_id, "log", _E_STARTED, blocked_by_cancellation=False)
+        if ne.status is not NodeExecutionStatus.RUNNING:
+            raise _illegal(
+                "only a running node can log",
+                action="node.log",
+                current=ne.status,
+                node_id=node_id,
+            )
+        self._logs.extend(
+            NodeLogEntry(self.id, node_id, ne.attempt, level, message, at, fields)
+            for level, message, at, fields in lines
         )
 
     def skip_node(self, node_id: str, *, now: datetime | None = None) -> None:

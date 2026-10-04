@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { reconnectDelay } from '../../api/live'
 import { apiError, ok, pending, renderRoute, stubBackend } from '../../test/app'
 import { lastSocket, sockets } from '../../test/websocket'
+import { RECONCILE_INTERVAL_MS } from './useLiveExecution'
 import { parseInput } from './format'
 
 // -- factories (valid by default) -------------------------------------------------
@@ -511,6 +512,51 @@ describe('Live updates', () => {
             // No event arrived, yet the page shows the persisted outcome.
             expect(await details.findByText('Completed')).toBeInTheDocument()
             expect(screen.getByText('Live')).toBeInTheDocument()
+        } finally {
+            vi.useRealTimers()
+        }
+    })
+
+    it('folds a burst of events into at most one refetch per second', async () => {
+        vi.useFakeTimers({ shouldAdvanceTime: true })
+        try {
+            const backend = runningBackend()
+            renderRoute('/executions/exec_1')
+            await detailsSection()
+            const ws = lastSocket()
+            ws.serverOpen()
+            ws.serverSend({
+                type: 'subscribed',
+                execution_id: 'exec_1',
+                after: 0,
+            })
+            await waitFor(() => {
+                expect(backend.detailReads).toBe(2) // mount + subscribed
+            })
+
+            // Within the window: one trailing refetch, not ten.
+            for (let i = 1; i <= 10; i++)
+                ws.serverSend({
+                    type: 'events',
+                    items: [liveEvent(i, 'node.started', 'fetch')],
+                })
+            act(() => {
+                vi.advanceTimersByTime(RECONCILE_INTERVAL_MS)
+            })
+            await waitFor(() => {
+                expect(backend.detailReads).toBe(3)
+            })
+
+            // The end is never deferred.
+            backend.status = 'completed'
+            ws.serverSend({
+                type: 'events',
+                items: [liveEvent(11, 'execution.completed', null)],
+            })
+            ws.serverSend({ type: 'end', status: 'completed' })
+            expect(
+                await (await detailsSection()).findByText('Completed'),
+            ).toBeInTheDocument()
         } finally {
             vi.useRealTimers()
         }

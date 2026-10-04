@@ -297,7 +297,9 @@ async def test_retry_history_in_report(
     llm = next(n for n in report.nodes if n.node_id == scenario.llm.id)
     assert (llm.status, llm.attempts, llm.retries) == ("completed", 2, 1)
     assert llm.error is None  # the retry succeeded
-    assert [(f.code, f.retryable) for f in llm.failures] == [("LLM_RATE_LIMITED", True)]
+    assert [(f.attempt, f.code, f.retryable) for f in llm.failures] == [
+        (1, "LLM_RATE_LIMITED", True)
+    ]
     assert llm.started_at == at(5) + backoff  # the last attempt
     assert (report.metrics.retries, report.metrics.failed_attempts) == (1, 1)
     assert report.metrics.attempts == 4

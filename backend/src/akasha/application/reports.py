@@ -57,6 +57,14 @@ class ErrorReport(_Model):
     details: dict[str, str]
 
 
+class FailureReport(ErrorReport):
+    """A failed attempt of a node. ``attempt`` is derived, not stored: the
+    only way back to READY is ``retry``, which records the failure, so the
+    n-th recorded failure always ended attempt n (``NODE_ACTIONS``)."""
+
+    attempt: int
+
+
 class TokenUsageReport(_Model):
     input_tokens: int
     output_tokens: int
@@ -110,7 +118,7 @@ class NodeReport(_Model):
     finished_at: datetime | None
     duration_ms: int | None  # of the last attempt
     error: ErrorReport | None  # the failure that ended the node
-    failures: list[ErrorReport]  # every failed attempt, retries included
+    failures: list[FailureReport]  # every failed attempt, retries included
     outputs: dict[str, JsonValue] | None
     usage: TokenUsageReport | None
     cost: CostReport | None
@@ -236,7 +244,11 @@ def _node(ne: NodeExecution, node_type: str, label: str) -> NodeReport:
         finished_at=ne.finished_at,
         duration_ms=_duration_ms(ne.started_at, ne.finished_at),
         error=_error(ne.error),
-        failures=[e for f in ne.failures if (e := _error(f)) is not None],
+        failures=[
+            FailureReport(**e.model_dump(), attempt=n)
+            for n, f in enumerate(ne.failures, start=1)
+            if (e := _error(f)) is not None
+        ],
         outputs=None if ne.outputs is None else _redacted_object(ne.outputs),
         usage=usage,
         cost=cost,

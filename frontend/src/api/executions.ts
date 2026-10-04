@@ -77,6 +77,46 @@ export const executionEventPageSchema = z.object({
 })
 export type ExecutionEventPage = z.infer<typeof executionEventPageSchema>
 
+export const logLevelSchema = z.enum([
+    'DEBUG',
+    'INFO',
+    'WARNING',
+    'ERROR',
+    'CRITICAL',
+])
+export type LogLevel = z.infer<typeof logLevelSchema>
+
+/**
+ * A line a node wrote through its logger. Redacted and bounded by the
+ * backend; still untrusted text: render it as text, never as markup.
+ */
+export const logLineSchema = z.object({
+    /** Monotonic per execution: pass the last seen one as `after`. */
+    position: z.number().int(),
+    node_id: z.string(),
+    attempt: z.number().int(),
+    level: logLevelSchema,
+    message: z.string(),
+    logged_at: timestamp,
+    fields: jsonObject,
+})
+export type LogLine = z.infer<typeof logLineSchema>
+
+export const logPageSchema = z.object({
+    items: z.array(logLineSchema),
+    next_after: z.number().int(),
+    has_more: z.boolean(),
+})
+export type LogPage = z.infer<typeof logPageSchema>
+
+export interface LogFilter {
+    node_id?: string
+    /** Minimum level; all levels when omitted. */
+    level?: LogLevel
+    /** Text the message contains (case-insensitive, literal). */
+    q?: string
+}
+
 /** Every status with its count; the backend includes zeros. */
 export const executionStatusCountsSchema = z.object({
     counts: z.record(executionStatusSchema, z.number().int()),
@@ -156,6 +196,18 @@ export function listExecutionEvents(
         executionEventPageSchema,
         { query: { ...params }, signal },
     )
+}
+
+export function listExecutionLogs(
+    client: ApiClient,
+    executionId: string,
+    params: LogFilter & { after?: number; limit?: number } = {},
+    signal?: AbortSignal,
+) {
+    return client.request('GET', `${path(executionId)}/logs`, logPageSchema, {
+        query: { ...params },
+        signal,
+    })
 }
 
 /** Accepted, not finished: the worker stops at its next heartbeat. */

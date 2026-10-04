@@ -58,7 +58,12 @@ class _Sink(Node):
     definition = SINK
 
     async def execute(self, context: NodeExecutionContext) -> NodeResult:
+        # WARNING and up: stored lines need the logger's level to allow them.
+        context.logger.warning(
+            "sending with key %s", SECRET, extra={"api_key": SECRET, "rows": 2}
+        )
         if context.execution_input.get("fail"):
+            context.logger.error("upstream refused")
             raise NodeError(
                 f"upstream rejected key {SECRET}", kind=NodeErrorKind.PERMANENT
             )
@@ -383,6 +388,89 @@ async def test_events_of_unknown_execution_is_404(env: Env) -> None:
         404,
         "EXECUTION_NOT_FOUND",
     )
+
+
+# -- node logs ------------------------------------------------------------------
+
+
+async def test_node_logs_are_filterable_and_resumable(env: Env) -> None:
+    pid, version, _ = await publish_with(env.client, [])
+    execution_id = await env.run(pid, version, fail=True)
+    url = f"/api/v1/executions/{execution_id}/logs"
+
+    everything = (await env.client.get(url)).json()
+    lines = everything["items"]
+    assert [(line["level"], line["attempt"]) for line in lines] == [
+        ("WARNING", 1),
+        ("ERROR", 1),
+    ]
+    assert lines[1]["message"] == "upstream refused"
+    assert lines[0]["fields"]["rows"] == 2
+    assert (everything["has_more"], everything["next_after"]) == (
+        False,
+        lines[-1]["position"],
+    )
+    sink = lines[0]["node_id"]
+
+    errors = (await env.client.get(url, params={"level": "ERROR"})).json()
+    assert [line["message"] for line in errors["items"]] == ["upstream refused"]
+    of_node = await env.client.get(url, params={"node_id": sink})
+    assert len(of_node.json()["items"]) == 2
+    other = await env.client.get(url, params={"node_id": "node_" + "0" * 32})
+    assert other.json()["items"] == []
+
+    # Search is literal and case-insensitive: % and _ are not wildcards.
+    found = (await env.client.get(url, params={"q": "UPSTREAM"})).json()
+    assert [line["message"] for line in found["items"]] == ["upstream refused"]
+    for literal in ("%", "_"):
+        none = (await env.client.get(url, params={"q": literal})).json()
+        assert none["items"] == []
+
+    first = (await env.client.get(url, params={"limit": 1})).json()
+    assert (len(first["items"]), first["has_more"]) == (1, True)
+    rest = (await env.client.get(url, params={"after": first["next_after"]})).json()
+    assert [line["position"] for line in first["items"] + rest["items"]] == [
+        line["position"] for line in lines
+    ]
+
+
+async def test_node_logs_never_return_secrets(env: Env) -> None:
+    pid, version, _ = await publish_with(env.client, [])
+    execution_id = await env.run(pid, version)
+
+    response = await env.client.get(f"/api/v1/executions/{execution_id}/logs")
+
+    assert response.status_code == 200
+    [line] = response.json()["items"]
+    assert line["message"].startswith("sending with key ")
+    assert line["fields"]["api_key"] == "[REDACTED]"
+    assert SECRET not in response.text
+
+
+async def test_node_logs_errors_and_visibility(env: Env) -> None:
+    assert_error(
+        await env.client.get(f"/api/v1/executions/{UNKNOWN_EXECUTION}/logs"),
+        404,
+        "EXECUTION_NOT_FOUND",
+    )
+    pid, version, _ = await publish_with(env.client, [])
+    execution_id = await env.run(pid, version)
+    url = f"/api/v1/executions/{execution_id}/logs"
+    for params in (
+        {"level": "LOUD"},
+        {"limit": 0},
+        {"after": -1},
+        {"q": ""},
+        {"q": "x" * 201},
+    ):
+        assert (await env.client.get(url, params=params)).status_code == 422
+    member_headers = await env.kit.member_headers(env.admin, "member")
+    async with env.client_with(member_headers) as member:
+        hidden = await member.get(url)
+    async with env.client_with({}) as anonymous:
+        anonymous_response = await anonymous.get(url)
+    assert hidden.status_code == 404  # the same answer as for unknown ids
+    assert anonymous_response.status_code == 401
 
 
 # -- live (WebSocket) -------------------------------------------------------------

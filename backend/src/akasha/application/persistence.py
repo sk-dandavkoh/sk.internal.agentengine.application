@@ -21,7 +21,13 @@ from typing import Protocol
 
 from akasha.domain.credentials import Credential
 from akasha.domain.event import Event
-from akasha.domain.execution import Execution, ExecutionMetadata, ExecutionStatus
+from akasha.domain.execution import (
+    Execution,
+    ExecutionMetadata,
+    ExecutionStatus,
+    LogLevel,
+    NodeLogEntry,
+)
 from akasha.domain.identity import User, UserSession
 from akasha.domain.project import Project, ProjectStatus, ProjectVersion
 from akasha.errors import AkashaError
@@ -232,6 +238,28 @@ class EventRepository(Protocol):
         ...
 
 
+class NodeLogRepository(Protocol):
+    """Append-only node log lines; ``append`` joins the caller's transaction
+    (stored with the attempt outcome they belong to)."""
+
+    async def append(self, entries: Sequence[NodeLogEntry]) -> None: ...
+
+    async def list(
+        self,
+        execution_id: str,
+        *,
+        after: int = 0,
+        limit: int = 100,
+        node_id: str | None = None,
+        levels: Collection[LogLevel] = (),
+        contains: str | None = None,
+    ) -> Sequence[NodeLogEntry]:
+        """Lines with ``position > after`` ascending, optionally of one node,
+        of these levels (all when empty) and whose message contains
+        ``contains`` (case-insensitive, literally: no wildcards)."""
+        ...
+
+
 class CredentialRepository(Protocol):
     """Credential metadata plus the *encrypted* secret. Plaintext never
     crosses this interface: encryption happens in the application layer."""
@@ -316,6 +344,7 @@ class UnitOfWork(Protocol):
     versions: ProjectVersionRepository
     executions: ExecutionRepository
     events: EventRepository
+    node_logs: NodeLogRepository
     credentials: CredentialRepository
     users: UserRepository
     sessions: SessionRepository

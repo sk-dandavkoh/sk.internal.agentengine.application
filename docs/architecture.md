@@ -1255,6 +1255,7 @@ Implemented in V1 (Phase 27 closed the gaps the frontend needs):
 /api/v1/executions?status=                       across the caller's projects, newest first
 /api/v1/executions/status-counts                 executions per status (same visibility)
 /api/v1/executions/{id}[/events|/cancel]         state, event history, cancel
+/api/v1/executions/{id}/logs?node_id=&level=&q=   node log lines (paginated, §52)
 /api/v1/executions/{id}/live (WebSocket)          live event stream (§23)
 /api/v1/nodes                                    node catalog (ports, config schema, port rule §45)
 /api/v1/nodes/{type}/config/validate             config issues per field (stateless, §3.5)
@@ -2499,6 +2500,35 @@ Implementation (Phase 12):
   identified by `(project_id, project_version)` everywhere (Phase 11 §6).
   `trace_id`/`span_id` are not implemented (no tracing backend yet).
 
+Node log history (frontend Phase 15, `akasha.runtime.node_logs`):
+
+- What node code writes through `context.logger` is also stored, so a run
+  can be diagnosed from the UI without process-log access. One handler on
+  `akasha.nodes` routes each record to the capture of the attempt whose task
+  emitted it (a `ContextVar` set when the task is created, like the log
+  context), so concurrent attempts never mix and nothing outside an attempt
+  is captured. Other loggers (libraries, the runtime) are not captured.
+- Captured lines are redacted inside the node task (patterns plus the
+  node's known credential values, §109) and bounded per attempt: 200 lines
+  (the rest counted in a closing WARNING line), 4,000 characters per
+  message, 8 KiB of `extra` fields (else replaced by `fields_omitted`).
+  Exceptions keep their type only; tracebacks stay in the process log.
+- Stored like `node.emitted` (§18): flushed once per attempt into the
+  aggregate (`record_node_logs`), appended to `node_logs` in the same
+  transaction as the attempt's outcome, failed and cancelled attempts
+  included. `position` (identity) orders one execution's lines; backups
+  restore it like the event positions.
+- Not events: log lines are free text, events stay closed scalar payloads.
+  The live gateway streams events only; clients refetch the logs when
+  events arrive (the lines of an attempt commit with its outcome event).
+- `GET /executions/{id}/logs?after=&limit=&node_id=&level=&q=` pages them
+  like the event history (`level` is a minimum, `q` a literal,
+  case-insensitive substring of the message; fields are not searched). Redacted again on the way
+  out. Visibility follows the execution (`authorize_path`).
+- Ceilings: lines below the process log level are not stored (the logger's
+  level gates before any handler); no retention policy yet, lines live as
+  long as their execution (deleted with it, `ON DELETE CASCADE`).
+
 ----------
 
 # 53. Execution Persistence
@@ -2641,6 +2671,12 @@ Implementation (Phase 19):
   reported. Costs are summed per currency. `cost_complete` is false when a node
   reported usage without a price. Usage from failed attempts is not persisted,
   so it is not counted.
+- **Failed attempts.** Each entry of a node's `failures` carries `attempt`
+  (frontend Phase 15). It is derived, not stored: `retry` is the only node
+  transition back to READY and it records the failure, so the n-th failure
+  ended attempt n. `NodeExecution` rejects rehydrated state that breaks
+  this (an earlier attempt without a failure). Additive field: the report
+  `schema_version` stays 1.
 - **Determinism.** Reports have no generation timestamp and no clock, so a
   running execution has no duration. Nodes are ordered by id and events by
   store position. `report_json` (sorted keys) is the export format and the
