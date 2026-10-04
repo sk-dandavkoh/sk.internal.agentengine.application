@@ -103,6 +103,11 @@ class Settings(BaseSettings):
     # must exist. Unset → no plugins. Plugins are trusted code: only
     # operators may write here.
     plugins_dir: Path | None = None
+    # Accept plugin package uploads (``POST /api/v1/plugins``, ADR 0001).
+    # Off by default: an upload is code the engine runs, so turning it on
+    # makes every admin account as powerful as shell access to the host.
+    # Enable/disable/remove over HTTP need no opt-in (no new code).
+    plugins_http_install: bool = False
 
     # Resource limits (Phase 24, ``akasha.domain.limits``). Execution and
     # node timeouts are both the default and the ceiling a request may lower.

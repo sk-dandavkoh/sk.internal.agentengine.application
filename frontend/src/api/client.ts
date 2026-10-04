@@ -15,6 +15,8 @@ export interface ApiClientOptions {
 export interface RequestOptions {
     /** JSON-serialized request body. */
     body?: unknown
+    /** Sent as-is instead of `body`, e.g. an uploaded package. */
+    rawBody?: { data: Blob; contentType: string }
     /** An array value repeats the parameter (`?status=a&status=b`). */
     query?: Record<
         string,
@@ -81,8 +83,11 @@ export class ApiClient {
         }
         const token = this.getToken?.()
         if (token) headers['Authorization'] = `Bearer ${token}`
-        let body: string | null = null
-        if (options.body !== undefined) {
+        let body: string | Blob | null = null
+        if (options.rawBody) {
+            headers['Content-Type'] = options.rawBody.contentType
+            body = options.rawBody.data
+        } else if (options.body !== undefined) {
             headers['Content-Type'] = 'application/json'
             body = JSON.stringify(options.body)
         }

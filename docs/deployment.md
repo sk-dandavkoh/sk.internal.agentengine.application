@@ -231,6 +231,12 @@ docker compose run --rm -v "$PWD/my-plugin:/tmp/plugin:ro" api plugin install /t
 docker compose restart api worker
 ```
 
+Admins can also enable, disable and remove plugins in the UI (`/plugins`).
+Uploading a package there is off by default. Setting
+`AKASHA_PLUGINS_HTTP_INSTALL=true` turns it on, and then every admin account
+can run code on the host (ADR 0001). Changes made in the UI reach dedicated
+workers only after `docker compose restart worker`.
+
 ## 11. Verifying a deployment
 
 The deployment test runs the whole operator lifecycle against the real

@@ -268,6 +268,10 @@ void credentials.createCredential(recorder, {
 void credentials.updateCredential(recorder, 'c', { description: 'd' })
 void credentials.deleteCredential(recorder, 'c')
 void plugins.listPlugins(recorder)
+void plugins.installPlugin(recorder, new Blob(['zip']))
+void plugins.enablePlugin(recorder, 'acme')
+void plugins.disablePlugin(recorder, 'acme')
+void plugins.removePlugin(recorder, 'acme', { force: true })
 void system.getSystemStatus(recorder)
 const modules: Record<string, unknown>[] = [
     auth,

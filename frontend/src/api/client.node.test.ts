@@ -116,6 +116,29 @@ describe('successful requests', () => {
         expect(seen?.req.headers['x-request-id']).toMatch(/^[0-9a-f-]{36}$/)
     })
 
+    it('sends a raw body as-is with its content type', async () => {
+        let seen: { req: IncomingMessage; body: string } | undefined
+        handler = (req, body, res) => {
+            seen = { req, body }
+            json(res, 200, { id: 'p1' })
+        }
+
+        await client().request(
+            'POST',
+            '/plugins',
+            z.object({ id: z.string() }),
+            {
+                rawBody: {
+                    data: new Blob(['PK-bytes']),
+                    contentType: 'application/zip',
+                },
+            },
+        )
+
+        expect(seen?.body).toBe('PK-bytes')
+        expect(seen?.req.headers['content-type']).toBe('application/zip')
+    })
+
     it('omits Authorization and Content-Type when there is no token or body', async () => {
         let headers: IncomingMessage['headers'] = {}
         handler = (req, _body, res) => {

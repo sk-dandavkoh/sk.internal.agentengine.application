@@ -84,6 +84,14 @@ export const routes: RouteObject[] = [
                         },
                     },
                     {
+                        path: '/plugins',
+                        lazy: async () => {
+                            const { PluginsPage } =
+                                await import('../features/plugins/PluginsPage')
+                            return { Component: PluginsPage }
+                        },
+                    },
+                    {
                         path: '/reports',
                         lazy: async () => {
                             const { ReportsPage } =
@@ -109,6 +117,7 @@ export const routes: RouteObject[] = [
                                     '/monitoring',
                                     '/credentials',
                                     '/reports',
+                                    '/plugins',
                                 ].includes(item.path),
                         )
                         .map((item): RouteObject => ({

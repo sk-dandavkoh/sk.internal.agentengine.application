@@ -1259,7 +1259,7 @@ Implemented in V1 (Phase 27 closed the gaps the frontend needs):
 /api/v1/executions/{id}/live (WebSocket)          live event stream (§23)
 /api/v1/nodes                                    node catalog (ports, config schema, port rule §45)
 /api/v1/nodes/{type}/config/validate             config issues per field (stateless, §3.5)
-/api/v1/plugins                                  installed plugins (admin, read-only)
+/api/v1/plugins[/{id}[/enable|/disable]]         installed plugins, lifecycle (admin, ADR 0001)
 /api/v1/credentials                              admin only, values never returned
 /api/v1/reports/executions/{id}                  execution report
 /api/v1/monitoring/summary?since=&until=         aggregates over runs created in a window (§113)
@@ -1301,9 +1301,13 @@ Versions are never edited, but they can be copied (`ProjectVersion.to_draft`):
 new version), and `POST .../duplicate` with `{"version": n}` starts a new,
 unpublished project from it.
 
-Not over HTTP in V1: plugin management (install, enable, disable, remove;
-operator CLI only, plugins are trusted code; `/api/v1/plugins` only lists
-them).
+Plugin management over HTTP (ADR 0001, admin only): enable, disable and
+remove (`DELETE ?force=`, blocked with `PLUGIN_IN_USE` while projects need
+the plugin) always. Upload install (`POST /api/v1/plugins`, `application/zip`)
+only with `AKASHA_PLUGINS_HTTP_INSTALL=true`, otherwise 403
+`PLUGIN_INSTALL_DISABLED`; the list's `install_enabled` tells clients
+which applies. Plugins are trusted code: with uploads on, an admin account
+can run code on the host.
 
 ----------
 
@@ -1939,9 +1943,11 @@ Implementation (Phase 17, `backend/src/akasha/plugins/`, guide in
   `MISSING_DEPENDENCY` until it is back. The operator path, `akasha
   plugin remove`, blocks removal while projects need the plugin (§58).
 - Changes apply to the current process. Other processes see them after a
-  restart (workers, Phase 22). No HTTP install endpoint exists: before
-  authentication (Phase 20) it would be remote code execution. The CLI
-  (Phase 21) drives the lifecycle.
+  restart (workers, Phase 22). The CLI (Phase 21) and the admin API
+  (ADR 0001) drive the lifecycle. HTTP upload install is off unless
+  `AKASHA_PLUGINS_HTTP_INSTALL` is set; `plugins.archive` unpacks uploads
+  (relative regular files only, size and entry caps) before the usual
+  install.
 
 ----------
 
@@ -2822,6 +2828,7 @@ Implementation (Phase 21, `backend/src/akasha/cli.py`, stdlib `argparse`):
   1 failed, 2 usage, 70 internal error.
 - Not provided: draft editing, project deletion, execution listing,
   plugin enable/disable, user and credential management (API only).
+  HTTP removal uses the same `remove_plugin` (ADR 0001).
   `node test` has no credentials: secrets never go on a command line.
 
 ----------

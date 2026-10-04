@@ -28,6 +28,12 @@ import {
     type CreateProjectInput,
     type UpdateProjectInput,
 } from './projects'
+import {
+    disablePlugin,
+    enablePlugin,
+    installPlugin,
+    removePlugin,
+} from './plugins'
 import { queryKeys } from './queries'
 import type { JsonObject } from './schemas'
 
@@ -230,5 +236,36 @@ export function useDeleteCredential() {
             qc.removeQueries({ queryKey: queryKeys.credentials.detail(name) })
             return invalidate(qc, queryKeys.credentials.lists())
         },
+    )
+}
+
+// -- plugins -------------------------------------------------------------------
+
+// A plugin change adds or removes node types: the catalog is refetched too.
+const pluginsChanged = (qc: QueryClient) =>
+    invalidate(qc, queryKeys.plugins(), queryKeys.nodes())
+
+export function useInstallPlugin() {
+    return useApiMutation(
+        (client, file: Blob) => installPlugin(client, file),
+        pluginsChanged,
+    )
+}
+
+export function useSetPluginEnabled() {
+    return useApiMutation(
+        (client, v: { pluginId: string; enabled: boolean }) =>
+            v.enabled
+                ? enablePlugin(client, v.pluginId)
+                : disablePlugin(client, v.pluginId),
+        pluginsChanged,
+    )
+}
+
+export function useRemovePlugin() {
+    return useApiMutation(
+        (client, v: { pluginId: string; force?: boolean }) =>
+            removePlugin(client, v.pluginId, { force: v.force ?? false }),
+        pluginsChanged,
     )
 }

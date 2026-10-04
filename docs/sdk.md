@@ -315,6 +315,11 @@ Lifecycle (`akasha.plugins.registry.PluginRegistry`, directory
 | disable / enable | unregisters / re-registers the nodes; the state survives restarts. Blocked (`PLUGIN_IN_USE`) while an enabled plugin depends on it. |
 | remove | disables, then deletes the installed copy. Upgrade = remove + install. |
 
+Admins drive the same lifecycle over `/api/v1/plugins` and the Plugins page.
+Upload install is opt-in (`AKASHA_PLUGINS_HTTP_INSTALL`, ADR 0001). The
+upload is a ZIP of the package, with the package at the root or in one
+top-level directory.
+
 A project may declare `Dependency(kind="plugin")`. Validate and publish then
 require an enabled plugin whose version satisfies the constraint.
 
