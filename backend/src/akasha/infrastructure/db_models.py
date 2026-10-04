@@ -165,6 +165,8 @@ executions = Table(
     CheckConstraint(f"status IN ({_EXECUTION_STATUSES})", name="ck_executions_status"),
     CheckConstraint("revision >= 1", name="ck_executions_revision_positive"),
     Index("ix_executions_project_id", "project_id"),
+    # Monitoring windows and the newest-first listing (migration 0013).
+    Index("ix_executions_created_at", "created_at"),
     # Queue recovery scans QUEUED executions; the partial index stays as
     # small as the backlog however large the history grows.
     Index(

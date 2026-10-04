@@ -197,7 +197,10 @@ async function openTab(name: RegExp | string) {
 describe('Execution inspector', () => {
     it('shows a successful run: snapshot, nodes, timings, outputs and events', async () => {
         backend()
-        const { router } = renderRoute(`/executions/${EID}`)
+        const { router, ready } = renderRoute(`/executions/${EID}`)
+        // The first test of the file pays the page's cold import (React
+        // Flow), close to a second under full-suite load.
+        await ready
 
         // Overview: reproducibility metadata and the (redacted) input.
         const snapshot = within(

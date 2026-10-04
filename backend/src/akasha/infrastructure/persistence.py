@@ -12,7 +12,18 @@ from datetime import UTC, datetime, timedelta
 from types import TracebackType
 from typing import Any, cast
 
-from sqlalchemy import Insert, Select, Update, delete, func, select, text
+from sqlalchemy import (
+    Insert,
+    Select,
+    Update,
+    delete,
+    func,
+    literal,
+    literal_column,
+    select,
+    text,
+)
+from sqlalchemy.dialects.postgresql import JSONPATH
 from sqlalchemy.dialects.postgresql import Insert as PgInsert
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import CursorResult, RowMapping
@@ -23,8 +34,10 @@ from akasha.application.persistence import (
     CredentialRepository,
     EventRepository,
     ExecutionRepository,
+    ExecutionSample,
     ExecutionSummary,
     NodeLogRepository,
+    NodeSample,
     ProjectRepository,
     ProjectSort,
     ProjectVersionRepository,
@@ -439,9 +452,6 @@ class SqlAlchemyExecutionRepository(ExecutionRepository):
     ) -> Sequence[ExecutionSummary]:
         e = m.executions.c
         p = m.projects.c
-        # ponytail: no index on created_at; the cross-project listing sorts
-        # the (owner's) history per page. Add ix_executions_created_at when
-        # dashboard latency shows up in the request timings.
         # Inner join: versions RESTRICT project deletion, so every execution
         # has its project row.
         query = select(
@@ -492,6 +502,77 @@ class SqlAlchemyExecutionRepository(ExecutionRepository):
         query = _owned(select(e.status, func.count()), owner_id).group_by(e.status)
         rows = (await self._session.execute(query)).all()
         return {ExecutionStatus(row[0]): int(row[1]) for row in rows}
+
+    async def sample_executions(
+        self, *, since: datetime, until: datetime, owner_id: str | None = None
+    ) -> Sequence[ExecutionSample]:
+        e = m.executions.c
+        query = _owned(
+            select(
+                e.status,
+                e.created_at,
+                e.started_at,
+                e.finished_at,
+                e.error["code"].as_string(),
+                e.error["kind"].as_string(),
+            ),
+            owner_id,
+        ).where(e.created_at >= since, e.created_at < until)
+        rows = await self._session.execute(query.order_by(e.created_at, e.id))
+        return [
+            ExecutionSample(
+                status=ExecutionStatus(row[0]),
+                created_at=_ensure_utc(row[1]),
+                started_at=_opt_utc(row[2]),
+                finished_at=_opt_utc(row[3]),
+                error_code=row[4],
+                error_kind=row[5],
+            )
+            for row in rows
+        ]
+
+    async def sample_node_executions(
+        self, *, since: datetime, until: datetime, owner_id: str | None = None
+    ) -> Sequence[NodeSample]:
+        e, ne, v = m.executions.c, m.node_executions.c, m.project_versions.c
+        # The node type lives in the pinned version's graph, not on the row.
+        node_type = func.jsonb_path_query_first(
+            v.graph,
+            literal("$.nodes[*] ? (@.id == $id).node_type", JSONPATH),
+            func.jsonb_build_object("id", ne.node_id),
+        ).op("#>>")(literal_column("'{}'"))
+        query = _owned(
+            select(
+                node_type,
+                ne.status,
+                ne.attempt,
+                func.jsonb_array_length(ne.failures),
+                ne.started_at,
+                ne.finished_at,
+                ne.outputs["metadata"],
+            )
+            .select_from(m.node_executions)
+            .join(m.executions, e.id == ne.execution_id)
+            .join(
+                m.project_versions,
+                (v.project_id == e.project_id) & (v.version == e.project_version),
+            ),
+            owner_id,
+        ).where(e.created_at >= since, e.created_at < until)
+        rows = await self._session.execute(query.order_by(e.id, ne.node_id))
+        return [
+            NodeSample(
+                # Unreachable while versions are immutable; never drop a row.
+                node_type=row[0] or "unknown",
+                status=NodeExecutionStatus(row[1]),
+                attempts=row[2],
+                failed_attempts=row[3],
+                started_at=_opt_utc(row[4]),
+                finished_at=_opt_utc(row[5]),
+                metadata=row[6],
+            )
+            for row in rows
+        ]
 
     async def list_queued(
         self, *, created_before: datetime, limit: int

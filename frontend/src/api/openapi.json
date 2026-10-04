@@ -402,6 +402,41 @@
         "title": "DuplicateProjectRequest",
         "type": "object"
       },
+      "DurationStats": {
+        "additionalProperties": false,
+        "description": "Over ``count`` samples. Percentiles are nearest-rank: always a\nduration that was actually observed.",
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "max_ms": {
+            "title": "Max Ms",
+            "type": "integer"
+          },
+          "mean_ms": {
+            "title": "Mean Ms",
+            "type": "integer"
+          },
+          "p50_ms": {
+            "title": "P50 Ms",
+            "type": "integer"
+          },
+          "p95_ms": {
+            "title": "P95 Ms",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "count",
+          "mean_ms",
+          "p50_ms",
+          "p95_ms",
+          "max_ms"
+        ],
+        "title": "DurationStats",
+        "type": "object"
+      },
       "EdgeBody": {
         "additionalProperties": false,
         "properties": {
@@ -429,6 +464,30 @@
           "target_port"
         ],
         "title": "EdgeBody",
+        "type": "object"
+      },
+      "ErrorCount": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "kind",
+          "count"
+        ],
+        "title": "ErrorCount",
         "type": "object"
       },
       "ErrorReport": {
@@ -1391,6 +1450,92 @@
         "title": "MetricsReport",
         "type": "object"
       },
+      "MonitoringSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "bucket_seconds": {
+            "title": "Bucket Seconds",
+            "type": "integer"
+          },
+          "durations": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/DurationStats"
+            },
+            "propertyNames": {
+              "$ref": "#/components/schemas/ExecutionStatus"
+            },
+            "title": "Durations",
+            "type": "object"
+          },
+          "errors": {
+            "items": {
+              "$ref": "#/components/schemas/ErrorCount"
+            },
+            "title": "Errors",
+            "type": "array"
+          },
+          "errors_total": {
+            "title": "Errors Total",
+            "type": "integer"
+          },
+          "executions": {
+            "title": "Executions",
+            "type": "integer"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/NodeTypeStats"
+            },
+            "title": "Nodes",
+            "type": "array"
+          },
+          "since": {
+            "format": "date-time",
+            "title": "Since",
+            "type": "string"
+          },
+          "status_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "propertyNames": {
+              "$ref": "#/components/schemas/ExecutionStatus"
+            },
+            "title": "Status Counts",
+            "type": "object"
+          },
+          "timeline": {
+            "items": {
+              "$ref": "#/components/schemas/TimelineBucket"
+            },
+            "title": "Timeline",
+            "type": "array"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/MetricsReport"
+          },
+          "until": {
+            "format": "date-time",
+            "title": "Until",
+            "type": "string"
+          }
+        },
+        "required": [
+          "since",
+          "until",
+          "bucket_seconds",
+          "executions",
+          "status_counts",
+          "durations",
+          "timeline",
+          "errors",
+          "errors_total",
+          "nodes",
+          "totals"
+        ],
+        "title": "MonitoringSummary",
+        "type": "object"
+      },
       "NodeCatalog": {
         "properties": {
           "items": {
@@ -1679,6 +1824,35 @@
           "capabilities"
         ],
         "title": "NodeTypeOut",
+        "type": "object"
+      },
+      "NodeTypeStats": {
+        "additionalProperties": false,
+        "properties": {
+          "durations": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DurationStats"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "metrics": {
+            "$ref": "#/components/schemas/MetricsReport"
+          },
+          "node_type": {
+            "title": "Node Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "node_type",
+          "metrics",
+          "durations"
+        ],
+        "title": "NodeTypeStats",
         "type": "object"
       },
       "PageInfo": {
@@ -2357,6 +2531,39 @@
           "failures"
         ],
         "title": "SystemStatus",
+        "type": "object"
+      },
+      "TimelineBucket": {
+        "additionalProperties": false,
+        "description": "Executions created in ``[start, end)``. The last bucket ends at\n``until`` and may be shorter than ``bucket_seconds``.",
+        "properties": {
+          "counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "propertyNames": {
+              "$ref": "#/components/schemas/ExecutionStatus"
+            },
+            "title": "Counts",
+            "type": "object"
+          },
+          "end": {
+            "format": "date-time",
+            "title": "End",
+            "type": "string"
+          },
+          "start": {
+            "format": "date-time",
+            "title": "Start",
+            "type": "string"
+          }
+        },
+        "required": [
+          "start",
+          "end",
+          "counts"
+        ],
+        "title": "TimelineBucket",
         "type": "object"
       },
       "TokenUsageReport": {
@@ -3878,6 +4085,80 @@
         "summary": "List Logs",
         "tags": [
           "executions"
+        ]
+      }
+    },
+    "/api/v1/monitoring/summary": {
+      "get": {
+        "operationId": "summary_api_v1_monitoring_summary_get",
+        "parameters": [
+          {
+            "description": "Window start, inclusive, with timezone",
+            "in": "query",
+            "name": "since",
+            "required": true,
+            "schema": {
+              "description": "Window start, inclusive, with timezone",
+              "format": "date-time",
+              "title": "Since",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Window end, exclusive, with timezone; default now",
+            "in": "query",
+            "name": "until",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Window end, exclusive, with timezone; default now",
+              "title": "Until"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MonitoringSummary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Summary",
+        "tags": [
+          "monitoring"
         ]
       }
     },

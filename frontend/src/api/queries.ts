@@ -21,6 +21,7 @@ import {
     listProjectVersions,
     type ProjectListParams,
 } from './projects'
+import { getMonitoringSummary, type MonitoringWindow } from './monitoring'
 import { getExecutionReport } from './reports'
 import type { JsonObject, PageParams } from './schemas'
 import { getSystemStatus } from './system'
@@ -68,6 +69,8 @@ export const queryKeys = {
     nodeConfigValidation: (nodeType: string, config: JsonObject) =>
         ['nodes', nodeType, 'config-validation', config] as const,
     system: () => ['system', 'status'] as const,
+    monitoring: (window: MonitoringWindow) =>
+        ['monitoring', 'summary', window] as const,
     plugins: () => ['plugins'] as const,
     credentials: {
         lists: () => ['credentials', 'list'] as const,
@@ -171,6 +174,17 @@ export const executionQueries = {
 
 // Lines per request: the backend's maximum page size.
 export const LOG_PAGE_SIZE = 100
+
+export const monitoringQueries = {
+    /** A fixed window: the same window always means the same runs, so a
+     * refresh is a new window (the page moves `until`), not a refetch. */
+    summary: (client: ApiClient, window: MonitoringWindow) =>
+        queryOptions({
+            queryKey: queryKeys.monitoring(window),
+            queryFn: ({ signal }) =>
+                getMonitoringSummary(client, window, signal),
+        }),
+}
 
 export const nodeQueries = {
     catalog: (client: ApiClient) =>

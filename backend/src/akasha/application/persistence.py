@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
 from types import TracebackType
-from typing import Protocol
+from typing import Any, Protocol
 
 from akasha.domain.credentials import Credential
 from akasha.domain.event import Event
@@ -26,6 +26,7 @@ from akasha.domain.execution import (
     ExecutionMetadata,
     ExecutionStatus,
     LogLevel,
+    NodeExecutionStatus,
     NodeLogEntry,
 )
 from akasha.domain.identity import User, UserSession
@@ -142,6 +143,30 @@ class ExecutionSummary:
     finished_at: datetime | None
 
 
+@dataclass(frozen=True, slots=True)
+class ExecutionSample:
+    """The execution columns monitoring needs; read model, not the aggregate."""
+
+    status: ExecutionStatus
+    created_at: datetime
+    started_at: datetime | None
+    finished_at: datetime | None
+    error_code: str | None
+    error_kind: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class NodeSample:
+    node_type: str
+    status: NodeExecutionStatus
+    attempts: int
+    failed_attempts: int
+    started_at: datetime | None
+    finished_at: datetime | None
+    # ``outputs["metadata"]``, where AI nodes report usage and cost.
+    metadata: Any
+
+
 class ExecutionRepository(Protocol):
     """Execution aggregate (execution row + its node executions).
 
@@ -174,6 +199,19 @@ class ExecutionRepository(Protocol):
     ) -> Mapping[ExecutionStatus, int]:
         """Executions per status (absent statuses: none), limited to the
         projects of ``owner_id`` when given."""
+        ...
+
+    # Monitoring read models (Phase 16): executions created in
+    # [since, until), limited to the projects of ``owner_id`` when given.
+    async def sample_executions(
+        self, *, since: datetime, until: datetime, owner_id: str | None = None
+    ) -> Sequence[ExecutionSample]: ...
+
+    async def sample_node_executions(
+        self, *, since: datetime, until: datetime, owner_id: str | None = None
+    ) -> Sequence[NodeSample]:
+        """Node executions of those executions, by execution id and node id
+        (a stable order for float sums)."""
         ...
 
     async def list_queued(

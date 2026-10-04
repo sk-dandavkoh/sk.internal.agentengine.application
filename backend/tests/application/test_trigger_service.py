@@ -18,8 +18,10 @@ from akasha.application.persistence import (
     CredentialRepository,
     EventRepository,
     ExecutionRepository,
+    ExecutionSample,
     ExecutionSummary,
     NodeLogRepository,
+    NodeSample,
     ProjectRepository,
     ProjectVersionRepository,
     SessionRepository,
@@ -97,6 +99,12 @@ class FakeExecutions(ExecutionRepository):
         self, *, owner_id: str | None = None
     ) -> Mapping[ExecutionStatus, int]:
         return {}
+
+    async def sample_executions(self, **_: object) -> Sequence[ExecutionSample]:
+        return []
+
+    async def sample_node_executions(self, **_: object) -> Sequence[NodeSample]:
+        return []
 
     async def list_queued(
         self, *, created_before: datetime, limit: int

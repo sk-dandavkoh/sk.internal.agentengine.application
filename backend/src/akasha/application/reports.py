@@ -232,7 +232,7 @@ def report_json(report: ExecutionReport) -> str:
 
 
 def _node(ne: NodeExecution, node_type: str, label: str) -> NodeReport:
-    usage, cost = _usage_and_cost(ne.outputs)
+    usage, cost = usage_and_cost(ne.outputs)
     return NodeReport(
         node_id=ne.node_id,
         node_type=node_type,
@@ -256,36 +256,62 @@ def _node(ne: NodeExecution, node_type: str, label: str) -> NodeReport:
 
 
 def _metrics(nodes: Sequence[NodeReport]) -> MetricsReport:
-    counts = dict.fromkeys(sorted(s.value for s in NodeExecutionStatus), 0)
-    costs: dict[str, float] = {}
-    input_tokens = output_tokens = 0
-    cost_complete = True
+    tally = MetricsTally()
     for node in nodes:  # node_id order: float sums are reproducible
-        counts[node.status] += 1
-        if node.usage is not None:
-            input_tokens += node.usage.input_tokens
-            output_tokens += node.usage.output_tokens
-            cost_complete &= node.cost is not None
-        if node.cost is not None:
-            costs[node.cost.currency] = (
-                costs.get(node.cost.currency, 0.0) + node.cost.amount
+        tally.add(node.status, node.attempts, len(node.failures), node.usage, node.cost)
+    return tally.report()
+
+
+class MetricsTally:
+    """Sums node executions into a ``MetricsReport``. One definition of the
+    sums for a single report and for monitoring across executions, so both
+    count retries, tokens and cost the same way. Add in a stable order:
+    float cost sums depend on it."""
+
+    def __init__(self) -> None:
+        self._counts = dict.fromkeys(sorted(s.value for s in NodeExecutionStatus), 0)
+        self._costs: dict[str, float] = {}
+        self._input_tokens = self._output_tokens = 0
+        self._attempts = self._retries = self._failed_attempts = 0
+        self._cost_complete = True
+
+    def add(
+        self,
+        status: NodeExecutionStatus,
+        attempts: int,
+        failed_attempts: int,
+        usage: TokenUsageReport | None,
+        cost: CostReport | None,
+    ) -> None:
+        self._counts[status] += 1
+        self._attempts += attempts
+        self._retries += max(attempts - 1, 0)
+        self._failed_attempts += failed_attempts
+        if usage is not None:
+            self._input_tokens += usage.input_tokens
+            self._output_tokens += usage.output_tokens
+            self._cost_complete &= cost is not None
+        if cost is not None:
+            self._costs[cost.currency] = (
+                self._costs.get(cost.currency, 0.0) + cost.amount
             )
-    return MetricsReport(
-        node_status_counts=counts,
-        attempts=sum(n.attempts for n in nodes),
-        retries=sum(n.retries for n in nodes),
-        failed_attempts=sum(len(n.failures) for n in nodes),
-        usage=TokenUsageReport(
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            total_tokens=input_tokens + output_tokens,
-        ),
-        costs=[CostReport(amount=a, currency=c) for c, a in sorted(costs.items())],
-        cost_complete=cost_complete,
-    )
+
+    def report(self) -> MetricsReport:
+        i, o = self._input_tokens, self._output_tokens
+        return MetricsReport(
+            node_status_counts=dict(self._counts),
+            attempts=self._attempts,
+            retries=self._retries,
+            failed_attempts=self._failed_attempts,
+            usage=TokenUsageReport(input_tokens=i, output_tokens=o, total_tokens=i + o),
+            costs=[
+                CostReport(amount=a, currency=c) for c, a in sorted(self._costs.items())
+            ],
+            cost_complete=self._cost_complete,
+        )
 
 
-def _usage_and_cost(
+def usage_and_cost(
     outputs: Mapping[str, Any] | None,
 ) -> tuple[TokenUsageReport | None, CostReport | None]:
     """Token usage and cost as AI nodes report them: an output ``metadata``

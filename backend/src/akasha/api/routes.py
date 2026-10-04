@@ -34,6 +34,7 @@ from akasha.api.auth import (
 from akasha.api.credentials import create_credentials_router
 from akasha.api.executions import create_executions_router
 from akasha.api.live import create_live_router
+from akasha.api.monitoring import create_monitoring_router
 from akasha.api.nodes import create_nodes_router
 from akasha.api.plugins import create_plugins_router
 from akasha.api.projects import create_projects_router
@@ -133,6 +134,7 @@ def create_api_v1_router() -> APIRouter:
     protected.include_router(create_executions_router())
     protected.include_router(create_nodes_router())
     protected.include_router(create_reports_router())
+    protected.include_router(create_monitoring_router())
     protected.include_router(create_system_router())
     admin_only = [Depends(require_admin)]
     protected.include_router(create_credentials_router(), dependencies=admin_only)

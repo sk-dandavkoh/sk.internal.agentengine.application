@@ -11,7 +11,7 @@ vi.mock('./PlaceholderPage', () => ({
         if (title === 'Reports') {
             throw new Error('TypeError: secret internal detail')
         }
-        if (title === 'Monitoring') {
+        if (title === 'Credentials') {
             throw new ApiError({
                 kind: 'network',
                 message: 'Server unreachable.',
@@ -48,7 +48,7 @@ describe('RouteErrorBoundary', () => {
         vi.spyOn(console, 'error').mockImplementation(() => undefined)
         vi.spyOn(console, 'warn').mockImplementation(() => undefined)
         const router = createMemoryRouter(routes, {
-            initialEntries: ['/monitoring'],
+            initialEntries: ['/credentials'],
         })
         render(<RouterProvider router={router} />)
 

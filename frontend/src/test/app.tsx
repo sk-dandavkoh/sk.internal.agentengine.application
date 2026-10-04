@@ -60,5 +60,24 @@ export function renderRoute(path: string) {
             </QueryClientProvider>
         </ApiClientContext>,
     )
-    return { router, queryClient }
+    return { router, queryClient, ready: routerReady(router) }
+}
+
+/**
+ * Settles once the initial navigation finished: lazy route modules are
+ * loaded and loaders ran. Await it before `findBy*` queries on a heavy
+ * route, so their 1 s budget covers rendering, not a cold module import.
+ */
+function routerReady(router: ReturnType<typeof createMemoryRouter>) {
+    return new Promise<void>((resolve) => {
+        if (router.state.initialized) {
+            resolve()
+            return
+        }
+        const unsubscribe = router.subscribe((state) => {
+            if (!state.initialized) return
+            unsubscribe()
+            resolve()
+        })
+    })
 }

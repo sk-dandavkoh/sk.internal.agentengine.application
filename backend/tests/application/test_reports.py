@@ -8,7 +8,7 @@ import httpx
 import pytest
 
 from akasha.api.app import create_app
-from akasha.application.reports import _usage_and_cost
+from akasha.application.reports import usage_and_cost
 from akasha.bootstrap import Container
 from akasha.config import Settings
 
@@ -29,7 +29,7 @@ USAGE = {"input_tokens": 3, "output_tokens": 4}
     ],
 )
 def test_malformed_usage_counts_as_not_reported(outputs: Any) -> None:
-    assert _usage_and_cost(outputs) == (None, None)
+    assert usage_and_cost(outputs) == (None, None)
 
 
 @pytest.mark.parametrize(
@@ -46,13 +46,13 @@ def test_malformed_usage_counts_as_not_reported(outputs: Any) -> None:
     ],
 )
 def test_malformed_cost_keeps_usage(cost: Any) -> None:
-    usage, parsed = _usage_and_cost({"metadata": {"usage": USAGE, "cost": cost}})
+    usage, parsed = usage_and_cost({"metadata": {"usage": USAGE, "cost": cost}})
     assert usage is not None and usage.total_tokens == 7
     assert parsed is None
 
 
 def test_integer_cost_is_accepted() -> None:
-    _, cost = _usage_and_cost(
+    _, cost = usage_and_cost(
         {"metadata": {"usage": USAGE, "cost": {"amount": 2, "currency": "EUR"}}}
     )
     assert cost is not None and (cost.amount, cost.currency) == (2.0, "EUR")

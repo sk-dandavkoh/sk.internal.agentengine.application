@@ -9,6 +9,7 @@ import { z } from 'zod'
 import * as auth from './auth'
 import * as credentials from './credentials'
 import * as executions from './executions'
+import * as monitoring from './monitoring'
 import * as nodes from './nodes'
 import * as plugins from './plugins'
 import * as projects from './projects'
@@ -249,6 +250,10 @@ void executions.cancelExecution(recorder, 'e', 'r')
 void executions.executeProjectVersion(recorder, 'p', 1, { k: 'v' })
 void executions.invokeTrigger(recorder, 'p', 't', { k: 'v' })
 void reports.getExecutionReport(recorder, 'e')
+void monitoring.getMonitoringSummary(recorder, {
+    since: '2026-01-01T00:00:00Z',
+    until: '2026-01-02T00:00:00Z',
+})
 void nodes.listNodeDefinitions(recorder)
 void nodes.validateNodeConfig(recorder, 'core.http', { url: 'https://x' })
 void credentials.listCredentials(recorder)
@@ -268,6 +273,7 @@ const modules: Record<string, unknown>[] = [
     projects,
     executions,
     reports,
+    monitoring,
     nodes,
     credentials,
     plugins,

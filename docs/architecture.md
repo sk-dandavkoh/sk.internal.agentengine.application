@@ -1262,6 +1262,7 @@ Implemented in V1 (Phase 27 closed the gaps the frontend needs):
 /api/v1/plugins                                  installed plugins (admin, read-only)
 /api/v1/credentials                              admin only, values never returned
 /api/v1/reports/executions/{id}                  execution report
+/api/v1/monitoring/summary?since=&until=         aggregates over runs created in a window (§113)
 /api/v1/system/status                            version + readiness (/health, /ready) for the UI
 ```
 
@@ -4292,6 +4293,33 @@ exposition at `GET /metrics`; since Phase 20 it needs the
   logged by `AIService`; the metrics need the runtime's `EngineMetrics` to
   reach the LLM path, Phases 21/22), `http_requests_total` (the `http_request` log line covers
   requests for now).
+
+## 113.1 Monitoring summary (frontend Phase 16)
+
+`GET /api/v1/monitoring/summary?since=&until=` (`akasha.application.monitoring`)
+backs the Monitoring UI. It aggregates *persisted* state, not the Prometheus
+counters: those are per process, reset on restart and carry no tokens or
+cost, so the UI could not sum them without misleading aggregation.
+
+- Population: executions **created** in `[since, until)` (timezone-aware,
+  at most 31 days), limited to the caller's projects (admins: all), and
+  their node executions. Indexed by `ix_executions_created_at`
+  (migration 0013).
+- Returns: status counts (every status), duration stats per *terminal*
+  status (count, mean, nearest-rank p50/p95, max; never mixed across
+  outcomes), a timeline of created runs per bucket (1 min to 1 day, at most
+  100 buckets; the last may be partial), the 10 most frequent error codes of
+  failed/timed-out runs plus their total, per node type performance
+  (statuses, attempts, retries, durations of the last attempt, tokens, cost)
+  and totals.
+- Tokens, cost and retries are summed by `MetricsTally`, the execution
+  report's own rules: a run counts the same in its report and here, and
+  `cost_complete=false` flags usage reported without a price.
+- No ids, messages, inputs or outputs are returned: counts, codes and
+  timings only.
+- Ceiling: aggregation runs in the API process over one row per execution
+  and node execution in the window. Move it to SQL aggregates or rollups
+  when windows hold more rows than a request should load.
 
 ----------
 

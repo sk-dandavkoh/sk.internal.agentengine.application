@@ -21,6 +21,7 @@ from akasha.application.auth import (
 from akasha.application.credentials import CredentialService
 from akasha.application.events import EventPublisher
 from akasha.application.executions import ExecutionService
+from akasha.application.monitoring import MonitoringService
 from akasha.application.packages import ProjectPackageService
 from akasha.application.projects import ProjectService
 from akasha.application.reports import ReportService
@@ -71,6 +72,7 @@ class Container:
     queue: RedisExecutionQueue | None = None
     workers: WorkerManager | None = None
     reports: ReportService | None = None
+    monitoring: MonitoringService | None = None
     triggers: TriggerService | None = None
     # Needs the database and AKASHA_CREDENTIAL_ENCRYPTION_KEY. The runtime
     # resolves secrets through this same service.
@@ -232,6 +234,7 @@ def create_container(settings: Settings) -> Container:
         queue=queue,
         workers=workers,
         reports=ReportService(uow),
+        monitoring=MonitoringService(uow),
         triggers=triggers,
         credentials=credentials,
         trigger_registry=trigger_registry,
