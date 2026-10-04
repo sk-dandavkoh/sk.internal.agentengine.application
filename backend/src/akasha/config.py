@@ -63,6 +63,9 @@ class Settings(BaseSettings):
     # in-process scheduler task per API process.
     scheduler_enabled: bool = True
     scheduler_poll_seconds: float = Field(default=1.0, gt=0)
+    # Live execution WebSocket (§23): how often a subscription reads new
+    # events from the log and re-checks its session.
+    live_poll_seconds: float = Field(default=0.5, gt=0)
     # Cap on every API request body, streamed or declared (Phase 25). Keep
     # it above the 16 MiB project package limit, or imports fail first.
     api_max_request_bytes: int = Field(default=20 * 1024 * 1024, gt=0)

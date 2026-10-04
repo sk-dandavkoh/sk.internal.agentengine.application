@@ -42,6 +42,7 @@ Authentication settings:
 |---|---|---|
 | `AKASHA_SESSION_TTL_SECONDS` | `43200` | session lifetime after login (absolute, 60 s – 30 days) |
 | `AKASHA_METRICS_TOKEN` | unset | bearer token Prometheus uses for `/metrics` (≥ 32 chars); unset → admin session only |
+| `AKASHA_LIVE_POLL_SECONDS` | `0.5` | how often a live execution WebSocket reads new events and re-checks its session (latency vs. database load) |
 
 Workers and queue (Phase 22):
 

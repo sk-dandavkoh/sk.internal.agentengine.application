@@ -33,9 +33,11 @@ export const DEFAULT_TIMEOUT_MS = 30_000
  * validated against a schema; every failure becomes an ApiError.
  */
 export class ApiClient {
-    private readonly baseUrl: string
+    /** Also read by the live connection (live.ts): the same origin. */
+    readonly baseUrl: string
     private readonly timeoutMs: number
-    private readonly getToken: (() => string | undefined) | undefined
+    /** Also read by the live connection (live.ts): one token source. */
+    readonly getToken: (() => string | undefined) | undefined
 
     constructor(options: ApiClientOptions = {}) {
         this.baseUrl = options.baseUrl ?? DEFAULT_BASE_URL

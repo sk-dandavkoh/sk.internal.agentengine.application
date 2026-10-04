@@ -4,6 +4,8 @@ Access policy (architecture §149), in one place:
 
 - public: /health, /ready, /docs + /openapi.json, POST /api/v1/auth/setup,
   POST /api/v1/auth/login, POST /api/v1/webhooks/...
+- WS /api/v1/executions/{id}/live: authenticates and authorizes in its
+  first frame (``akasha.api.live``), the same session + execution rule
 - /metrics: the configured scrape token, else an admin session
 - every other /api/v1 route: a session (``current_identity``) with access to
   the project/execution in its path (``authorize_path``); credentials,
@@ -31,6 +33,7 @@ from akasha.api.auth import (
 )
 from akasha.api.credentials import create_credentials_router
 from akasha.api.executions import create_executions_router
+from akasha.api.live import create_live_router
 from akasha.api.nodes import create_nodes_router
 from akasha.api.plugins import create_plugins_router
 from akasha.api.projects import create_projects_router
@@ -120,6 +123,7 @@ def create_api_v1_router() -> APIRouter:
     router = APIRouter(prefix="/api/v1")
     router.include_router(create_auth_router())
     router.include_router(create_webhooks_router())
+    router.include_router(create_live_router())
 
     protected = APIRouter(
         dependencies=[Depends(current_identity), Depends(authorize_path)]

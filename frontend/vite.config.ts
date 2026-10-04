@@ -12,8 +12,9 @@ export default defineConfig(({ mode }) => {
         plugins: [react(), tailwindcss()],
         // The browser always talks to the same origin; in development Vite
         // forwards /api to the backend, so the backend needs no CORS setup.
-        server: { proxy: { '/api': apiTarget } },
-        preview: { proxy: { '/api': apiTarget } },
+        // ws: the live execution WebSocket is under /api too.
+        server: { proxy: { '/api': { target: apiTarget, ws: true } } },
+        preview: { proxy: { '/api': { target: apiTarget, ws: true } } },
         test: {
             environment: 'jsdom',
             setupFiles: ['./src/test/setup.ts'],

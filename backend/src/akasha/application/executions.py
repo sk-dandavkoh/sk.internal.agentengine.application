@@ -262,10 +262,19 @@ class ExecutionService:
         """Stored events of one execution, ascending by position. Pass the
         last seen ``position`` as ``after`` to resume (e.g. after a
         WebSocket reconnect, AGENTS §82). ``Page.offset`` is ``after``."""
+        return (await self.follow_events(execution_id, after=after, limit=limit))[1]
+
+    async def follow_events(
+        self, execution_id: str, *, after: int = 0, limit: int = 100
+    ) -> tuple[Execution, Page[Event]]:
+        """``list_events`` plus the execution, read *before* its events: a
+        terminal state commits together with its final events, so when the
+        execution is terminal and the page has no more, the stream is
+        complete (the live gateway's end condition)."""
         check_page(after, limit)
         async with self._uow() as uow:
-            await load_execution(uow, execution_id)
+            execution = await load_execution(uow, execution_id)
             rows = await uow.events.list(
                 execution_id=execution_id, after=after, limit=limit + 1
             )
-        return to_page(rows, after, limit)
+        return execution, to_page(rows, after, limit)

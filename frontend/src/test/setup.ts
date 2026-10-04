@@ -1,6 +1,13 @@
 import '@testing-library/jest-dom/vitest'
 import { cleanup } from '@testing-library/react'
-import { afterEach } from 'vitest'
+import { afterEach, beforeEach, vi } from 'vitest'
+import { FakeWebSocket } from './websocket'
+
+beforeEach(() => {
+    // Live updates never reach a real server in unit/component tests.
+    FakeWebSocket.instances = []
+    vi.stubGlobal('WebSocket', FakeWebSocket)
+})
 
 afterEach(() => {
     cleanup()

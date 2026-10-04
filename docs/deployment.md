@@ -37,6 +37,24 @@ trigger scheduler. Scale executions with more `worker` replicas
 - Docker Engine with Compose v2.24 or newer (`docker compose version`)
 - the repository checkout (the image is built locally from `backend/`)
 - for remote access: a TLS-terminating reverse proxy in front of the API
+  that also forwards WebSocket upgrades (see below)
+
+The live execution view uses a WebSocket at
+`/api/v1/executions/{id}/live` (`docs/architecture.md` §23). The proxy must
+pass the `Upgrade` and `Connection` headers through for `/api/`. An idle
+stream carries uvicorn's WebSocket ping every 20 s, so any proxy idle
+timeout above that (nginx's default is 60 s) keeps it open. Without upgrade
+support live updates stay on "Reconnecting" in the UI; everything else
+keeps working. nginx example:
+
+```nginx
+location /api/ {
+    proxy_pass http://127.0.0.1:8000;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;  # map, see nginx docs
+}
+```
 
 ## 3. Installation
 
@@ -109,7 +127,9 @@ docker compose down           # remove containers; volumes (data) are kept
 ```
 
 Graceful stop: Docker sends `SIGTERM` to `akasha` (PID 1). The API stops
-accepting requests, stops the scheduler and closes its pools; the worker
+accepting requests, closes open live WebSockets with 1012 (clients
+reconnect to the restarted API and catch up), stops the scheduler and
+closes its pools; the worker
 stops taking jobs and gives running executions
 `AKASHA_WORKER_SHUTDOWN_GRACE_SECONDS` (30 s) to finish, then cancels them
 cooperatively. `stop_grace_period` is 60 s, so `SIGKILL` never interrupts

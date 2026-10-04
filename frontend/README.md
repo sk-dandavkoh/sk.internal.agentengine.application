@@ -138,8 +138,8 @@ Later phases add directories as they gain content, following `AGENTS.md` §6:
   e.g. `auth.ts` (`login`, `logout`, `fetchCurrentUser`), `projects.ts`,
   `executions.ts`, `reports.ts`, `nodes.ts`, `credentials.ts`, `plugins.ts`.
   Session storage and login UI follow in Phase 21.
-- **No WebSocket client**: the V1 backend has no WebSocket endpoint; live
-  execution state is polled (`docs/architecture.md` §22).
+- **Live updates**: `live.ts` follows one execution over the backend
+  WebSocket (`docs/architecture.md` §23); see "Live execution" below.
 
 ### Domain types
 
@@ -230,8 +230,8 @@ loads, fails, retries and shows its empty state on its own
 (`QuerySection`); a failed refresh keeps the last data with a warning. When
 every section has failed with nothing to show (backend down, no session),
 one page-level error with Retry replaces them.
-"Refresh" refetches the queries on screen. No polling: live updates are
-Phase 14. Recent failures expand to their recorded errors: the execution
+"Refresh" refetches the queries on screen. No polling; live updates follow
+one execution on its detail page (below). Recent failures expand to their recorded errors: the execution
 report (`/reports/executions/{id}`) is fetched only when a row is opened.
 
 Not shown, because the backend has no aggregate for them: token usage and
@@ -464,6 +464,37 @@ canvas, comparison with versions and the draft, restore incl. conflict,
 clone, per-version executions, navigation from project and dashboard) and
 `tests/fullstack/projects.spec.ts` (publish twice, run v1, inspect,
 compare, clone and restore against the real backend).
+
+## Live execution
+
+The execution detail page of an unfinished run subscribes to
+`WS /api/v1/executions/{id}/live` (`src/api/live.ts`,
+`features/executions/useLiveExecution.ts`). Events are notifications, not
+state:
+
+- every (re)subscribe and every events frame invalidates the execution's
+  queries (detail, report, events), so the page shows the refetched,
+  persisted state; nothing is derived from event payloads;
+- the client tracks the highest event `position` it received: it drops
+  duplicates and stale events and resubscribes with `after` = that
+  position, so the backend replays exactly what was missed;
+- a dropped connection retries after 1 s, 2 s, 4 s … (at most 30 s,
+  reset on success); 4401 (no or invalid session) and 4404/4400 stop it;
+- the indicator says `Connecting`, `Live`, `Reconnecting` (with "may be out
+  of date"), `Live updates finished` or `Live updates unavailable`; it
+  never says Live without a subscription. Refresh still works throughout;
+- "Live activity" lists the events received (last 200) in words per
+  backend event type; unknown types show their raw name. "Nodes" lists the
+  report's node statuses verbatim.
+
+The session token goes in the subscribe frame, never the URL. Until the
+login UI (Phase 21) wires `getToken`, the frame carries no token and the
+page says live updates are unavailable; the full-stack suite injects the
+token with `page.routeWebSocket`, as it injects the HTTP header.
+
+Tests drive a hand-controlled `FakeWebSocket` (`src/test/websocket.ts`,
+installed for every test, so none reaches a network) and fake timers for
+the backoff; no sleeps.
 
 ## Design system
 

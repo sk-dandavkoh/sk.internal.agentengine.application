@@ -1255,6 +1255,7 @@ Implemented in V1 (Phase 27 closed the gaps the frontend needs):
 /api/v1/executions?status=                       across the caller's projects, newest first
 /api/v1/executions/status-counts                 executions per status (same visibility)
 /api/v1/executions/{id}[/events|/cancel]         state, event history, cancel
+/api/v1/executions/{id}/live (WebSocket)          live event stream (§23)
 /api/v1/nodes                                    node catalog (ports, config schema, port rule §45)
 /api/v1/nodes/{type}/config/validate             config issues per field (stateless, §3.5)
 /api/v1/plugins                                  installed plugins (admin, read-only)
@@ -1300,8 +1301,7 @@ unpublished project from it.
 
 Not over HTTP in V1: plugin management (install, enable, disable, remove;
 operator CLI only, plugins are trusted code; `/api/v1/plugins` only lists
-them) and live updates (WebSocket, §23; clients poll
-`/executions/{id}/events?after=` with the last seen position).
+them).
 
 ----------
 
@@ -1342,6 +1342,42 @@ Example:
 The frontend must be able to recover from a dropped connection by requesting the current persisted state.
 
 WebSocket state must never be the only source of truth.
+
+Implemented (frontend Phase 14, `backend/src/akasha/api/live.py`):
+
+- `WS /api/v1/executions/{execution_id}/live`, one execution per
+  connection, JSON text frames. Client → `{"type": "subscribe", "token",
+  "after"}` as the first frame (within 10 s); server → `subscribed`, then
+  `events` (`items`: the `EventOut` of the HTTP event history, ascending by
+  `position`), then `end` (`status`: the terminal status) and close 1000
+  once the execution is terminal and every event was sent.
+- Authentication boundary: the session token travels in the subscribe
+  frame. Browsers cannot set headers on a WebSocket and URLs reach logs, so
+  neither a header nor a query parameter. The same rules as HTTP apply:
+  a valid session (else close 4401; a missing token too) and access to the
+  execution's project (else 4404, the same answer for unknown and hidden
+  executions). The session is re-checked every poll, so logout, expiry or
+  a disabled user ends the stream (4401). No Origin check: there is no
+  ambient credential (no cookies). Malformed first frame: 4400; internal or
+  configuration error: 1011. Any other close is transient.
+- The stream is a tail of the persisted event log, not a second channel:
+  every `AKASHA_LIVE_POLL_SECONDS` (0.5) it reads `position > after` from
+  PostgreSQL (`ExecutionService.follow_events`, which reads the execution
+  before its events, so "terminal and no more events" means complete).
+  Events of every process (API, workers) appear, nothing depends on the
+  in-process publisher (at-most-once), and a reconnect with the last seen
+  `after` gets exactly the missed events. Payloads are redacted like the
+  HTTP history.
+- Clients treat events as notifications: after every (re)subscribe and
+  every events frame they refetch `GET /executions/{id}` (and the report);
+  the displayed state is always the persisted one.
+- Known ceilings: one PostgreSQL poll (three indexed queries) per
+  subscription per tick; wake on LISTEN/NOTIFY or Redis pub/sub when
+  viewer counts grow. `position` is an identity column: an event whose
+  transaction commits after a later-numbered one could be skipped by a
+  tail. Per execution there is a single writer at a time (the runtime's
+  single-writer rule), so this does not occur within one execution's
+  stream; the refetch on `end` covers the state regardless.
 
 ----------
 
@@ -1773,7 +1809,8 @@ Implementation (Phase 16, `backend/src/akasha/sdk`, guide: `docs/sdk.md`):
   `node.emitted`, metrics `akasha_node_metric_total{node_type, metric}`.
   Per attempt by design, not live: it keeps the single-writer rule (node
   tasks never touch the aggregate or database) and one save per outcome.
-  Revisit when a live-update consumer (WebSocket gateway) exists.
+  The WebSocket gateway (§23) streams them from the log as they are saved,
+  so per-attempt flushing stays.
 - Built-in nodes import the contract from `akasha.sdk` too (guarded by
   `tests/test_architecture.py`), so every built-in exercises the SDK.
 - `akasha.sdk.testing.run_node` runs a node with the engine's checks in

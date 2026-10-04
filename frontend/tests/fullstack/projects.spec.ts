@@ -5,6 +5,7 @@ import {
     request as http,
     test,
     type APIRequestContext,
+    type WebSocketRoute,
 } from '@playwright/test'
 
 // The project lifecycle through the production bundle against the real
@@ -627,4 +628,61 @@ test('a run started in the UI is listed, opened and cancelled', async ({
         await api.get(`/api/v1/executions/${executionId}`)
     ).json()) as { status: string; cancellable: boolean }
     expect(stored).toMatchObject({ status: 'cancelled', cancellable: false })
+})
+
+test('a run is followed live, across a dropped connection, to its end', async ({
+    page: p,
+}) => {
+    const project = await createViaApi(unique('Live'))
+    await publishHelloWorld(project)
+    const run = await api.post(
+        `/api/v1/projects/${project.id}/versions/1/execute`,
+        { data: {} },
+    )
+    const { id: executionId } = (await run.json()) as { id: string }
+
+    // The real backend stream. Until the login UI exists (Phase 21) the app
+    // has no token to put in its subscribe frame; this adds it, like the
+    // request header above. Everything else passes through unchanged.
+    const subscribes: { after: number }[] = []
+    let connection: WebSocketRoute | undefined
+    await p.routeWebSocket(/\/live$/, (ws) => {
+        connection = ws
+        const server = ws.connectToServer()
+        ws.onMessage((message) => {
+            const frame = JSON.parse(String(message)) as { after: number }
+            subscribes.push(frame)
+            server.send(JSON.stringify({ ...frame, token }))
+        })
+    })
+
+    await p.goto(`/executions/${executionId}`)
+    await expect(p.getByText('Live', { exact: true })).toBeVisible()
+    const activity = p.getByRole('list', { name: 'Live activity' })
+    await expect(activity.getByText('Execution created')).toBeVisible()
+
+    // Dropped (e.g. a proxy restart); the run is cancelled meanwhile, so
+    // its events are missed by this connection.
+    await connection?.close({ code: 1012, reason: 'test: dropped' })
+    await expect(p.getByText('Reconnecting')).toBeVisible()
+    const cancelled = await api.post(
+        `/api/v1/executions/${executionId}/cancel`,
+        { data: {} },
+    )
+    expect(cancelled.status()).toBe(202)
+
+    // Reconnected after the backoff: resumed after the last seen event, the
+    // missed ones arrive, and the page shows the persisted state.
+    await expect(p.getByText('Live updates finished')).toBeVisible()
+    await expect(activity.getByText('Execution cancelled')).toBeVisible()
+    await expect(p.getByText('Cancelled').first()).toBeVisible()
+    expect(subscribes).toHaveLength(2)
+    expect(subscribes[1]?.after).toBeGreaterThan(0)
+    // Each stored event exactly once: none lost, none doubled by the resume.
+    const stored = (await (
+        await api.get(`/api/v1/executions/${executionId}/events`)
+    ).json()) as { items: unknown[] }
+    await expect(activity.getByRole('listitem')).toHaveCount(
+        stored.items.length,
+    )
 })

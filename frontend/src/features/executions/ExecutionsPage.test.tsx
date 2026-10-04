@@ -1,6 +1,8 @@
-import { fireEvent, screen, waitFor, within } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
+import { describe, expect, it, vi } from 'vitest'
+import { reconnectDelay } from '../../api/live'
 import { apiError, ok, pending, renderRoute, stubBackend } from '../../test/app'
+import { lastSocket, sockets } from '../../test/websocket'
 import { parseInput } from './format'
 
 // -- factories (valid by default) -------------------------------------------------
@@ -377,6 +379,164 @@ describe('Execution detail', () => {
         expect(
             screen.getByRole('heading', { name: 'Details' }),
         ).toBeInTheDocument()
+    })
+})
+
+// -- live updates ---------------------------------------------------------------------
+
+function liveEvent(
+    position: number,
+    event_type: string,
+    node_id: string | null,
+) {
+    return {
+        event_id: `evt_${String(position)}`,
+        event_type,
+        schema_version: 1,
+        position,
+        occurred_at: AT,
+        project_id: PID,
+        project_version: 2,
+        execution_id: 'exec_1',
+        node_id,
+        correlation_id: 'corr_1',
+        payload: node_id ? { attempt: 1 } : {},
+    }
+}
+
+/** A backend whose execution the test moves on; counts detail reads. */
+function runningBackend() {
+    const backend = { status: 'running', detailReads: 0 }
+    stubBackend({
+        [routes.detail('exec_1')]: () => {
+            backend.detailReads++
+            return ok(execution('exec_1', backend.status))
+        },
+        [routes.report('exec_1')]: () => ok(report(backend.status)),
+    })
+    return backend
+}
+
+async function detailsSection() {
+    return within(
+        (await screen.findByRole('heading', { name: 'Details' })).closest(
+            'section',
+        ) ?? document.body,
+    )
+}
+
+describe('Live updates', () => {
+    it('follows a running execution and shows the backend state it refetches', async () => {
+        const backend = runningBackend()
+        renderRoute('/executions/exec_1')
+        const details = await detailsSection()
+        expect(details.getByText('Running')).toBeInTheDocument()
+        expect(screen.getByText('Connecting')).toBeInTheDocument()
+
+        const ws = lastSocket()
+        ws.serverOpen()
+        expect(ws.frames()).toEqual([
+            { type: 'subscribe', token: '', after: 0 },
+        ])
+        const readsBefore = backend.detailReads
+        ws.serverSend({ type: 'subscribed', execution_id: 'exec_1', after: 0 })
+        expect(screen.getByText('Live')).toBeInTheDocument()
+        // Subscribing reconciles: the execution is read again.
+        await waitFor(() => {
+            expect(backend.detailReads).toBeGreaterThan(readsBefore)
+        })
+
+        backend.status = 'completed'
+        ws.serverSend({
+            type: 'events',
+            items: [
+                liveEvent(7, 'node.completed', 'fetch'),
+                liveEvent(8, 'execution.completed', null),
+            ],
+        })
+        const activity = screen.getByRole('list', { name: 'Live activity' })
+        expect(
+            within(activity).getByText('Node fetch completed (attempt 1)'),
+        ).toBeInTheDocument()
+        expect(
+            within(activity).getByText('Execution completed'),
+        ).toBeInTheDocument()
+        // The status shown is the refetched one, not one derived from events.
+        expect(await details.findByText('Completed')).toBeInTheDocument()
+
+        ws.serverSend({ type: 'end', status: 'completed' })
+        expect(screen.getByText('Live updates finished')).toBeInTheDocument()
+    })
+
+    it('marks the page stale while disconnected and reconciles after reconnecting', async () => {
+        // Advances with real time too, so the async queries still settle.
+        vi.useFakeTimers({ shouldAdvanceTime: true })
+        try {
+            const backend = runningBackend()
+            renderRoute('/executions/exec_1')
+            const details = await detailsSection()
+            const first = lastSocket()
+            first.serverOpen()
+            first.serverSend({
+                type: 'subscribed',
+                execution_id: 'exec_1',
+                after: 0,
+            })
+            first.serverSend({
+                type: 'events',
+                items: [liveEvent(3, 'node.started', 'fetch')],
+            })
+
+            first.serverClose(1006)
+            expect(screen.getByText('Reconnecting')).toBeInTheDocument()
+            expect(screen.getByText(/may be out of date/)).toBeInTheDocument()
+            expect(screen.queryByText('Live')).toBeNull()
+
+            // It finished while nobody listened: the events are missed.
+            backend.status = 'completed'
+            act(() => {
+                vi.advanceTimersByTime(reconnectDelay(0))
+            })
+            const second = lastSocket()
+            expect(second).not.toBe(first)
+            second.serverOpen()
+            expect(second.frames()).toEqual([
+                { type: 'subscribe', token: '', after: 3 },
+            ])
+            second.serverSend({
+                type: 'subscribed',
+                execution_id: 'exec_1',
+                after: 3,
+            })
+            // No event arrived, yet the page shows the persisted outcome.
+            expect(await details.findByText('Completed')).toBeInTheDocument()
+            expect(screen.getByText('Live')).toBeInTheDocument()
+        } finally {
+            vi.useRealTimers()
+        }
+    })
+
+    it('says when the session is refused and stops trying', async () => {
+        runningBackend()
+        renderRoute('/executions/exec_1')
+        await detailsSection()
+        lastSocket().serverOpen()
+        lastSocket().serverClose(4401)
+
+        expect(screen.getByText('Live updates unavailable')).toBeInTheDocument()
+        expect(screen.getByText(/Use Refresh/)).toBeInTheDocument()
+        expect(sockets()).toHaveLength(1)
+    })
+
+    it('does not connect for a finished execution', async () => {
+        stubBackend({
+            [routes.detail('exec_1')]: () => ok(execution('exec_1')),
+            [routes.report('exec_1')]: () => ok(report()),
+        })
+        renderRoute('/executions/exec_1')
+        await detailsSection()
+        expect(sockets()).toHaveLength(0)
+        expect(screen.queryByText(/Connecting|Live/)).toBeNull()
     })
 })
 

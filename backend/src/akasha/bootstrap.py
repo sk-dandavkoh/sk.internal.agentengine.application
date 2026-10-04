@@ -52,8 +52,9 @@ class Container:
 
     settings: Settings
     nodes: NodeRegistry = field(default_factory=NodeRegistry)
-    # One in-process fan-out shared by every producer; consumers (WebSocket
-    # gateway, metrics) subscribe here.
+    # One in-process fan-out shared by every producer (at-most-once, this
+    # process only). The live WebSocket (api/live.py) deliberately reads the
+    # persisted event log instead: workers run in other processes.
     events: EventPublisher = field(default_factory=EventPublisher)
     # Served at /metrics; shared with the runtime, like ``events``.
     metrics: EngineMetrics = field(default_factory=EngineMetrics)

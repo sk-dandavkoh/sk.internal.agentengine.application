@@ -6,12 +6,18 @@ PostgreSQL. Executions really run through the runtime, so the event history
 the API returns is what the runtime persisted.
 """
 
+import asyncio
+import json
+import socket
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
 
 import httpx
 import pytest
+import uvicorn
+from websockets.asyncio.client import ClientConnection, connect
+from websockets.exceptions import ConnectionClosed
 
 from akasha import __version__
 from akasha.api.app import create_app
@@ -92,7 +98,11 @@ async def env(
     def uow() -> SqlAlchemyUnitOfWork:
         return SqlAlchemyUnitOfWork(database)
 
-    settings = Settings(environment="test", log_level="CRITICAL")
+    # A short live poll keeps the WebSocket tests fast; they wait on frames,
+    # never on time.
+    settings = Settings(
+        environment="test", log_level="CRITICAL", live_poll_seconds=0.01
+    )
     kit = make_auth_kit(database)
     executions = ExecutionService(uow)
     runtime = ExecutionRuntime(uow, {"test.source": _Source, "test.sink": _Sink})
@@ -373,6 +383,228 @@ async def test_events_of_unknown_execution_is_404(env: Env) -> None:
         404,
         "EXECUTION_NOT_FOUND",
     )
+
+
+# -- live (WebSocket) -------------------------------------------------------------
+
+
+@dataclass
+class LiveServer:
+    url: str
+    server: uvicorn.Server
+    task: asyncio.Task[None]
+
+    async def stop(self) -> None:
+        self.server.should_exit = True
+        await self.task
+
+
+@pytest.fixture
+async def live_server(env: Env) -> AsyncIterator[LiveServer]:
+    """The app on a real socket: httpx's ASGI transport has no WebSocket.
+    The socket is bound and listening before the server starts, so clients
+    can connect at once (the backlog holds them), with no readiness wait."""
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    sock.listen()
+    port = sock.getsockname()[1]
+    server = uvicorn.Server(
+        uvicorn.Config(env.app, lifespan="off", log_level="critical")
+    )
+    live = LiveServer(
+        f"ws://127.0.0.1:{port}/api/v1/executions",
+        server,
+        asyncio.create_task(server.serve(sockets=[sock])),
+    )
+    try:
+        yield live
+    finally:
+        if not live.task.done():
+            await live.stop()
+        sock.close()
+
+
+@pytest.fixture
+def live_url(live_server: LiveServer) -> str:
+    return live_server.url
+
+
+def _token(headers: dict[str, str]) -> str:
+    return headers["Authorization"].removeprefix("Bearer ")
+
+
+async def _frame(ws: ClientConnection) -> dict[str, Any]:
+    # A guard against a hang, not a wait: frames arrive when events exist.
+    async with asyncio.timeout(10):
+        frame: dict[str, Any] = json.loads(await ws.recv())
+    return frame
+
+
+async def _close_code(ws: ClientConnection) -> int:
+    with pytest.raises(ConnectionClosed) as closed:
+        await _frame(ws)
+    assert closed.value.rcvd is not None
+    return closed.value.rcvd.code
+
+
+async def _subscribe(
+    url: str, execution_id: str, token: str, after: int = 0
+) -> ClientConnection:
+    ws = await connect(f"{url}/{execution_id}/live")
+    await ws.send(json.dumps({"type": "subscribe", "token": token, "after": after}))
+    return ws
+
+
+async def _drain(ws: ClientConnection) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Every streamed event until ``end``; the connection must then close 1000."""
+    events: list[dict[str, Any]] = []
+    while (frame := await _frame(ws))["type"] == "events":
+        events += frame["items"]
+    assert frame["type"] == "end"
+    assert await _close_code(ws) == 1000
+    return events, frame
+
+
+async def test_live_streams_a_running_execution_until_it_ends(
+    env: Env, live_url: str
+) -> None:
+    pid, version, _ = await publish_with(env.client, [])
+    created = await env.client.post(
+        f"/api/v1/projects/{pid}/versions/{version}/execute", json={}
+    )
+    execution_id = created.json()["id"]
+
+    ws = await _subscribe(live_url, execution_id, _token(env.admin))
+    assert await _frame(ws) == {
+        "type": "subscribed",
+        "execution_id": execution_id,
+        "after": 0,
+    }
+    # Still QUEUED: what is stored so far, then the stream waits.
+    first = await _frame(ws)
+    assert [e["event_type"] for e in first["items"]] == ["execution.created"]
+
+    await env.runtime.run(execution_id)
+    rest, end = await _drain(ws)
+
+    streamed = first["items"] + rest
+    stored = (await env.client.get(f"/api/v1/executions/{execution_id}/events")).json()
+    # Exactly the persisted log: same events, same order, nothing twice.
+    assert streamed == stored["items"]
+    assert end == {"type": "end", "status": "completed"}
+
+
+async def test_live_resumes_after_the_last_seen_position(
+    env: Env, live_url: str
+) -> None:
+    """A reconnect passes the last position it saw: the events it missed
+    while disconnected arrive, the ones it had do not come again."""
+    pid, version, _ = await publish_with(env.client, [])
+    execution_id = await env.run(pid, version)
+    stored = (await env.client.get(f"/api/v1/executions/{execution_id}/events")).json()
+    seen = stored["items"][1]["position"]
+
+    ws = await _subscribe(live_url, execution_id, _token(env.admin), after=seen)
+    assert (await _frame(ws))["after"] == seen
+    missed, end = await _drain(ws)
+
+    assert missed == stored["items"][2:]
+    assert end["status"] == "completed"
+
+    # Caught up on a finished execution: no events, just the end.
+    last = stored["items"][-1]["position"]
+    ws = await _subscribe(live_url, execution_id, _token(env.admin), after=last)
+    await _frame(ws)
+    assert await _drain(ws) == ([], {"type": "end", "status": "completed"})
+
+
+async def test_live_never_streams_secrets(env: Env, live_url: str) -> None:
+    pid, version, _ = await publish_with(env.client, [])
+    execution_id = await env.run(pid, version, fail=True)
+
+    ws = await _subscribe(live_url, execution_id, _token(env.admin))
+    await _frame(ws)
+    events, end = await _drain(ws)
+
+    assert "node.failed" in {e["event_type"] for e in events}
+    assert SECRET not in json.dumps(events)
+    assert end["status"] == "failed"
+
+
+async def test_live_rejects_invalid_sessions_and_hidden_executions(
+    env: Env, live_url: str
+) -> None:
+    pid, version, _ = await publish_with(env.client, [])
+    execution_id = await env.run(pid, version)
+
+    for token in ("not-a-session", ""):
+        ws = await _subscribe(live_url, execution_id, token)
+        assert await _close_code(ws) == 4401
+
+    # Another member's execution answers like an unknown one.
+    member = await env.kit.member_headers(env.admin, "member")
+    ws = await _subscribe(live_url, execution_id, _token(member))
+    assert await _close_code(ws) == 4404
+    ws = await _subscribe(live_url, UNKNOWN_EXECUTION, _token(env.admin))
+    assert await _close_code(ws) == 4404
+
+
+@pytest.mark.parametrize(
+    "first_frame",
+    [
+        "not json",
+        json.dumps({"type": "hello", "token": "t"}),
+        json.dumps({"type": "subscribe", "token": "t", "after": -1}),
+        b"binary",
+    ],
+)
+async def test_live_rejects_a_malformed_subscribe_frame(
+    env: Env, live_url: str, first_frame: str | bytes
+) -> None:
+    ws = await connect(f"{live_url}/{UNKNOWN_EXECUTION}/live")
+    await ws.send(first_frame)
+    assert await _close_code(ws) == 4400
+
+
+async def test_live_server_shutdown_closes_open_streams_for_reconnect(
+    env: Env, live_server: LiveServer
+) -> None:
+    """Graceful shutdown (AGENTS §48) with a viewer attached: the server
+    stops promptly instead of waiting for the execution, and the client gets
+    a close code it treats as transient (it reconnects to the next server)."""
+    pid, version, _ = await publish_with(env.client, [])
+    created = await env.client.post(
+        f"/api/v1/projects/{pid}/versions/{version}/execute", json={}
+    )
+    ws = await _subscribe(live_server.url, created.json()["id"], _token(env.admin))
+    await _frame(ws)  # subscribed
+    await _frame(ws)  # execution.created; now idle, waiting for events
+
+    async with asyncio.timeout(10):  # a hang guard, not a wait
+        await live_server.stop()
+
+    # 1012 "service restart": not one of the terminal 4400/4401/4404.
+    assert await _close_code(ws) == 1012
+
+
+async def test_live_closes_when_the_session_ends_mid_stream(
+    env: Env, live_url: str
+) -> None:
+    pid, version, _ = await publish_with(env.client, [])
+    created = await env.client.post(
+        f"/api/v1/projects/{pid}/versions/{version}/execute", json={}
+    )
+    execution_id = created.json()["id"]
+    session = await env.kit.login("admin")
+
+    ws = await _subscribe(live_url, execution_id, _token(session))
+    await _frame(ws)  # subscribed
+    await _frame(ws)  # execution.created
+    async with env.client_with(session) as client:
+        assert (await client.post("/api/v1/auth/logout")).status_code == 204
+
+    # The next poll re-checks the session: a logged-out stream stops.
+    assert await _close_code(ws) == 4401
 
 
 # -- cancel ---------------------------------------------------------------------
