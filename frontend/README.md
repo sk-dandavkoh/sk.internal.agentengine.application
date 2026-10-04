@@ -525,6 +525,28 @@ UI shows `[REDACTED]` as sent and stores nothing in browser storage. Node
 inputs are not shown: the backend does not persist them (the upstream
 outputs are what a node received).
 
+## Credentials
+
+`/credentials` (`features/credentials/`, admin only) lists credential
+metadata: name, type, description, the `credential:<name>` reference nodes
+use, and when it changed. Create, edit (description; rotate the value) and
+delete (confirmed) go through `/api/v1/credentials`. Name and type are the
+identity and cannot be edited. Members get "Admin access required"; their
+projects still reference credentials by name in the node inspector.
+
+Secret handling: the API never returns a value, so the UI has none to show
+(the value column is a fixed mask). The value is typed into an uncontrolled
+`type="password"` input (`autocomplete="new-password"`, spellcheck off),
+read from `FormData` at submit, sent only in the JSON body, and never held in
+React state. The mutation's variables are cleared with `reset()` on close and
+evicted by `gcTime: 0`; the dialog content unmounts. On edit an empty value
+field is not sent (keep). `CredentialsPage.test.tsx` checks that the value is
+in none of DOM, inputs, browser storage, URL, request URLs, console output
+or the query/mutation cache after create, failed create and rotate.
+
+Not shown: which projects use a credential; the backend has no usage
+endpoint yet.
+
 ## Design system
 
 All UI is composed from `src/components/ui` (`import { Button, Dialog } from
