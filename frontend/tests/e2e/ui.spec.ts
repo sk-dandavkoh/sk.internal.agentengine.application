@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test } from './fixtures'
 import { stubSession } from './session'
 
 // Native behavior jsdom cannot provide (top layer, focus containment,

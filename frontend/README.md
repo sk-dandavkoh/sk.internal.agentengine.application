@@ -815,6 +815,37 @@ WebSocket is authenticated by the same cookie, same origin only.
   management for admins (backend `/users` exists) and the first-admin setup
   (an operator step, `docs/deployment.md`).
 
+## Security
+
+The threat model: a self-hosted UI whose data (node outputs, LLM text,
+logs, plugin metadata, error messages) is untrusted, served on the same
+origin as the API. The backend authorizes every request, so hiding a button
+is never a control.
+
+- **Rendering**: all data is rendered as React text. There is no Markdown or
+  HTML rendering, and ESLint rejects `dangerouslySetInnerHTML`, `innerHTML`,
+  `outerHTML`, `insertAdjacentHTML`, `document.write`, `eval` and
+  `new Function` in production code.
+- **Content Security Policy**: the production `index.html` gets a strict
+  policy (`vite.config.ts`): scripts, styles and requests from its own origin
+  only, no inline code. Every E2E spec fails on a CSP violation
+  (`tests/e2e/fixtures.ts`), and `security.spec.ts` proves that injected
+  inline scripts do not run. Framing is forbidden by the proxy header
+  (`docs/deployment.md`).
+- **URLs**: links from data (plugin documentation) must be `http(s)`. Ids
+  in API paths are encoded, and `ApiClient` refuses `.`/`..` segments, so a
+  crafted route cannot redirect a request to another endpoint. Login
+  returns only to in-app paths taken from history state.
+- **Storage**: only the theme is stored (`localStorage`); ESLint rejects
+  storage anywhere else. Secrets stay in uncontrolled inputs and in
+  `gcTime: 0` mutations (Credentials, Authentication).
+- **Downloads**: report exports are saved as `application/json` blobs with a
+  sanitized file name. **Uploads**: the plugin package is size-checked in the
+  browser for UX; the backend validates it.
+- **Errors**: users see backend envelope messages (redacted server-side) or
+  fixed fallbacks, never stack traces or raw responses.
+- **Dependencies**: `npm audit` before a release.
+
 ## Design system
 
 All UI is composed from `src/components/ui` (`import { Button, Dialog } from

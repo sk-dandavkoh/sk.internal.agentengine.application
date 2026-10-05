@@ -76,6 +76,15 @@ export class ApiClient {
         options: RequestOptions = {},
     ): Promise<{ data: z.output<S>; body: string }> {
         const requestId = crypto.randomUUID()
+        // Ids in paths come from route params a crafted link controls, and
+        // encodeURIComponent keeps '.': URL parsing would collapse a "." or
+        // ".." segment and send the request to another endpoint.
+        if (path.split('/').some((s) => s === '.' || s === '..'))
+            throw new ApiError({
+                kind: 'not_found',
+                message: fallbackMessage('not_found'),
+                requestId,
+            })
         const timeout = AbortSignal.timeout(options.timeoutMs ?? this.timeoutMs)
         const signal = options.signal
             ? AbortSignal.any([options.signal, timeout])

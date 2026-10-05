@@ -1,13 +1,12 @@
 import { readFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import {
-    expect,
     request as http,
-    test,
     type APIRequestContext,
     type Page,
     type WebSocketRoute,
 } from '@playwright/test'
+import { expect, test } from '../e2e/fixtures'
 
 // The project lifecycle through the production bundle against the real
 // backend (playwright.fullstack.config.ts): nothing is stubbed.

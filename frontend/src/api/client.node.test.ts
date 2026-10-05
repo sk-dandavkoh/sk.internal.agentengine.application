@@ -12,6 +12,7 @@ import { z } from 'zod'
 import { fetchSession, login, logout } from './auth'
 import { ApiClient } from './client'
 import { ApiError } from './errors'
+import { getProject, publishProject } from './projects'
 
 type Handler = (req: IncomingMessage, body: string, res: ServerResponse) => void
 
@@ -336,5 +337,33 @@ describe('transport failures', () => {
         )
         expect(error.kind).toBe('cancelled')
         expect(hits).toBe(0)
+    })
+})
+
+describe('path segments from untrusted input', () => {
+    // Ids come from route params a crafted link controls. encodeURIComponent
+    // leaves '.' alone, and URL parsing collapses dot segments, so "..",
+    // unchecked, would turn POST /projects/../publish into POST /publish.
+    it.each(['.', '..'])('never sends a request whose id is %j', async (id) => {
+        let hits = 0
+        handler = (_req, _body, res) => {
+            hits++
+            json(res, 200, {})
+        }
+
+        const error = await failure(publishProject(client(), id))
+
+        expect(error.kind).toBe('not_found')
+        expect(hits).toBe(0)
+    })
+
+    it('still encodes ids that merely contain dots or slashes', async () => {
+        let url = ''
+        handler = (req, _body, res) => {
+            url = req.url ?? ''
+            json(res, 404, {})
+        }
+        await failure(getProject(client(), '../a.b'))
+        expect(url).toBe('/api/v1/projects/..%2Fa.b')
     })
 })

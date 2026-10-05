@@ -1,4 +1,5 @@
-import { expect, test, type Page } from '@playwright/test'
+import type { Page } from '@playwright/test'
+import { expect, test } from './fixtures'
 import { stubSession } from './session'
 
 // Layout needs a real browser: jsdom has no CSS. The backend is stubbed at

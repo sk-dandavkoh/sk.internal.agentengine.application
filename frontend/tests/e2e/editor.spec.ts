@@ -1,4 +1,5 @@
-import { expect, test, type Locator, type Page } from '@playwright/test'
+import type { Locator, Page } from '@playwright/test'
+import { expect, test } from './fixtures'
 import { stubSession } from './session'
 
 // The draft editor in a real browser: layout-dependent behavior jsdom

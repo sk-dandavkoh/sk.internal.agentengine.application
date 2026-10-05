@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test } from './fixtures'
 import { stubSession } from './session'
 
 // No backend behind the preview server: only the session is answered.

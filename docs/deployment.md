@@ -66,6 +66,22 @@ Serve the UI over HTTPS: the session cookie is `Secure` and browsers drop
 it on plain HTTP (except on localhost). A plain-HTTP rig on another
 address can set `AKASHA_SESSION_COOKIE_SECURE=false`.
 
+The UI bundle (`frontend/dist`) carries its Content Security Policy as a
+`<meta>` tag. A `<meta>` cannot forbid framing, so the proxy serving the UI
+should add these headers, which stop clickjacking and MIME sniffing.
+`index.html` must not be cached, so a new release takes effect on reload.
+
+```nginx
+location / {
+    root /srv/akasha/frontend;
+    try_files $uri /index.html;
+    add_header Content-Security-Policy "frame-ancestors 'none'" always;
+    add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy same-origin always;
+    add_header Cache-Control no-cache always;
+}
+```
+
 ## 3. Installation
 
 ```bash
