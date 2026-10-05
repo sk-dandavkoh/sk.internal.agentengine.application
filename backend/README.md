@@ -77,9 +77,16 @@ maximum a request may ask for:
 | `AKASHA_LIMIT_EVENT_TRIGGER_DEPTH` | `8` | longest chain of event-triggered executions (1–100) |
 
 First run: `POST /api/v1/auth/setup` with `{"username", "password"}` creates
-the initial admin. It works only while no account exists, so complete it
-before exposing the engine to a network. Then `POST /api/v1/auth/login` and
-send `Authorization: Bearer <token>` on every request.
+the initial admin (the UI offers it as "Set up Akasha"; `GET
+/api/v1/auth/setup` says whether it is still due). It works only while no
+account exists, so complete it before exposing the engine to a network.
+Then `POST /api/v1/auth/login` and send `Authorization: Bearer <token>` on
+every request.
+
+Settings can also come from files: in the Docker Compose stack, the backend
+reads `AKASHA_DATABASE_URL` and `AKASHA_CREDENTIAL_ENCRYPTION_KEY` from
+`/run/akasha-secrets` (one file per setting, named like the variable;
+environment variables take precedence; see `docs/deployment.md` §3).
 
 ## Quality gates
 

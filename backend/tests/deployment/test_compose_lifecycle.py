@@ -41,14 +41,21 @@ pytestmark = pytest.mark.skipif(
 
 
 class Deployment:
-    def __init__(self, tmp_path: Path) -> None:
+    def __init__(self, tmp_path: Path, *, given_secrets: bool = True) -> None:
         self.project = f"akasha-e2e-{secrets.token_hex(4)}"
         self.env_file = tmp_path / "deployment.env"
-        settings = {
-            "POSTGRES_PASSWORD": secrets.token_hex(16),
-            "AKASHA_CREDENTIAL_ENCRYPTION_KEY": base64.urlsafe_b64encode(
-                os.urandom(32)
-            ).decode(),
+        # Without them, the stack generates its own (the zero-config path).
+        settings = (
+            {
+                "POSTGRES_PASSWORD": secrets.token_hex(16),
+                "AKASHA_CREDENTIAL_ENCRYPTION_KEY": base64.urlsafe_b64encode(
+                    os.urandom(32)
+                ).decode(),
+            }
+            if given_secrets
+            else {}
+        )
+        settings |= {
             "AKASHA_ENV_FILE": self.env_file.as_posix(),
             "AKASHA_IMAGE_TAG": "e2e",
             "AKASHA_HTTP_PORT": "0",  # Docker picks a free port
@@ -112,8 +119,9 @@ class Deployment:
             time.sleep(0.5)
 
     def api(self, headers: dict[str, str] | None = None) -> httpx.Client:
-        """A client for the API on its current port, once /ready passes."""
-        address = self.compose("port", "api", "8000").stdout.decode().strip()
+        """A client for the stack's one published port (the UI, proxying
+        the API), once /ready passes through it."""
+        address = self.compose("port", "ui", "8080").stdout.decode().strip()
         client = httpx.Client(
             base_url=f"http://{address}", headers=headers or {}, timeout=10
         )
@@ -128,15 +136,24 @@ class Deployment:
         return client
 
 
-@pytest.fixture
-def deployment(tmp_path: Path) -> Iterator[Deployment]:
+def _deployment(tmp_path: Path, *, given_secrets: bool) -> Iterator[Deployment]:
     if not docker_available():
         pytest.skip("Docker daemon not available")
-    d = Deployment(tmp_path)
+    d = Deployment(tmp_path, given_secrets=given_secrets)
     try:
         yield d
     finally:
         d.compose("down", "-v", "--remove-orphans", check=False)
+
+
+@pytest.fixture
+def deployment(tmp_path: Path) -> Iterator[Deployment]:
+    yield from _deployment(tmp_path, given_secrets=True)
+
+
+@pytest.fixture
+def zero_config(tmp_path: Path) -> Iterator[Deployment]:
+    yield from _deployment(tmp_path, given_secrets=False)
 
 
 def login(api: httpx.Client) -> dict[str, str]:
@@ -302,3 +319,49 @@ def test_install_run_restart_backup_restore_recover(deployment: Deployment) -> N
     api = d.api(dict(api.headers))
     after_db_restart = start(api, pid, version, "after database restart")
     wait_for(d, api, after_db_restart, "completed")
+
+
+def test_zero_config_install_serves_ui_and_keeps_generated_secrets(
+    zero_config: Deployment,
+) -> None:
+    """No secrets given: the stack generates them, serves the UI and the API
+    on one port, offers first-run setup, and keeps its secrets across a
+    recreation (or stored credentials and the database would be lost)."""
+    d = zero_config
+    d.compose("up", "-d", "--build")
+    api = d.api()
+    page = api.get("/projects")  # a client-side route: index.html
+    assert page.status_code == 200
+    assert page.headers["content-type"].startswith("text/html")
+    assert page.headers["x-content-type-options"] == "nosniff"
+    assert api.get("/assets/missing.js").status_code == 404
+    assert api.get("/api/v1/auth/setup").json() == {"required": True}
+
+    setup = api.post(
+        "/api/v1/auth/setup", json={"username": "admin", "password": PASSWORD}
+    )
+    assert setup.status_code == 201, setup.text
+    assert api.get("/api/v1/auth/setup").json() == {"required": False}
+    api.headers.update(login(api))
+    credential = api.post(
+        "/api/v1/credentials",
+        json={"name": "generated-key", "kind": "api_key", "value": SECRET},
+    )
+    assert credential.status_code == 201, credential.text
+
+    def key() -> bytes:
+        path = "/run/akasha-secrets/AKASHA_CREDENTIAL_ENCRYPTION_KEY"
+        return d.compose("exec", "-T", "api", "cat", path).stdout
+
+    generated = key()
+    assert len(base64.urlsafe_b64decode(generated)) == 32
+
+    d.compose("down")  # containers gone, volumes (and secrets) kept
+    d.compose("up", "-d")
+    api = d.api()
+    api.headers.update(login(api))  # same database password
+    assert key() == generated  # stored credentials stay decryptable
+    names = [c["name"] for c in api.get("/api/v1/credentials").json()["items"]]
+    assert names == ["generated-key"]
+    pid, version = publish(api, "echo", delay_seconds=0)
+    wait_for(d, api, start(api, pid, version, "zero config"), "completed")

@@ -134,12 +134,21 @@ async def row(database: Database, sql: str, **params: Any) -> Any:
 # -- setup ----------------------------------------------------------------------
 
 
+async def setup_required(env: Env) -> bool:
+    response = await env.client.get("/api/v1/auth/setup")
+    assert response.status_code == 200, response.text
+    required: bool = response.json()["required"]
+    return required
+
+
 async def test_setup_creates_the_first_admin_once(env: Env) -> None:
+    assert await setup_required(env)
     body = {"username": "root", "password": PASSWORD}
     created = await env.client.post("/api/v1/auth/setup", json=body)
     assert created.status_code == 201, created.text
     assert created.json()["role"] == "admin"
     assert "password" not in created.text and PASSWORD not in created.text
+    assert not await setup_required(env)
 
     again = {"username": "intruder", "password": PASSWORD}
     response = await env.client.post("/api/v1/auth/setup", json=again)
@@ -638,6 +647,7 @@ async def test_unknown_user_is_404(env: Env) -> None:
 # -- default deny -----------------------------------------------------------------
 
 PUBLIC_ROUTES = {
+    ("GET", "/api/v1/auth/setup"),
     ("POST", "/api/v1/auth/setup"),
     ("POST", "/api/v1/auth/login"),
     ("POST", "/api/v1/webhooks/{project_id}/{trigger_id}"),

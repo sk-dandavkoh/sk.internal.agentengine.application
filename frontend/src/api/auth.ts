@@ -44,6 +44,26 @@ export async function login(
     return { expires_at, user }
 }
 
+export const setupStatusSchema = z.object({ required: z.boolean() })
+
+/** Whether this installation still needs its first admin. */
+export function fetchSetupStatus(client: ApiClient, signal?: AbortSignal) {
+    return client.request('GET', '/auth/setup', setupStatusSchema, { signal })
+}
+
+/** Creates the first admin; the backend refuses (409) once any account
+ * exists. Signs nobody in: the caller logs in afterwards. */
+export function setup(
+    client: ApiClient,
+    credentials: Credentials,
+    signal?: AbortSignal,
+) {
+    return client.request('POST', '/auth/setup', userSchema, {
+        body: credentials,
+        signal,
+    })
+}
+
 export function logout(client: ApiClient, signal?: AbortSignal) {
     return client.request('POST', '/auth/logout', z.undefined(), { signal })
 }

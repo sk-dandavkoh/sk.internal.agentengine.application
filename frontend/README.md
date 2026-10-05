@@ -93,7 +93,9 @@ Copy `.env.example` to `.env.local` (git-ignored).
 - Only `VITE_*` variables are exposed to browser code. Never put secrets in them.
 
 The browser always calls the backend on the same origin (`/api/v1/...`). In
-development Vite proxies it; in production a reverse proxy must do the same.
+development Vite proxies it; in production the `ui` image's nginx
+(`Dockerfile`, `nginx.conf`, run by the root `docker-compose.yml`) does the
+same.
 This keeps the backend free of CORS configuration.
 
 The production bundle has no runtime configuration. Building, serving,
@@ -241,6 +243,12 @@ cookie sign-in, download capture, a minimal zip reader for packages).
 - `projects.spec.ts`: lifecycle details (conflicts, versions, cancel,
   dropped live connection, failed-run diagnosis, triggers, event triggers,
   sessions). `a11y.spec.ts`: axe and overflow sweep of every screen.
+- `roles.spec.ts`: a member account. The backend refuses Credentials,
+  Plugins and another user's project (403/404), and the UI shows that
+  refusal; a crafted write from the page is refused as well. Settings
+  changes the password: a wrong current password is a field error, and a
+  change revokes the member's other sessions. Plugins as an admin shows the
+  registry the backend returned.
 
 Waits are on observable state (`expect(...)`, `waitForResponse`,
 `expect.poll` against the API), never on sleeps.
@@ -841,6 +849,12 @@ WebSocket is authenticated by the same cookie, same origin only.
   returns to the requested page. The password lives only in the form and in
   mutation variables, which are dropped once the form unmounts
   (`gcTime: 0`).
+- **First-run setup** (`/login` on a fresh installation): when `GET
+/auth/setup` says no account exists yet, the page shows "Set up Akasha"
+  instead: username, password and confirmation create the first admin
+  (`POST /auth/setup`), then sign in as it. If someone else finished setup
+  first (409), the page says so and offers sign-in. If the status cannot be
+  read, sign-in is shown.
 - **Logout** (sidebar): `POST /auth/logout` revokes the session and expires
   the cookie. If logout fails for any reason other than an already dead
   session, the UI stays signed in and says so: the cookie would still work.
@@ -848,8 +862,7 @@ WebSocket is authenticated by the same cookie, same origin only.
   expiry), change password (other sessions are revoked; a wrong current
   password is a field error, not a sign-out), theme (system/light/dark),
   engine status (the dashboard's System card). Not included: user
-  management for admins (backend `/users` exists) and the first-admin setup
-  (an operator step, `docs/deployment.md`).
+  management for admins (backend `/users` exists).
 
 ## Security
 

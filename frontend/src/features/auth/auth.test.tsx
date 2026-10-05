@@ -56,8 +56,9 @@ describe('protected routes', () => {
         expect(router.state.location.pathname).toBe('/login')
         // Not an expiry: nobody was signed in.
         expect(screen.queryByText(/session has ended/)).not.toBeInTheDocument()
-        // The page never mounted, so it never asked for its data.
-        expect(requests.map((u) => u.pathname)).toEqual([])
+        // The page never mounted, so it never asked for its data; only the
+        // login page asked whether setup is due.
+        expect(requests.map((u) => u.pathname)).toEqual(['/api/v1/auth/setup'])
     })
 
     it('restore the session after a reload without asking to sign in', async () => {
@@ -186,6 +187,127 @@ describe('login', () => {
     })
 })
 
+describe('first-run setup', () => {
+    /** A backend without accounts: setup creates one, then login works. */
+    function freshBackend(handlers: Record<string, Handler> = {}) {
+        const setupBodies: unknown[] = []
+        let hasAdmin = false
+        const backend = sessionBackend({
+            'GET /auth/setup': () => ok({ required: !hasAdmin }),
+            'POST /auth/setup': (_url, init) => {
+                setupBodies.push(JSON.parse(init.body as string))
+                hasAdmin = true
+                return { status: 201, body: testSession.user }
+            },
+            ...handlers,
+        })
+        return { ...backend, setupBodies }
+    }
+
+    async function fillSetup(password: string, confirm = password) {
+        fireEvent.change(await screen.findByLabelText(/^Username/), {
+            target: { value: ' root ' },
+        })
+        fireEvent.change(screen.getByLabelText(/^Password/), {
+            target: { value: password },
+        })
+        fireEvent.change(screen.getByLabelText(/^Confirm password/), {
+            target: { value: confirm },
+        })
+        fireEvent.click(
+            screen.getByRole('button', { name: 'Create administrator' }),
+        )
+    }
+
+    it('creates the first admin and signs in as it', async () => {
+        const { state, setupBodies } = freshBackend()
+        const { router } = renderRoute('/projects')
+
+        expect(
+            await screen.findByRole('heading', { name: 'Set up Akasha' }),
+        ).toBeInTheDocument()
+        await fillSetup('a long enough password')
+
+        expect(
+            await screen.findByRole('heading', { level: 1, name: 'Projects' }),
+        ).toBeInTheDocument()
+        expect(router.state.location.pathname).toBe('/projects')
+        expect(setupBodies).toEqual([
+            { username: 'root', password: 'a long enough password' },
+        ])
+        // Then signed in by cookie, like the sign-in form does.
+        expect(state.loginBodies).toEqual([
+            {
+                username: 'root',
+                password: 'a long enough password',
+                cookie: true,
+            },
+        ])
+    })
+
+    it('refuses mismatched passwords before asking the backend', async () => {
+        const { setupBodies } = freshBackend()
+        renderRoute('/login')
+        await fillSetup('a long enough password', 'something else entirely')
+
+        expect(
+            await screen.findByText('The passwords do not match.'),
+        ).toBeInTheDocument()
+        expect(setupBodies).toEqual([])
+    })
+
+    it('shows the backend validation message', async () => {
+        freshBackend({
+            'POST /auth/setup': () =>
+                apiError(
+                    422,
+                    'DOMAIN_VALIDATION_ERROR',
+                    'Usernames may contain only a-z, 0-9, ".", "_" and "-".',
+                ),
+        })
+        renderRoute('/login')
+        await fillSetup('a long enough password')
+
+        expect(await screen.findByRole('alert')).toHaveTextContent(
+            'Usernames may contain only',
+        )
+        expect(
+            screen.getByRole('heading', { name: 'Set up Akasha' }),
+        ).toBeInTheDocument()
+    })
+
+    it('offers sign-in when someone else finished setup first', async () => {
+        let setupDone = false
+        freshBackend({
+            'GET /auth/setup': () => ok({ required: !setupDone }),
+            'POST /auth/setup': () => {
+                setupDone = true
+                return apiError(
+                    409,
+                    'SETUP_ALREADY_COMPLETED',
+                    'The initial admin account already exists.',
+                )
+            },
+        })
+        renderRoute('/login')
+        await fillSetup('a long enough password')
+
+        expect(await loginHeading()).toBeInTheDocument()
+        expect(
+            screen.getByText(/Setup was already completed/),
+        ).toBeInTheDocument()
+    })
+
+    it('shows sign-in when the setup status cannot be read', async () => {
+        sessionBackend({
+            'GET /auth/setup': () =>
+                apiError(503, 'SERVICE_UNAVAILABLE', 'Engine restarting.'),
+        })
+        renderRoute('/login')
+        expect(await loginHeading()).toBeInTheDocument()
+    })
+})
+
 describe('session end', () => {
     it('sends the user to sign in again when the backend rejects the session', async () => {
         const { state } = sessionBackend()
@@ -234,8 +356,9 @@ describe('session end', () => {
                 queryClient
                     .getQueryCache()
                     .getAll()
-                    .map((q) => q.queryKey[0]),
-            ).toEqual(['auth'])
+                    .map((q) => q.queryKey.slice(0, 2).join('/'))
+                    .sort(),
+            ).toEqual(['auth/session', 'auth/setup'])
         })
     })
 

@@ -1,9 +1,9 @@
 # Deployment and Operations
 
 How to install, run, upgrade, back up, restore and recover a self-hosted
-Akasha backend with Docker Compose. Everything here is exercised end to end
-by `backend/tests/deployment/test_compose_lifecycle.py` (see
-[Verifying a deployment](#verifying-a-deployment)).
+Akasha installation with Docker Compose. Everything here is exercised end
+to end by `backend/tests/deployment/test_compose_lifecycle.py` (see
+[Verifying a deployment](#11-verifying-a-deployment)).
 
 ## 1. Topology
 
@@ -11,22 +11,34 @@ by `backend/tests/deployment/test_compose_lifecycle.py` (see
 
 | Service | Image | Role | Persistent data |
 |---|---|---|---|
+| `secrets` | `postgres:17.2` | generates the secrets on first start, then exits 0 | volume `secrets` |
 | `postgres` | `postgres:17.2` | system of record | volume `pgdata` |
 | `redis` | `redis:8.2.1-alpine` | execution queue (AOF on) | volume `redisdata` |
 | `migrate` | `akasha-backend:0.1.0` | `akasha migrate`, then exits 0 | — |
 | `api` | `akasha-backend:0.1.0` | HTTP API + trigger scheduler | volume `plugins` |
 | `worker` | `akasha-backend:0.1.0` | runs executions (`akasha worker`) | volume `plugins` |
+| `ui` | `akasha-ui:0.1.0` | the UI; proxies the API | — |
 
-Start order is enforced: `postgres` healthy → `migrate` completed
-successfully → `api` and `worker` (with `redis` healthy). The API never
-serves an unmigrated schema: `/ready` stays `503` until the schema is at the
-engine's head revision.
+Start order is enforced: `secrets` completed → `postgres` healthy →
+`migrate` completed successfully → `api` and `worker` (with `redis`
+healthy) → `ui` once `api` is healthy. The API never serves an unmigrated
+schema: `/ready` stays `503` until the schema is at the engine's head
+revision.
 
-The backend image (`backend/Dockerfile`) uses pinned base images
-(`python:3.14.0-slim-trixie`, `uv 0.10.10`), installs exactly `uv.lock`,
-and runs as the unprivileged user `akasha` (uid 10001). Only the API port is
-published, on `127.0.0.1` by default; PostgreSQL and Redis are reachable
-only on the internal Compose network.
+**One port.** Only `ui` is published, on `127.0.0.1:8080` by default. It
+serves the UI and proxies `/api/` (the live WebSocket included), `/health`,
+`/ready` and `/metrics` to `api`. Browser and API therefore share one origin
+and the backend needs no CORS. PostgreSQL, Redis and the API itself are
+reachable only on the internal Compose network.
+
+The images are built locally from the checkout, from pinned bases:
+
+- `backend/Dockerfile`: `python:3.14.0-slim-trixie` and `uv 0.10.10`. It
+  installs exactly `uv.lock` and runs as the unprivileged user `akasha`
+  (uid 10001).
+- `frontend/Dockerfile`: `node:24.14.0-alpine` builds the bundle from
+  `package-lock.json`. `nginxinc/nginx-unprivileged:1.29.1-alpine` serves
+  it with `frontend/nginx.conf`, as a non-root user.
 
 Run exactly one `api` replica: each API process runs the in-process
 trigger scheduler. Scale executions with more `worker` replicas
@@ -35,82 +47,62 @@ trigger scheduler. Scale executions with more `worker` replicas
 ## 2. Requirements
 
 - Docker Engine with Compose v2.24 or newer (`docker compose version`)
-- the repository checkout (the image is built locally from `backend/`)
-- for remote access: a TLS-terminating reverse proxy in front of the API
-  that also forwards WebSocket upgrades (see below)
+- the repository checkout (both images are built locally)
 
-The live execution view uses a WebSocket at
-`/api/v1/executions/{id}/live` (`docs/architecture.md` §23). The proxy must
-pass the `Upgrade` and `Connection` headers through for `/api/`. An idle
-stream carries uvicorn's WebSocket ping every 20 s, so any proxy idle
-timeout above that (nginx's default is 60 s) keeps it open. Without upgrade
-support live updates stay on "Reconnecting" in the UI; everything else
-keeps working. nginx example:
+Nothing else: no `.env`, no generated values, no separate web server.
 
-The UI's live stream is authenticated by the session cookie, and only
-when the handshake's `Origin` matches the host the browser used (ADR 0002).
-The proxy must therefore forward that host, as `Host` or
-`X-Forwarded-Host`. Otherwise live updates fail with "unavailable".
+For access from other machines, put a TLS-terminating reverse proxy in
+front of the `ui` port. It must:
+
+- forward WebSocket upgrades. The live execution view uses a WebSocket at
+  `/api/v1/executions/{id}/live` (`docs/architecture.md` §23). An idle
+  stream carries uvicorn's WebSocket ping every 20 s, so any proxy idle
+  timeout above that (nginx's default is 60 s) keeps it open;
+- forward the host the browser used, port included, as `Host` (nginx:
+  `$http_host`, not `$host`). The live stream accepts the session cookie
+  only when the handshake's `Origin` matches that host (ADR 0002).
+
+Without upgrade support, live updates stay on "Reconnecting" in the UI;
+everything else keeps working. With the wrong host, live updates fail with
+"unavailable". nginx example:
 
 ```nginx
-location /api/ {
-    proxy_pass http://127.0.0.1:8000;
+location / {
+    proxy_pass http://127.0.0.1:8080;
     proxy_http_version 1.1;
-    proxy_set_header Host $host;
+    proxy_set_header Host $http_host;
     proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection $connection_upgrade;  # map, see nginx docs
 }
 ```
 
-Serve the UI over HTTPS: the session cookie is `Secure` and browsers drop
-it on plain HTTP (except on localhost). A plain-HTTP rig on another
-address can set `AKASHA_SESSION_COOKIE_SECURE=false`.
+Serve the UI over HTTPS: the session cookie is `Secure`. Browsers accept
+it on `http://localhost` but drop it on any other plain-HTTP address. A
+plain-HTTP rig on another address can set
+`AKASHA_SESSION_COOKIE_SECURE=false`.
 
 ### The UI
 
-The UI is a static bundle, built reproducibly from the lockfile (two builds
-of one commit are byte-identical):
-
-```bash
-cd frontend
-npm ci
-npm run build          # typecheck, then the bundle into frontend/dist
-rsync -a dist/ proxy-host:/srv/akasha/frontend/
-```
-
-It has no runtime configuration. It calls the API on its own origin
-(`/api/v1`, live WebSocket included), so the proxy serves the UI and `/api/`
-under one host and the backend needs no CORS. Serve it at the root of that
-host: asset URLs are absolute (`/assets/...`). No source maps are built.
+The `ui` image builds the bundle reproducibly from the lockfile (two builds
+of one commit are byte-identical). The bundle has no runtime configuration
+and must be served at the root of its host (asset URLs are absolute,
+`/assets/...`). No source maps are built.
 
 Supported browsers: Chrome/Edge 116+, Firefox 128+, Safari 17.4+.
 
-The bundle carries its Content Security Policy as a `<meta>` tag. A
-`<meta>` cannot forbid framing, so the proxy adds these headers, which stop
-clickjacking and MIME sniffing. `index.html` must not be cached, so a new
-release takes effect on reload. Files in `/assets/` have content-hashed
-names and can be cached forever. A missing asset must be a 404, never
-`index.html`. Copy releases without deleting the old assets, so tabs opened
-before the upgrade can still load pages. If those assets are gone, the page
-shows "Reload".
+`frontend/nginx.conf` is the reference for serving it:
 
-```nginx
-location / {
-    root /srv/akasha/frontend;
-    try_files $uri /index.html;
-    add_header Content-Security-Policy "frame-ancestors 'none'" always;
-    add_header X-Content-Type-Options nosniff always;
-    add_header Referrer-Policy same-origin always;
-    add_header Cache-Control no-cache always;
-}
-location /assets/ {
-    root /srv/akasha/frontend;
-    try_files $uri =404;
-    # add_header is not inherited by a location that sets its own.
-    add_header X-Content-Type-Options nosniff always;
-    add_header Cache-Control "public, max-age=31536000, immutable" always;
-}
-```
+- The bundle carries its Content Security Policy as a `<meta>` tag. A
+  `<meta>` cannot forbid framing, so the server adds headers that stop
+  clickjacking and MIME sniffing.
+- `index.html` is not cached, so a new release takes effect on reload.
+- Files in `/assets/` have content-hashed names and are cached forever.
+- A missing asset is a 404, never `index.html`.
+
+To serve the bundle from your own web server instead, build it with
+`cd frontend && npm ci && npm run build` and use the same rules. Copy
+releases without deleting the old assets, so tabs opened before an upgrade
+can still load pages; if those assets are gone, the page shows "Reload".
 
 When the backend is unreachable or the proxy answers 502/503/504, the UI
 retries reads twice, then says so and offers a retry. It never retries
@@ -119,44 +111,51 @@ writes.
 ## 3. Installation
 
 ```bash
-cp .env.example .env
-python3 -c "import secrets; print(secrets.token_hex(24))"                              # → POSTGRES_PASSWORD
-python3 -c "import base64, os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())" # → AKASHA_CREDENTIAL_ENCRYPTION_KEY
-# edit .env and paste both values
 docker compose up -d --build
-curl -fsS http://127.0.0.1:8000/ready
 ```
 
-Compose refuses to start while either required value is missing.
+Then open <http://localhost:8080>. A fresh installation shows **Set up
+Akasha**: choose the first administrator's username and password, and you
+are signed in. The form exists only while no account exists. Do it right
+away, before others can reach the port. Admins create further accounts
+(API `/api/v1/users`).
 
-Store `AKASHA_CREDENTIAL_ENCRYPTION_KEY` outside the host as well (password
-manager, secret store). It is **not** part of any backup; without it stored
-credentials are unrecoverable.
-
-Create the first admin immediately, before the API is reachable by others
-(it works only while no account exists):
+On first start the `secrets` service generates the PostgreSQL password and
+the credential encryption key into the `secrets` volume. Later starts keep
+them. **Back up the encryption key** and keep it off the host (password
+manager, secret store). It is not part of any backup; without it, stored
+credentials are unrecoverable:
 
 ```bash
-curl -fsS -X POST http://127.0.0.1:8000/api/v1/auth/setup \
-  -H 'content-type: application/json' \
-  -d '{"username": "admin", "password": "<a long password>"}'
+docker compose run --rm --no-deps secrets 'cat /run/akasha-secrets/AKASHA_CREDENTIAL_ENCRYPTION_KEY'
 ```
+
+**Own values instead.** Set `POSTGRES_PASSWORD` (hex or otherwise
+URL-safe: it goes into a URL) and/or `AKASHA_CREDENTIAL_ENCRYPTION_KEY`
+(32 bytes, URL-safe base64) in `.env` (`.env.example`). Set values always
+win and are written into the volume. An installation created before this
+mechanism keeps working with its existing `.env`. Do not change either
+value on an existing installation: a new database password locks the
+backend out of the existing database, and a new key makes stored
+credentials undecryptable.
 
 ## 4. Configuration
 
-All configuration is environment variables, validated at startup; invalid
+All configuration is environment variables, validated at startup. Invalid
 values stop the container with a `CONFIGURATION_ERROR` naming the setting.
 
-- `.env` holds the required secrets and any optional `AKASHA_*` setting;
-  Compose passes the whole file to the backend containers. Every setting is
-  documented in `backend/README.md` and `backend/src/akasha/config.py`.
-- Set by Compose, do not override: `AKASHA_DATABASE_URL`,
-  `AKASHA_REDIS_URL`, `AKASHA_WORKER_ENABLED=false` (executions run in the
-  `worker` service).
+- `.env` (optional) holds any `AKASHA_*` setting. Compose passes the whole
+  file to the backend containers. Every setting is documented in
+  `backend/README.md` and `backend/src/akasha/config.py`.
+- `AKASHA_HTTP_PORT` / `AKASHA_BIND_ADDRESS` choose the published host port
+  and address (default `127.0.0.1:8080`).
+- Set by Compose, do not override: `AKASHA_REDIS_URL` and
+  `AKASHA_WORKER_ENABLED=false` (executions run in the `worker` service).
+- Read from the `secrets` volume (`/run/akasha-secrets`, one file per
+  setting): `AKASHA_DATABASE_URL` and `AKASHA_CREDENTIAL_ENCRYPTION_KEY`.
+  Set them in `.env` only as described in §3.
 - Set by the image: `AKASHA_ENVIRONMENT=production`, `AKASHA_HOST=0.0.0.0`,
   `AKASHA_PORT=8000`, `AKASHA_PLUGINS_DIR=/var/lib/akasha/plugins`.
-- `AKASHA_HTTP_PORT` / `AKASHA_BIND_ADDRESS` choose the published host port
-  and address (default `127.0.0.1:8000`).
 
 Apply a changed `.env` with `docker compose up -d` (recreates the affected
 containers).
@@ -169,7 +168,11 @@ containers).
 | `GET /ready` | `200` when the database is reachable, the schema is at head and Redis answers; otherwise `503` with `failures` per check | load balancer / readiness |
 | `GET /metrics` | Prometheus metrics; bearer `AKASHA_METRICS_TOKEN` or an admin session | monitoring |
 
-`docker compose ps` shows the `api` healthcheck (`/health`). The `worker`
+All three are reached through the published port
+(`curl -fsS http://127.0.0.1:8080/ready`).
+
+`docker compose ps` shows the `api` healthcheck (`/health`) and the `ui`
+healthcheck (it serves the UI). The `worker`
 has no HTTP endpoint and no container healthcheck; a dead worker's
 executions are recovered by the next worker (§9).
 
@@ -195,7 +198,8 @@ stops taking jobs and gives running executions
 cooperatively. `stop_grace_period` is 60 s, so `SIGKILL` never interrupts
 that grace period. Both exit with code 0.
 
-`docker compose down -v` **deletes all data volumes.** Take a backup first.
+`docker compose down -v` **deletes all data volumes**, the generated
+encryption key included. Take a backup, and keep the key (§3), first.
 
 ## 7. Upgrade
 
@@ -221,7 +225,7 @@ users and **encrypted** credentials. Login sessions are left out.
 
 Not included, keep them yourself:
 
-- `.env`, above all `AKASHA_CREDENTIAL_ENCRYPTION_KEY`
+- the credential encryption key (§3), and `.env` if you have one
 - plugin packages (volume `plugins`); install them again before restoring
 - Redis: the queue is rebuilt from PostgreSQL
 
@@ -243,15 +247,16 @@ or a systemd timer, and copy the files off the host.
 ### Restoring
 
 Restore into a fresh or destroyed installation, with the **same**
-`AKASHA_CREDENTIAL_ENCRYPTION_KEY` and the same engine version that wrote
-the backup:
+encryption key and the same engine version that wrote the backup. A fresh
+installation would generate a new key, so put the saved one in `.env`
+first, as `AKASHA_CREDENTIAL_ENCRYPTION_KEY=<saved key>` (§3):
 
 ```bash
 docker compose up -d                 # fresh installation (empty volumes)
 docker compose stop api worker       # nothing writes while restoring
 docker compose run --rm -T --no-deps api restore - < akasha-2026-10-01-0300.backup
 docker compose up -d
-curl -fsS http://127.0.0.1:8000/ready
+curl -fsS http://127.0.0.1:8080/ready
 ```
 
 Restore validates everything before writing: the format, the enabled
@@ -274,7 +279,7 @@ log in, list projects and credentials, and run a project.
 | API crashes | Docker restarts it (`restart: unless-stopped`); state lives in PostgreSQL | none |
 | PostgreSQL restarts | `/ready` reports `database` until it is back; pooled connections are revived | none |
 | Redis loses its data | executions still `QUEUED` in PostgreSQL are re-dispatched after `AKASHA_QUEUE_RECOVERY_SECONDS` (30 s) | none |
-| host lost | — | new host: install (§3) with the saved `.env`, then restore (§8) |
+| host lost | — | new host: the saved key in `.env` (§3), install, then restore (§8) |
 | encryption key lost | stored credentials cannot be decrypted; restore refuses | restore with the right key, or recreate the credentials |
 | `/ready` says `schema` | the database is not at the engine's revision | `docker compose run --rm migrate` and check its logs |
 
@@ -299,17 +304,22 @@ workers only after `docker compose restart worker`.
 
 ## 11. Verifying a deployment
 
-The deployment test runs the whole operator lifecycle against the real
-image and `docker-compose.yml`, in an isolated Compose project that is
-deleted afterwards: clean install → migrate → first admin, credential,
-executions → graceful stop (exit 0) → restart → container recreation →
-backup → `down -v` → fresh install → restore → verification (login,
-history, credentials, a new run) → worker killed mid-execution and resumed
-→ PostgreSQL restarted under a running API.
+The deployment tests run against the real images and `docker-compose.yml`,
+each in an isolated Compose project that is deleted afterwards, and reach
+the stack only through its one published port:
+
+- the operator lifecycle: clean install → migrate → first admin,
+  credential, executions → graceful stop (exit 0) → restart → container
+  recreation → backup → `down -v` → fresh install → restore → verification
+  (login, history, credentials, a new run) → worker killed mid-execution
+  and resumed → PostgreSQL restarted under a running API;
+- the zero-config install: no secrets given, the UI is served (headers,
+  404 for missing assets), setup is offered and then closed, and the
+  generated secrets survive a recreation.
 
 ```bash
 cd backend
 AKASHA_TESTS_DEPLOYMENT=1 uv run pytest tests/deployment
 ```
 
-It needs Docker and takes about two minutes; ordinary test runs skip it.
+It needs Docker and takes a few minutes; ordinary test runs skip it.

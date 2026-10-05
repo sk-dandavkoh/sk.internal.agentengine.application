@@ -1,6 +1,7 @@
-# Self-hosted Akasha backend: PostgreSQL, Redis, a one-shot schema
-# migration, the API (with the trigger scheduler) and a dedicated worker.
-# Operator guide: docs/deployment.md. Copy .env.example to .env first.
+# Self-hosted Akasha: UI, API (with the trigger scheduler), a dedicated
+# worker, PostgreSQL and Redis. `docker compose up -d --build`, then open
+# http://localhost:8080 and create the first admin. No .env is needed:
+# secrets are generated on first start. Operator guide: docs/deployment.md.
 
 name: akasha
 
@@ -14,34 +15,71 @@ x-backend: &backend
     - path: ${AKASHA_ENV_FILE:-.env}
       required: false
   environment:
-    # Must be URL-safe: use the hex password .env.example shows how to make.
-    AKASHA_DATABASE_URL: postgresql://akasha:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/akasha
     AKASHA_REDIS_URL: redis://redis:6379/0
-    AKASHA_CREDENTIAL_ENCRYPTION_KEY: ${AKASHA_CREDENTIAL_ENCRYPTION_KEY:?set AKASHA_CREDENTIAL_ENCRYPTION_KEY in .env}
     # Executions run in the worker service, not in the API process.
     AKASHA_WORKER_ENABLED: "false"
   volumes:
     - plugins:/var/lib/akasha/plugins
+    # AKASHA_DATABASE_URL and AKASHA_CREDENTIAL_ENCRYPTION_KEY, read by the
+    # backend's settings (backend/src/akasha/config.py).
+    - secrets:/run/akasha-secrets:ro
   restart: unless-stopped
   # Above AKASHA_WORKER_SHUTDOWN_GRACE_SECONDS (30): running executions get
   # their grace period before Docker sends SIGKILL.
   stop_grace_period: 60s
 
 services:
+  # One-shot: writes the database password and the credential encryption
+  # key into the `secrets` volume. Values set in .env win (and are written
+  # there, so an existing installation keeps its secrets); otherwise they
+  # are generated once and kept. Back the key up: docs/deployment.md §3.
+  secrets:
+    image: postgres:17.2
+    entrypoint: ["sh", "-ceu"]
+    command:
+      - |
+        cd /run/akasha-secrets
+        umask 022
+        put() {  # put FILE VALUE: atomic, readable by every service
+          printf %s "$$2" > "$$1.tmp" && mv "$$1.tmp" "$$1"
+        }
+        if [ -n "$$POSTGRES_PASSWORD" ]; then
+          put postgres_password "$$POSTGRES_PASSWORD"
+        elif [ ! -s postgres_password ]; then
+          put postgres_password "$$(od -An -tx1 -N24 /dev/urandom | tr -d ' \n')"
+        fi
+        if [ -n "$$AKASHA_CREDENTIAL_ENCRYPTION_KEY" ]; then
+          put AKASHA_CREDENTIAL_ENCRYPTION_KEY "$$AKASHA_CREDENTIAL_ENCRYPTION_KEY"
+        elif [ ! -s AKASHA_CREDENTIAL_ENCRYPTION_KEY ]; then
+          put AKASHA_CREDENTIAL_ENCRYPTION_KEY "$$(head -c 32 /dev/urandom | base64 | tr '+/' '-_')"
+        fi
+        put AKASHA_DATABASE_URL "postgresql://akasha:$$(cat postgres_password)@postgres:5432/akasha"
+    environment:
+      # Hex or URL-safe: the password goes into a URL.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+      AKASHA_CREDENTIAL_ENCRYPTION_KEY: ${AKASHA_CREDENTIAL_ENCRYPTION_KEY:-}
+    volumes:
+      - secrets:/run/akasha-secrets
+    restart: "no"
+
   postgres:
     image: postgres:17.2
     environment:
       POSTGRES_USER: akasha
       POSTGRES_DB: akasha
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_PASSWORD_FILE: /run/akasha-secrets/postgres_password
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - secrets:/run/akasha-secrets:ro
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "akasha", "-d", "akasha"]
       interval: 5s
       timeout: 5s
       retries: 10
     restart: unless-stopped
+    depends_on:
+      secrets:
+        condition: service_completed_successfully
 
   redis:
     image: redis:8.2.1-alpine
@@ -72,9 +110,8 @@ services:
   api:
     <<: *backend
     command: ["serve"]
-    ports:
-      # Loopback by default: put a TLS reverse proxy in front for remote use.
-      - "${AKASHA_BIND_ADDRESS:-127.0.0.1}:${AKASHA_HTTP_PORT:-8000}:8000"
+    # Not published: the ui service proxies /api, /health, /ready and
+    # /metrics to it, so browser and API share one origin and one port.
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -92,7 +129,21 @@ services:
       redis:
         condition: service_healthy
 
+  ui:
+    image: akasha-ui:${AKASHA_IMAGE_TAG:-0.1.0}
+    build: ./frontend
+    pull_policy: missing
+    ports:
+      # The one entry point: the UI, and the API under /api. Loopback by
+      # default: put a TLS reverse proxy in front for remote use.
+      - "${AKASHA_BIND_ADDRESS:-127.0.0.1}:${AKASHA_HTTP_PORT:-8080}:8080"
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+
 volumes:
   pgdata:
   redisdata:
   plugins:
+  secrets:

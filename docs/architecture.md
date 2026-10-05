@@ -2885,6 +2885,8 @@ Implementation (Phase 20, `domain/identity.py`, `application/auth.py`,
   table is empty (serialized by a table lock). Afterwards admins create
   accounts (`/users`). The last active admin cannot be disabled (row locks
   on the active admins), so the installation cannot lock itself out.
+  `GET /auth/setup` returns `{"required": bool}` (true while no account
+  exists), so the UI can offer first-run setup (ADR 0003).
 - Login errors do not reveal whether the username exists: the message is
   the same, and an unknown username still costs one hash verification. Per
   username, 5 failed attempts in 15 minutes lock logins (429 +
@@ -2920,7 +2922,7 @@ Implementation (Phase 20):
   (created before 0008, or later by operator tooling) are admin-only, so
   the upgrade never widens access.
 - Enforcement is default-deny at the router. Every `/api/v1` route needs a
-  session, except `POST /auth/setup`, `POST /auth/login` and the webhook
+  session, except `GET`/`POST /auth/setup`, `POST /auth/login` and the webhook
   route. A path parameter named `project_id` or `execution_id` triggers the
   access check (`authorize_path`), so a new route under those names is
   covered automatically. The credentials and users routers additionally
@@ -3153,8 +3155,13 @@ operator guide `docs/deployment.md`): one backend image in three roles —
 a one-shot `migrate` service that must complete before `api` (HTTP +
 trigger scheduler, exactly one replica) and `worker` (scalable) start —
 plus PostgreSQL and Redis (AOF) on named volumes, and a `plugins` volume
-shared by api and worker. Pinned images, non-root runtime user, API
-published on loopback only. No frontend or reverse proxy service yet.
+shared by api and worker. Pinned images, non-root runtime user.
+
+Since ADR 0003, the stack starts with one command and no `.env`. A
+one-shot `secrets` service generates the database password and the
+credential key into a volume. A `ui` service (nginx, `frontend/Dockerfile`)
+serves the UI and proxies `/api`, `/health`, `/ready` and `/metrics` to
+`api`. It is the only published port, on loopback by default.
 
 ----------
 

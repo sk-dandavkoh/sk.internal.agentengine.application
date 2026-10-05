@@ -193,9 +193,9 @@ Eine Execution ist unabhängig von späteren Änderungen am Project.
 
 ---
 
-# 4. Godot-Inspiration
+# 4. Engine-Prinzip
 
-Die Architektur orientiert sich konzeptionell an der Idee einer Engine wie Godot, ohne Godot technisch nachzubauen.
+Die Architektur orientiert sich konzeptionell am Aufbau einer Game Engine, ohne eine Game Engine technisch nachzubauen.
 
 Die Analogie lautet:
 

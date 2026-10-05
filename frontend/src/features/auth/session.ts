@@ -5,7 +5,14 @@ import {
     useQueryClient,
     type QueryClient,
 } from '@tanstack/react-query'
-import { fetchSession, login, logout, type Credentials } from '../../api/auth'
+import {
+    fetchSession,
+    fetchSetupStatus,
+    login,
+    logout,
+    setup,
+    type Credentials,
+} from '../../api/auth'
 import type { Session } from '../../api/auth'
 import type { ApiClient } from '../../api/client'
 import { useApiClient } from '../../api/context'
@@ -90,6 +97,42 @@ export function useLogin() {
         mutationFn: (credentials: Credentials) => login(client, credentials),
         onSuccess: (session) => {
             switchSession(queryClient, { status: 'active', session })
+        },
+        // The variables hold the password: gone as soon as nobody watches.
+        gcTime: 0,
+    })
+}
+
+/** A fresh installation has no account yet: the login page offers setup. */
+export function useSetupStatus() {
+    const client = useApiClient()
+    return useQuery({
+        queryKey: queryKeys.setupStatus(),
+        queryFn: ({ signal }) => fetchSetupStatus(client, signal),
+    })
+}
+
+/** Creates the first admin, then signs in as it. A 409 means someone else
+ * finished setup first: the status is refetched and sign-in is offered. */
+export function useSetup() {
+    const client = useApiClient()
+    const queryClient = useQueryClient()
+    return useMutation({
+        mutationFn: async (credentials: Credentials) => {
+            await setup(client, credentials)
+            return login(client, credentials)
+        },
+        onSuccess: (session) => {
+            queryClient.setQueryData(queryKeys.setupStatus(), {
+                required: false,
+            })
+            switchSession(queryClient, { status: 'active', session })
+        },
+        onError: (error) => {
+            if (error instanceof ApiError && error.kind === 'conflict')
+                void queryClient.invalidateQueries({
+                    queryKey: queryKeys.setupStatus(),
+                })
         },
         // The variables hold the password: gone as soon as nobody watches.
         gcTime: 0,

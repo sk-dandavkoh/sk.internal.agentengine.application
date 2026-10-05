@@ -13,6 +13,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from akasha.domain.limits import ResourceLimits
 
+# Docker Compose's `secrets` service generates the database URL and the
+# credential key into this volume, one file per setting named like its
+# variable (docs/deployment.md). Environment variables take precedence.
+# Only used where it exists: elsewhere pydantic-settings would warn.
+SECRETS_DIR = Path("/run/akasha-secrets")
+
 
 class Settings(BaseSettings):
     """Engine configuration, loaded from environment variables.
@@ -20,7 +26,10 @@ class Settings(BaseSettings):
     Example: host is set via ``AKASHA_HOST=0.0.0.0``.
     """
 
-    model_config = SettingsConfigDict(env_prefix="AKASHA_")
+    model_config = SettingsConfigDict(
+        env_prefix="AKASHA_",
+        secrets_dir=SECRETS_DIR if SECRETS_DIR.is_dir() else None,
+    )
 
     environment: str = "development"
     host: str = "127.0.0.1"

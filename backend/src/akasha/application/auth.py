@@ -174,6 +174,11 @@ class AuthenticationService:
     async def _verify(self, password: str, stored: str) -> bool:
         return await asyncio.to_thread(self._hasher.verify, password, stored)
 
+    async def setup_required(self) -> bool:
+        """Whether no account exists yet, i.e. ``setup`` would succeed."""
+        async with self._uow() as uow:
+            return not await uow.users.list(limit=1)
+
     async def setup(self, username: str, password: str) -> User:
         """Create the first account, an admin. Only possible while no user
         exists: afterwards accounts are created by admins."""

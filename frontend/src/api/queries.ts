@@ -81,6 +81,8 @@ export const queryKeys = {
     /** The signed-in session (features/auth). Survives a user switch;
      * everything else is dropped then. */
     session: () => ['auth', 'session'] as const,
+    /** Whether the installation still needs its first admin (login page). */
+    setupStatus: () => ['auth', 'setup'] as const,
     monitoring: (window: MonitoringWindow) =>
         ['monitoring', 'summary', window] as const,
     plugins: () => ['plugins'] as const,

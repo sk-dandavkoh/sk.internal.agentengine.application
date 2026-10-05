@@ -175,6 +175,10 @@ class LoginResponse(SessionDetail):
     token: str | None
 
 
+class SetupStatus(BaseModel):
+    required: bool
+
+
 class ChangePasswordRequest(BaseModel):
     current_password: Password
     new_password: Password
@@ -218,6 +222,12 @@ def _errors(*codes: int) -> dict[int | str, dict[str, Any]]:
 def create_auth_router() -> APIRouter:
     """/auth: setup and login are public; the rest need a session."""
     router = APIRouter(prefix="/auth", tags=["auth"])
+
+    @router.get("/setup")
+    async def setup_status(auth: Auth) -> SetupStatus:
+        """Whether the first admin still has to be created (a fresh
+        installation); the UI then offers setup instead of sign-in."""
+        return SetupStatus(required=await auth.setup_required())
 
     @router.post(
         "/setup", status_code=status.HTTP_201_CREATED, responses=_errors(409, 422)

@@ -226,6 +226,8 @@ const recorder = new RecordingClient()
 // Every service function, called once. Add new services here; the coverage
 // test below fails if one is missing.
 void auth.login(recorder, { username: 'u', password: 'p' })
+void auth.fetchSetupStatus(recorder)
+void auth.setup(recorder, { username: 'u', password: 'p' })
 void auth.logout(recorder)
 void auth.fetchSession(recorder)
 void auth.changePassword(recorder, {

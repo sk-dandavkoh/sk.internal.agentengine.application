@@ -1,8 +1,16 @@
 # AI Agent Engine
 
-> **Godot for AI Agents.**
+> **KI-Systeme visuell bauen, versioniert veröffentlichen, nachvollziehbar ausführen.**
 >
 > Eine selbst gehostete visuelle Entwicklungs- und Orchestrierungsplattform zum Erstellen, Ausführen, Überwachen und Versionieren modularer KI-Systeme.
+
+**Schnellstart:** Voraussetzung ist nur Docker (mit Compose v2.24+).
+
+```bash
+docker compose up -d --build
+```
+
+Dann <http://localhost:8080> öffnen und beim ersten Aufruf den Admin anlegen. Secrets werden automatisch erzeugt; eine `.env` ist nicht nötig. Betrieb, Backup und Upgrade → [`docs/deployment.md`](docs/deployment.md). Entwicklung: Backend → [`backend/README.md`](backend/README.md), Frontend (inkl. `npm run dev:backend`, ein Wegwerf-Backend für die UI) → [`frontend/README.md`](frontend/README.md).
 
 ---
 
@@ -10,17 +18,11 @@
 
 Dieses Projekt entwickelt eine **AI Agent Engine** – eine allgemeine Entwicklungs- und Laufzeitplattform für modulare KI-Systeme.
 
-Die zentrale Idee lässt sich vereinfacht als
+Die zentrale Idee:
 
-> **„Godot für AI Agents“**
+> **Eine Engine, kein einzelner Agent.**
 
-beschreiben.
-
-Die Analogie zu Godot ist bewusst gewählt:
-
-Godot ist nicht einfach ein Tool zum Erstellen eines einzelnen Spiels. Es ist eine **Engine und Entwicklungsumgebung**, in der Entwickler Projekte aus wiederverwendbaren Bausteinen aufbauen, konfigurieren, testen, ausführen, debuggen und erweitern können.
-
-Unsere Plattform verfolgt dasselbe Prinzip für **KI-Systeme**.
+Die Plattform ist nicht ein Tool für einen bestimmten Anwendungsfall, sondern eine **Engine und Entwicklungsumgebung**, in der Projekte aus wiederverwendbaren Bausteinen aufgebaut, konfiguriert, getestet, ausgeführt, untersucht und erweitert werden – für **KI-Systeme**.
 
 Benutzer sollen nicht für jeden Anwendungsfall eine neue individuelle AI-Anwendung programmieren müssen.
 
@@ -1173,7 +1175,7 @@ Die geplante Struktur:
 │   ├── AGENTS.md
 │   ├── README.md
 │   ├── package.json
-│   ├── package-lock.json / pnpm-lock.yaml
+│   ├── package-lock.json
 │   ├── src/
 │   └── tests/
 │
@@ -1646,7 +1648,7 @@ Es ist:
 
 Die treffendste Kurzbeschreibung lautet:
 
-> **Godot für AI Agents: eine selbst gehostete Engine und visuelle Entwicklungsumgebung für modulare, versionierbare und ausführbare KI-Systeme.**
+> **Eine selbst gehostete Engine und visuelle Entwicklungsumgebung für modulare, versionierbare und ausführbare KI-Systeme.**
 
 ----------
 
@@ -1706,6 +1708,6 @@ Das Frontend visualisiert und steuert die Engine, entscheidet aber nicht über d
 
 ## Final Product Definition
 
-> **This project is a self-hosted AI development and execution engine, conceptually similar to Godot for game development. It allows users to visually build modular AI systems from reusable nodes, connect them into executable graphs, configure triggers and credentials, publish immutable project versions, execute them through a reliable runtime, and inspect their behavior through logs, events, metrics and reports. Developers can extend the platform with custom Python nodes and plugins.**
+> **This project is a self-hosted AI development and execution engine. It allows users to visually build modular AI systems from reusable nodes, connect them into executable graphs, configure triggers and credentials, publish immutable project versions, execute them through a reliable runtime, and inspect their behavior through logs, events, metrics and reports. Developers can extend the platform with custom Python nodes and plugins.**
 > 
 > **The goal is not to build one AI agent. The goal is to build the engine on which many different AI agents, workflows and automation systems can be created.**
