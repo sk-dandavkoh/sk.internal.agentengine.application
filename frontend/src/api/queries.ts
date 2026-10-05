@@ -1,4 +1,8 @@
-import { infiniteQueryOptions, queryOptions } from '@tanstack/react-query'
+import {
+    infiniteQueryOptions,
+    queryOptions,
+    type InfiniteData,
+} from '@tanstack/react-query'
 import type { ApiClient } from './client'
 import { getCredential, listCredentials } from './credentials'
 import {
@@ -10,6 +14,7 @@ import {
     listProjectExecutions,
     type ExecutionListParams,
     type LogFilter,
+    type LogPage,
     type ProjectExecutionListParams,
 } from './executions'
 import { listNodeDefinitions, validateNodeConfig } from './nodes'
@@ -127,6 +132,9 @@ export const projectQueries = {
         queryOptions({
             queryKey: queryKeys.projects.validation(projectId, revision),
             queryFn: () => validateProject(client, projectId, revision),
+            // One revision's verdict changes only with the installed node
+            // code, like a config verdict; not re-POSTed on every focus.
+            staleTime: INSTALLATION_STALE_TIME_MS,
         }),
     executions: (
         client: ApiClient,
@@ -174,13 +182,22 @@ export const executionQueries = {
     logs: (client: ApiClient, executionId: string, filter: LogFilter = {}) =>
         infiniteQueryOptions({
             queryKey: queryKeys.executions.logs(executionId, filter),
-            queryFn: ({ signal, pageParam }) =>
-                listExecutionLogs(
+            queryFn: ({ client: cache, queryKey, signal, pageParam }) => {
+                // A refetch (each live update) reloads every loaded page.
+                // Lines are append-only, written in position order by one
+                // writer per execution: a full page never changes, so only
+                // the tail is requested again.
+                const data =
+                    cache.getQueryData<InfiniteData<LogPage, number>>(queryKey)
+                const cached = data?.pages[data.pageParams.indexOf(pageParam)]
+                if (cached?.has_more) return cached
+                return listExecutionLogs(
                     client,
                     executionId,
                     { ...filter, after: pageParam, limit: LOG_PAGE_SIZE },
                     signal,
-                ),
+                )
+            },
             initialPageParam: 0,
             getNextPageParam: (last) =>
                 last.has_more ? last.next_after : undefined,

@@ -1,6 +1,6 @@
 import type { NodeCatalog, NodeDefinition } from '../../api/nodes'
 import type { Edge, Graph } from '../../api/projects'
-import { nodeTitle, portSignature, sameEdge } from './graphView'
+import { graphIndex, nodeTitle, portSignature, sameEdge } from './graphView'
 
 // Whether an edge may be drawn, from the backend's node contracts and its
 // published port rule (`port_compatibility`). A UX pre-check only: the
@@ -57,14 +57,16 @@ export function connectionProblem(
     // unsavable, not just invalid.
     if (edge.source_node_id === edge.target_node_id)
         return problem('self', 'A node cannot be connected to itself.')
-    const source = graph.nodes.find((n) => n.id === edge.source_node_id)
-    const target = graph.nodes.find((n) => n.id === edge.target_node_id)
+    const index = graphIndex(graph)
+    const source = index.nodes.get(edge.source_node_id)
+    const target = index.nodes.get(edge.target_node_id)
     if (!source || !target)
         return problem('unknown_node', 'The node is no longer in the draft.')
-    const others = graph.edges.filter(
+    // Both checks below concern edges into the target only.
+    const into = (index.incoming.get(edge.target_node_id) ?? []).filter(
         (e) => !replacing || !sameEdge(e, replacing),
     )
-    if (others.some((e) => sameEdge(e, edge)))
+    if (into.some((e) => sameEdge(e, edge)))
         return problem('duplicate', 'These ports are already connected.')
     if (!catalog || !compatibility)
         return problem(
@@ -91,14 +93,7 @@ export function connectionProblem(
             'unknown_port',
             `${nodeTitle(target, targetDef)} has no input "${edge.target_port}".`,
         )
-    if (
-        !input.multiple &&
-        others.some(
-            (e) =>
-                e.target_node_id === edge.target_node_id &&
-                e.target_port === edge.target_port,
-        )
-    )
+    if (!input.multiple && into.some((e) => e.target_port === edge.target_port))
         return problem(
             'occupied',
             `Input "${input.name}" of ${nodeTitle(target, targetDef)} takes one connection and already has it. Delete or reconnect that one first.`,

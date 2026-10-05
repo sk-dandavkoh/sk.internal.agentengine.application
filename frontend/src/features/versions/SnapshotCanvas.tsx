@@ -17,7 +17,7 @@ import type { Graph, NodeInstance } from '../../api/projects'
 import { nodeQueries } from '../../api/queries'
 import { placeUnpositioned } from '../editor/editorState'
 import { MAX_ZOOM, MIN_ZOOM } from '../editor/GraphCanvas'
-import { edgeKey, nodeTitle, portsOf } from '../editor/graphView'
+import { edgeKey, edgesOf, nodeTitle, portsOf } from '../editor/graphView'
 import { NodeCard, type CardPort } from '../editor/NodeCard'
 
 interface SnapshotNodeData extends Record<string, unknown> {
@@ -88,7 +88,11 @@ export function SnapshotCanvas({
                     definition,
                     catalogLoaded: catalog !== undefined,
                     footer: footer?.(instance.id),
-                    ...portsOf(instance, definition, graph.edges),
+                    ...portsOf(
+                        instance,
+                        definition,
+                        edgesOf(graph, instance.id),
+                    ),
                 },
             }
         })

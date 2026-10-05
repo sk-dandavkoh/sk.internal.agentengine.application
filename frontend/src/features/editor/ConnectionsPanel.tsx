@@ -7,7 +7,7 @@ import {
     PROBLEM_LABELS,
     type ConnectionRules,
 } from './connections'
-import { edgeKey, nodeTitle, portsOf } from './graphView'
+import { edgeKey, edgesOf, graphIndex, nodeTitle, portsOf } from './graphView'
 
 /**
  * The selected node's edges as lists with remove buttons, plus a form to
@@ -28,10 +28,11 @@ export function ConnectionsPanel({
     onRemove: (edge: Edge) => void
 }) {
     const definition = rules.catalog?.get(node.node_type)
-    const { inputs, outputs } = portsOf(node, definition, graph.edges)
-    const missing = missingInputs(node.id, definition, graph.edges)
+    const own = edgesOf(graph, node.id)
+    const { inputs, outputs } = portsOf(node, definition, own)
+    const missing = missingInputs(node.id, definition, own)
     const title = (id: string) => {
-        const n = graph.nodes.find((x) => x.id === id)
+        const n = graphIndex(graph).nodes.get(id)
         return n ? nodeTitle(n, rules.catalog?.get(n.node_type)) : id
     }
     const name = nodeTitle(node, definition)
@@ -43,22 +44,24 @@ export function ConnectionsPanel({
     const targets = graph.nodes
         .filter((n) => n.id !== node.id)
         .flatMap((n) =>
-            portsOf(n, rules.catalog?.get(n.node_type), graph.edges).inputs.map(
-                (p) => {
-                    const edge = {
-                        source_node_id: node.id,
-                        source_port: source,
-                        target_node_id: n.id,
-                        target_port: p.name,
-                    }
-                    return {
-                        edge,
-                        key: edgeKey(edge),
-                        label: `${title(n.id)} › ${p.name}`,
-                        problem: connectionProblem(graph, edge, rules),
-                    }
-                },
-            ),
+            portsOf(
+                n,
+                rules.catalog?.get(n.node_type),
+                edgesOf(graph, n.id),
+            ).inputs.map((p) => {
+                const edge = {
+                    source_node_id: node.id,
+                    source_port: source,
+                    target_node_id: n.id,
+                    target_port: p.name,
+                }
+                return {
+                    edge,
+                    key: edgeKey(edge),
+                    label: `${title(n.id)} › ${p.name}`,
+                    problem: connectionProblem(graph, edge, rules),
+                }
+            }),
         )
     // A choice that a changed output (or graph) made invalid is dropped.
     const chosen = targets.find((t) => t.key === target && !t.problem)

@@ -29,7 +29,7 @@ import type { ConnectionRules } from './connections'
 import { ConnectionsPanel } from './ConnectionsPanel'
 import { newNodeId } from './editorState'
 import { GRID, GraphCanvas } from './GraphCanvas'
-import { edgeKey, nodeTitle } from './graphView'
+import { edgeKey, edgesOf, nodeTitle } from './graphView'
 import { NodeInspector } from './NodeInspector'
 import { NodeLibrary } from './NodeLibrary'
 import { useDraftEditor } from './useDraftEditor'
@@ -471,12 +471,16 @@ function DraftEditor({
                                 This draft has no nodes yet.
                             </p>
                         ) : (
-                            <ul className="flex flex-col gap-1 text-sm">
+                            // Scrolls on its own: at full length it set the
+                            // row's height, and the canvas, stretched to it,
+                            // centered a large graph far below the screen.
+                            <ul className="flex max-h-[32rem] flex-col gap-1 overflow-y-auto text-sm">
                                 {state.graph.nodes.map((node) => {
-                                    const incoming = state.graph.edges.filter(
+                                    const own = edgesOf(state.graph, node.id)
+                                    const incoming = own.filter(
                                         (e) => e.target_node_id === node.id,
                                     ).length
-                                    const outgoing = state.graph.edges.filter(
+                                    const outgoing = own.filter(
                                         (e) => e.source_node_id === node.id,
                                     ).length
                                     const issues =

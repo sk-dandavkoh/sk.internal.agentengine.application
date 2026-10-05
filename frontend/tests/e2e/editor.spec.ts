@@ -494,3 +494,89 @@ test('box-selects several nodes, then duplicates and deletes them', async ({
     await expect(p.getByText('All changes saved to draft')).toBeVisible()
     expect(saved.at(-1)?.graph.nodes).toHaveLength(5)
 })
+
+/** The backend's default graph limit (domain limits: max_graph_nodes):
+ * inputs and logs alternating, every log fed by several inputs. */
+function largeGraph(nodes = 500, edges = 800): Draft {
+    const id = (i: number) => `node_${i.toString(16).padStart(32, '0')}`
+    const half = nodes / 2
+    return {
+        graph: {
+            nodes: Array.from({ length: nodes }, (_, i) => ({
+                id: id(i),
+                node_type: i % 2 ? 'core.log' : 'core.input',
+                config: {},
+                label: `Step ${String(i)}`,
+                position: { x: (i % 25) * 240, y: Math.floor(i / 25) * 140 },
+            })),
+            // Distinct (input, log) pairs: round k shifts the targets by k*37.
+            edges: Array.from({ length: edges }, (_, i) => {
+                const a = i % half
+                const b = (a + Math.floor(i / half) * 37) % half
+                return {
+                    source_node_id: id(2 * a),
+                    source_port: 'value',
+                    target_node_id: id(2 * b + 1),
+                    target_port: 'value',
+                }
+            }),
+        },
+        triggers: [],
+        dependencies: [],
+    }
+}
+
+test('stays usable with a graph at the node limit', async ({ page: p }) => {
+    const saved = await fakeBackend(p, {
+        draft: largeGraph(),
+        catalog: {
+            items: ['core.input', 'core.log'].map((node_type) => ({
+                node_type,
+                version: '1.0.0',
+                name: node_type,
+                description: '',
+                category: 'core',
+                documentation_url: null,
+                inputs:
+                    node_type === 'core.log'
+                        ? [{ ...port('value'), multiple: true }]
+                        : [],
+                outputs: [port('value')],
+                config_schema: {},
+                capabilities: {},
+            })),
+            port_compatibility: { json: ['json', 'json[]'] },
+        },
+    })
+    await p.goto('/projects/p1/editor')
+    await expect(p.locator('.react-flow__node')).toHaveCount(500)
+    // Every edge is valid: no problem labels.
+    await expect(p.locator('.edge-invalid')).toHaveCount(0)
+    await expect(p.locator('.react-flow__edge')).toHaveCount(800)
+
+    // Drag one node through 30 pointer moves, each a canvas update. A
+    // middle one: at the minimum zoom the outer columns are clipped.
+    const step = node(p, /^Step 262 /)
+    const from = await center(step)
+    const started = Date.now()
+    await p.mouse.move(from.x, from.y)
+    await p.mouse.down()
+    await p.mouse.move(from.x + 30, from.y + 60, { steps: 30 })
+    await p.mouse.up()
+    const dragMs = Date.now() - started
+    await expect(p.getByText('Unsaved changes')).toBeVisible()
+    test.info().annotations.push({
+        type: 'drag-ms',
+        description: `${String(dragMs)} ms for 30 moves`,
+    })
+    // Generous, to stay robust on slow CI machines: per-frame work that
+    // grows with graph size (all 500 cards re-rendered, quadratic edge
+    // checks) took far longer than this.
+    expect(dragMs).toBeLessThan(6_000)
+
+    await p.keyboard.press('ControlOrMeta+s')
+    await expect(p.getByText('All changes saved to draft')).toBeVisible()
+    expect(saved).toHaveLength(1)
+    expect(saved[0]?.graph.nodes[262]?.position?.y).toBeGreaterThan(1400)
+    expect(saved[0]?.graph.edges).toHaveLength(800)
+})

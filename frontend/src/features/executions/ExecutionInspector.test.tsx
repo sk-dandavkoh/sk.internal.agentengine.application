@@ -1,4 +1,5 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react'
+import { focusManager } from '@tanstack/react-query'
 import { describe, expect, it } from 'vitest'
 import { apiError, ok, renderRoute, stubBackend } from '../../test/app'
 import { MAX_RENDERED_CHARS } from './inspector/format'
@@ -414,6 +415,20 @@ describe('Execution inspector', () => {
             '0',
             '100',
         ])
+
+        // A refetch (as on focus or each live update) requests only the
+        // tail: the full first page cannot change.
+        focusManager.setFocused(false)
+        focusManager.setFocused(true)
+        await waitFor(() => {
+            expect(
+                requests
+                    .filter((u) => u.pathname.endsWith('/logs'))
+                    .map((u) => u.searchParams.get('after')),
+            ).toEqual(['0', '100', '100'])
+        })
+        expect(within(list).getAllByRole('listitem')).toHaveLength(101)
+        focusManager.setFocused(undefined)
 
         // Search applies on submit, not per keystroke.
         const before = requests.length

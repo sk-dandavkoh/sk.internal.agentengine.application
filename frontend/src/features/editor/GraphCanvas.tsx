@@ -32,7 +32,7 @@ import {
     type ConnectionProblem,
     type ConnectionRules,
 } from './connections'
-import { edgeKey, nodeTitle, portsOf } from './graphView'
+import { edgeKey, edgesOf, graphIndex, nodeTitle, portsOf } from './graphView'
 import { NodeCard, type CardPort } from './NodeCard'
 import { NODE_TYPE_MIME } from './NodeLibrary'
 
@@ -79,7 +79,6 @@ function DraftNode({ id, data, selected }: NodeProps<CanvasNode>) {
         missing,
         issues,
     } = data
-    const check = use(CheckContext)
     // A string, so nodes re-render when a drag starts or ends, not per move.
     const from = useConnection((c) =>
         c.inProgress && c.fromHandle.id
@@ -88,9 +87,12 @@ function DraftNode({ id, data, selected }: NodeProps<CanvasNode>) {
     )
     const [fromType = '', fromNode = '', fromPort = ''] =
         from?.split('\n') ?? []
+    // Read only while a connection is dragged: the check changes with every
+    // graph change, and always reading it re-rendered every card per move.
+    const check = from ? use(CheckContext) : null
     // While a drag runs, mark which of this node's ports would take it.
     const fit = (port: CardPort, side: 'source' | 'target'): CardPort => {
-        if (!from || fromType === side) return port
+        if (!check || fromType === side) return port
         const edge =
             side === 'target'
                 ? {
@@ -127,6 +129,78 @@ function DraftNode({ id, data, selected }: NodeProps<CanvasNode>) {
 }
 
 const nodeTypes = { draft: DraftNode }
+
+type Size = NonNullable<CanvasNode['measured']>
+const UNMEASURED: Size = {}
+interface Built {
+    node: CanvasNode
+    catalog: ConnectionRules['catalog']
+    edges: readonly Edge[]
+}
+// The canvas node last built per draft node. Instances are immutable (a
+// moved node is a new object), so one is reused while nothing it shows
+// changed and React Flow re-renders only changed cards: rebuilding all of
+// them re-rendered every card on each drag frame.
+const built = new WeakMap<NodeInstance, Built>()
+
+// Likewise per draft edge: an edge whose drawing did not change keeps its
+// object, or React Flow re-renders every edge on each drag frame.
+const builtEdges = new WeakMap<Edge, FlowEdge>()
+
+function reuseEdge(edge: Edge, next: FlowEdge): FlowEdge {
+    const last = builtEdges.get(edge)
+    if (
+        last &&
+        last.selected === next.selected &&
+        last.ariaLabel === next.ariaLabel &&
+        last.label === next.label &&
+        last.className === next.className
+    )
+        return last
+    builtEdges.set(edge, next)
+    return next
+}
+
+function canvasNode(
+    instance: NodeInstance,
+    catalog: ConnectionRules['catalog'],
+    selected: boolean,
+    measured: Size,
+    issues: number,
+    edges: readonly Edge[],
+): CanvasNode {
+    const last = built.get(instance)
+    if (
+        last &&
+        last.catalog === catalog &&
+        last.node.measured === measured &&
+        last.node.selected === selected &&
+        last.node.data.issues === issues &&
+        last.edges.length === edges.length &&
+        last.edges.every((e, i) => e === edges[i])
+    )
+        return last.node
+    const definition = catalog?.get(instance.node_type)
+    const node: CanvasNode = {
+        id: instance.id,
+        type: 'draft',
+        // Every node has a position once loaded (placeUnpositioned).
+        position: instance.position ?? { x: 0, y: 0 },
+        selected,
+        measured,
+        ariaLabel: `${nodeTitle(instance, definition)} (${instance.node_type})`,
+        data: {
+            instance,
+            definition,
+            catalogLoaded: catalog !== undefined,
+            ...portsOf(instance, definition, edges),
+            missing: missingInputs(instance.id, definition, edges),
+            issues,
+        },
+    }
+    built.set(instance, { node, catalog, edges })
+    return node
+}
 
 function ZoomLevel() {
     const { zoom } = useViewport()
@@ -207,40 +281,24 @@ export function GraphCanvas({
         if (problem) onRefuse(problem)
     }
 
-    // ponytail: rebuilds every node object on each change; cache per node
-    // when large graphs measure slow (frontend roadmap Phase 24).
     const nodes = useMemo((): CanvasNode[] => {
         const selected = new Set(selection)
-        return graph.nodes.map((instance) => {
-            const definition = catalog?.get(instance.node_type)
-            return {
-                id: instance.id,
-                type: 'draft',
-                // Every node has a position once loaded (placeUnpositioned).
-                position: instance.position ?? { x: 0, y: 0 },
-                selected: selected.has(instance.id),
-                measured: measured[instance.id] ?? {},
-                ariaLabel: `${nodeTitle(instance, definition)} (${instance.node_type})`,
-                data: {
-                    instance,
-                    definition,
-                    catalogLoaded: catalog !== undefined,
-                    ...portsOf(instance, definition, graph.edges),
-                    missing: missingInputs(
-                        instance.id,
-                        definition,
-                        graph.edges,
-                    ),
-                    issues: issueCounts?.get(instance.id) ?? 0,
-                },
-            }
-        })
+        return graph.nodes.map((instance) =>
+            canvasNode(
+                instance,
+                catalog,
+                selected.has(instance.id),
+                measured[instance.id] ?? UNMEASURED,
+                issueCounts?.get(instance.id) ?? 0,
+                edgesOf(graph, instance.id),
+            ),
+        )
     }, [graph, selection, catalog, measured, issueCounts])
 
     const edges = useMemo((): FlowEdge[] => {
         const selected = new Set(edgeSelection)
         const title = (id: string, port: string) => {
-            const node = graph.nodes.find((n) => n.id === id)
+            const node = graphIndex(graph).nodes.get(id)
             const name = node
                 ? nodeTitle(node, catalog?.get(node.node_type))
                 : id
@@ -255,7 +313,7 @@ export function GraphCanvas({
                 problem &&
                 !['unchecked', 'unknown_type'].includes(problem.code) &&
                 problem
-            return {
+            return reuseEdge(e, {
                 id: edgeKey(e),
                 source: e.source_node_id,
                 sourceHandle: e.source_port,
@@ -267,7 +325,7 @@ export function GraphCanvas({
                     className: 'edge-invalid',
                     label: PROBLEM_LABELS[shown.code],
                 }),
-            }
+            })
         })
     }, [graph, edgeSelection, rules, catalog])
 
