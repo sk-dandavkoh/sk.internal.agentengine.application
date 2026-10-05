@@ -396,6 +396,12 @@ core.http
 core.web_search
 core.smtp
 core.llm
+core.agent
+core.web_fetch
+core.file_read
+core.file_write
+core.file_list
+core.command
 ```
 
 Weitere Nodes können durch Python oder Plugins hinzugefügt werden.

@@ -41,6 +41,7 @@ from akasha.runtime.runtime import ExecutionRuntime
 from akasha.runtime.scheduler import TriggerScheduler
 from akasha.security.crypto import SecretCipher
 from akasha.security.network import NetworkPolicy
+from akasha.security.paths import Workspace
 from akasha.workers import Worker, WorkerManager
 
 # A readiness check returns None when healthy, or a human-readable reason.
@@ -284,6 +285,12 @@ def create_node_registry(
         if settings.web_search_url is None
         else str(settings.web_search_url),
         http_max_response_bytes=settings.http_max_response_bytes,
+        workspace=None
+        if settings.workspace_dir is None
+        else Workspace(settings.workspace_dir),
+        max_file_bytes=settings.workspace_max_file_bytes,
+        allowed_commands=frozenset(settings.command_allowed),
+        command_max_output_bytes=settings.command_max_output_bytes,
     )
 
 

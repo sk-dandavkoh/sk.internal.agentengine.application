@@ -1025,6 +1025,27 @@ Execution Runtime
 
 This keeps the system composable.
 
+Implementation (ADR 0005, `akasha.nodes.agent`, node type `core.agent`):
+
+- One node attempt runs the whole loop: render the prompt (the `core.llm`
+  templates and model config, shared), call the `LLMClient` with the tool
+  definitions, run every requested tool call in order, append the
+  assistant and tool turns, repeat until the model answers without tool
+  calls. `max_iterations` (default 10, at most 50) bounds the model calls
+  (`AGENT_MAX_ITERATIONS`, PERMANENT); the node timeout bounds the attempt.
+- Outputs: `text`, `structured` (final answer checked against
+  `output_schema`), `steps` (per tool call: iteration, tool, node type,
+  argument preview capped at 1000 characters, `ok`, `error_code`) and
+  `metadata` (iterations, summed token usage, summed cost estimate — `null`
+  once any call has no price). Metrics `model_calls`, `tool_calls`,
+  `tool_errors`; logs carry tool names and codes, never payloads.
+- Tool failures (unknown tool, invalid arguments, a tool's `NodeError`,
+  `AGENT_TOOL_TIMEOUT` per `tool_timeout_seconds`) go back to the model as
+  a tool turn with the code and redacted message; the agent continues.
+  Cancellation, the node deadline and provider errors end the attempt.
+- Declared `has_side_effects`: recovery never re-runs an interrupted agent
+  blindly, because its tools may have written or sent something.
+
 ----------
 
 # 17. Triggers
@@ -2017,8 +2038,9 @@ use the same node set. Duplicate ids are rejected
   a closure. The runtime creates a fresh instance per attempt.
 - Built-ins (`nodes/builtins.py`): core.input, core.output, core.log,
   core.if, core.switch, core.delay, core.merge, core.http, core.web_search
-  (SearXNG JSON API), core.smtp, core.llm, and (Phase 27) core.set and
-  core.pick. The composition root builds the registry from settings
+  (SearXNG JSON API), core.smtp, core.llm, (Phase 27) core.set and
+  core.pick, and (ADR 0005) core.agent, core.web_fetch, core.file_read,
+  core.file_write, core.file_list and core.command. The composition root builds the registry from settings
   (`bootstrap.create_node_registry`).
 - Data shaping (Phase 27) stays declarative, like conditions: `core.set`
   builds an object from static `fields` plus the input under `key` (the
@@ -3063,6 +3085,16 @@ Paths must be validated.
 
 Path traversal must be prevented.
 
+Implementation (ADR 0005, `security/paths.py`, `nodes/files.py`): the
+operator sets `AKASHA_WORKSPACE_DIR`; each project gets its own
+subdirectory, created on first use. Every path (node input, model tool
+argument, `core.command` working directory) must stay inside it: absolute
+paths, `..` segments, backslashes and NUL bytes are refused
+(`PATH_NOT_ALLOWED`), and symlinks are resolved before the containment
+check. Listings never follow symlinks. Text only (UTF-8), capped by
+`AKASHA_WORKSPACE_MAX_FILE_BYTES`. Known ceiling: check-then-open, a
+concurrent local process swapping a directory for a symlink can race it.
+
 ----------
 
 # 65. Plugin Security
@@ -3394,7 +3426,12 @@ Each cap is enforced by the layer that owns the resource:
 | executions per worker | 4 (`AKASHA_WORKER_CONCURRENCY`) | worker | job waits in the queue |
 | node output (UTF-8 JSON bytes) | 1 MiB | runtime, before the output is stored | node `NODE_OUTPUT_TOO_LARGE` (PERMANENT) |
 | outputs per execution | 16 MiB | runtime (recounted on resume) | node `EXECUTION_OUTPUT_TOO_LARGE` (PERMANENT) |
-| HTTP response | 5 MiB | `core.http` / `core.web_search` while streaming | node `HTTP_RESPONSE_TOO_LARGE` |
+| HTTP response | 5 MiB | `core.http` / `core.web_search` / `core.web_fetch` while streaming | node `HTTP_RESPONSE_TOO_LARGE` |
+| agent model calls per attempt | 10 (config, ≤ 50) | `core.agent` loop | node `AGENT_MAX_ITERATIONS` (PERMANENT) |
+| tool call duration | 60 s (config, ≤ 600 s) | `core.agent` per call | tool turn `AGENT_TOOL_TIMEOUT`, agent continues |
+| workspace file | 1 MiB (`AKASHA_WORKSPACE_MAX_FILE_BYTES`) | file nodes | node `FILE_TOO_LARGE` |
+| command output | 256 KiB per stream (`AKASHA_COMMAND_MAX_OUTPUT_BYTES`) | `core.command`, rest drained | output cut, `truncated: true` |
+| command duration | 30 s (config, ≤ 600 s) | `core.command`, process group killed | node `COMMAND_TIMEOUT` |
 | LLM output tokens per request | 16384 | `AIService`, before the provider call | `PROVIDER_CONFIGURATION`; unset `max_tokens` gets the cap |
 
 - Admission (`ExecutionService.create_execution`) replaces a missing
@@ -4806,6 +4843,26 @@ Email Node
 ```
 
 Avoid implementing separate duplicate tool infrastructures for Agents.
+
+Implementation (ADR 0005): the Tool Registry *is* the Node Registry.
+`core.agent` receives the registry's live catalog; a tool entry is
+`{name, description?, node_type, config}`. The project author fixes the
+config; the model supplies only the node's input ports, offered as a JSON
+Schema derived from the port declarations (BINARY/FILE/ARTIFACT/
+SECRET_REFERENCE ports cannot be model-supplied; such nodes are rejected).
+A tool call runs the node through the same contract as the runtime:
+inputs validated with port defaults applied, config validated before the
+first model call (`AGENT_TOOL_INVALID`), outputs validated, results masked
+for resolved secrets and cut at `max_tool_result_chars`. A tool resolves
+only credential references in its own config — never the agent's provider
+key or another tool's credential. `core.agent` and control-flow nodes
+cannot be tools (no nested agents: agent depth is 1, §131). Plugin nodes
+are tools like built-ins.
+
+Built-in tool nodes: `core.web_search` and `core.web_fetch` (research,
+SSRF guard on every hop, readable text extracted from HTML),
+`core.file_read`/`core.file_write`/`core.file_list` (§64) and
+`core.command` (ADR 0005).
 
 ----------
 

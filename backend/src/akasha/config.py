@@ -8,7 +8,7 @@ Missing or invalid critical configuration fails fast at startup (see
 from datetime import timedelta
 from pathlib import Path
 
-from pydantic import AnyHttpUrl, Field, SecretStr, model_validator
+from pydantic import AnyHttpUrl, DirectoryPath, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from akasha.domain.limits import ResourceLimits
@@ -46,6 +46,18 @@ class Settings(BaseSettings):
     # SearXNG base URL for core.web_search; unset → the node fails with
     # SEARCH_NOT_CONFIGURED. Operator-trusted, so it may be private.
     web_search_url: AnyHttpUrl | None = None
+
+    # Agent tools (ADR 0005). File nodes and core.command work inside one
+    # directory per project below this existing directory; unset → they
+    # fail with WORKSPACE_NOT_CONFIGURED. Engine data never belongs here.
+    workspace_dir: DirectoryPath | None = None
+    workspace_max_file_bytes: int = Field(default=1024 * 1024, gt=0)
+    # Programs core.command may run (JSON list of names on PATH or absolute
+    # paths). Empty → the node is disabled. Not a sandbox: an allowed
+    # interpreter (python3, bash) lets projects run arbitrary code as the
+    # engine's OS user.
+    command_allowed: list[str] = Field(default_factory=list)
+    command_max_output_bytes: int = Field(default=256 * 1024, gt=0)
 
     # Workers + queue (Phase 22). Unset → no queue: executions created
     # through the API stay QUEUED (nothing runs them). The URL may carry a

@@ -21,10 +21,11 @@ the calls the model asked for. Running them is a downstream node's job.
 
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
 from akasha.domain.ai import (
+    CostEstimate,
     LLMClient,
     LLMRequest,
     LLMResponse,
@@ -32,6 +33,7 @@ from akasha.domain.ai import (
     ProviderError,
     ProviderErrorKind,
     Role,
+    TokenUsage,
     ToolDefinition,
 )
 from akasha.errors import (
@@ -67,7 +69,7 @@ _PATH = PATH
 _PLACEHOLDER = re.compile(r"\{\{(.*?)\}\}", re.DOTALL)
 # A whole template: text, single braces, and well-formed placeholders only,
 # so a malformed ``{{ ... }}`` is rejected when the project is published.
-_TEMPLATE = {
+TEMPLATE = {
     "type": "string",
     # Forms offer a prompt editor; the pattern below is the real check.
     "format": "template",
@@ -87,6 +89,60 @@ _ERROR_KINDS = {
 
 def _error(message: str, kind: NodeErrorKind, code: str, **details: str) -> NodeError:
     return NodeError(message, kind=kind, code=code, details=details or None)
+
+
+def provider_node_error(exc: ProviderError) -> NodeError:
+    """A provider failure as the node error the runtime classifies; the
+    message is already redacted and truncated by the adapter."""
+    return _error(
+        exc.message,
+        _ERROR_KINDS.get(exc.kind, NodeErrorKind.PERMANENT),
+        exc.code,
+        provider=exc.provider,
+    )
+
+
+# The model settings core.llm and core.agent share (the prompt is rendered
+# from ``variables``; the credential is a reference resolved per call).
+MODEL_CONFIG: dict[str, object] = {
+    "provider": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Provider name, e.g. openai or anthropic.",
+    },
+    "model": {"type": "string", "minLength": 1},
+    "credential": {
+        "type": "string",
+        "format": CREDENTIAL_REFERENCE_FORMAT,
+        "description": "Credential holding the provider API key.",
+    },
+    "system_prompt": TEMPLATE,
+    "user_prompt": {**TEMPLATE, "minLength": 1},
+    "temperature": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 2,
+        "description": "Empty: the provider's default.",
+    },
+    "max_tokens": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": MAX_OUTPUT_TOKENS,
+        "description": "Empty: the provider's default.",
+    },
+    "output_schema": {
+        "type": "object",
+        "description": "JSON Schema the reply must match; it is"
+        " returned parsed on the structured output.",
+    },
+    "timeout_seconds": {
+        "type": "number",
+        "minimum": 1,
+        "maximum": MAX_TIMEOUT_SECONDS,
+    },
+}
+MODEL_CONFIG_REQUIRED = ("provider", "model", "user_prompt")
+TOOL_NAME_SCHEMA = {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,64}$"}
 
 
 def render(template: str, variables: Mapping[str, Any]) -> str:
@@ -144,60 +200,21 @@ class LlmNode(Node):
         ),
         config_schema=closed_schema(
             {
-                "provider": {
-                    "type": "string",
-                    "minLength": 1,
-                    "description": "Provider name, e.g. openai or anthropic.",
-                },
-                "model": {"type": "string", "minLength": 1},
-                "credential": {
-                    "type": "string",
-                    "format": CREDENTIAL_REFERENCE_FORMAT,
-                    "description": "Credential holding the provider API key.",
-                },
-                "system_prompt": _TEMPLATE,
-                "user_prompt": {**_TEMPLATE, "minLength": 1},
-                "temperature": {
-                    "type": "number",
-                    "minimum": 0,
-                    "maximum": 2,
-                    "description": "Empty: the provider's default.",
-                },
-                "max_tokens": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "maximum": MAX_OUTPUT_TOKENS,
-                    "description": "Empty: the provider's default.",
-                },
-                "output_schema": {
-                    "type": "object",
-                    "description": "JSON Schema the reply must match; it is"
-                    " returned parsed on the structured output.",
-                },
+                **MODEL_CONFIG,
                 "tools": {
                     "type": "array",
                     "maxItems": MAX_TOOLS,
                     "items": {
                         "type": "object",
                         "properties": {
-                            "name": {
-                                "type": "string",
-                                "pattern": "^[A-Za-z0-9_-]{1,64}$",
-                            },
+                            "name": TOOL_NAME_SCHEMA,
                             "description": {"type": "string"},
                             "parameters": {"type": "object"},
                         },
                     },
                 },
-                "timeout_seconds": {
-                    "type": "number",
-                    "minimum": 1,
-                    "maximum": MAX_TIMEOUT_SECONDS,
-                },
             },
-            "provider",
-            "model",
-            "user_prompt",
+            *MODEL_CONFIG_REQUIRED,
         ),
         capabilities=NodeCapabilities(supports_cancellation=True),
     )
@@ -212,23 +229,22 @@ class LlmNode(Node):
                 NodeErrorKind.CONFIGURATION,
                 "LLM_NOT_CONFIGURED",
             )
-        request = _request(context.config, context.inputs.get("variables", {}))
+        cfg = context.config
+        request = build_request(
+            cfg,
+            prompt_messages(cfg, context.inputs.get("variables", {})),
+            cfg.get("tools", []),
+        )
         try:
             response = await self._llm.complete(
                 request, credentials=context.credentials
             )
         except ProviderError as exc:
-            # The message is already redacted and truncated by the adapter.
-            raise _error(
-                exc.message,
-                _ERROR_KINDS.get(exc.kind, NodeErrorKind.PERMANENT),
-                exc.code,
-                provider=exc.provider,
-            ) from exc
+            raise provider_node_error(exc) from exc
         return NodeResult(
             {
                 "text": response.content,
-                "structured": _structured(request, response),
+                "structured": structured_output(request, response),
                 "tool_calls": [
                     {"id": c.id, "name": c.name, "arguments": dict(c.arguments)}
                     for c in response.tool_calls
@@ -238,12 +254,29 @@ class LlmNode(Node):
         )
 
 
-def _request(cfg: Mapping[str, Any], variables: Mapping[str, Any]) -> LLMRequest:
+def prompt_messages(
+    cfg: Mapping[str, Any], variables: Mapping[str, Any]
+) -> list[Message]:
+    """The rendered system (if any) and user turn of a model config."""
     messages = []
     if system := cfg.get("system_prompt"):
         messages.append(Message(Role.SYSTEM, render(system, variables)))
     messages.append(Message(Role.USER, render(cfg["user_prompt"], variables)))
-    size = sum(len(m.content or "") for m in messages)
+    return messages
+
+
+def build_request(
+    cfg: Mapping[str, Any],
+    messages: Sequence[Message],
+    tools: Iterable[Mapping[str, Any]],
+) -> LLMRequest:
+    """An ``LLMRequest`` from a model config, a conversation and tool specs
+    (``name``, ``description``, ``parameters``). The whole conversation is
+    bounded by ``MAX_PROMPT_CHARS``, tool calls and results included."""
+    size = sum(
+        len(m.content or "") + sum(len(json.dumps(c.arguments)) for c in m.tool_calls)
+        for m in messages
+    )
     if size > MAX_PROMPT_CHARS:
         raise _error(
             f"the rendered prompt exceeds {MAX_PROMPT_CHARS} characters",
@@ -261,7 +294,7 @@ def _request(cfg: Mapping[str, Any], variables: Mapping[str, Any]) -> LLMRequest
             messages=tuple(messages),
             temperature=cfg.get("temperature"),
             max_tokens=cfg.get("max_tokens"),
-            tools=tuple(_tool(t) for t in cfg.get("tools", [])),
+            tools=tuple(_tool(t) for t in tools),
             credential=cfg.get("credential"),
             timeout_seconds=cfg.get("timeout_seconds"),
             response_schema=schema,
@@ -278,7 +311,7 @@ def _tool(spec: Mapping[str, Any]) -> ToolDefinition:
     return ToolDefinition(spec["name"], spec.get("description", ""), spec["parameters"])
 
 
-def _structured(request: LLMRequest, response: LLMResponse) -> Any:
+def structured_output(request: LLMRequest, response: LLMResponse) -> Any:
     """The reply parsed and checked against ``output_schema``.
 
     Checked here even for providers that enforce schemas: "where supported"
@@ -312,19 +345,25 @@ def _structured(request: LLMRequest, response: LLMResponse) -> Any:
 
 
 def _metadata(response: LLMResponse) -> dict[str, Any]:
-    usage = response.usage
-    cost = response.cost
     return {
         "provider": response.provider,
         "model": response.model,
         "request_id": response.request_id,
         "finish_reason": response.finish_reason.value,
-        "usage": {
-            "input_tokens": usage.input_tokens,
-            "output_tokens": usage.output_tokens,
-            "total_tokens": usage.total_tokens,
-        },
-        "cost": None
-        if cost is None
-        else {"amount": cost.amount, "currency": cost.currency, "estimated": True},
+        "usage": usage_metadata(response.usage),
+        "cost": cost_metadata(response.cost),
     }
+
+
+def usage_metadata(usage: TokenUsage) -> dict[str, int]:
+    return {
+        "input_tokens": usage.input_tokens,
+        "output_tokens": usage.output_tokens,
+        "total_tokens": usage.total_tokens,
+    }
+
+
+def cost_metadata(cost: CostEstimate | None) -> dict[str, Any] | None:
+    if cost is None:
+        return None
+    return {"amount": cost.amount, "currency": cost.currency, "estimated": True}

@@ -1,6 +1,8 @@
 """Shared Node Contract suite over every built-in node (AGENTS §28/§58),
 plus the settings → registry wiring of the composition root."""
 
+from pathlib import Path
+
 import pytest
 
 from akasha.bootstrap import create_container, create_node_registry
@@ -13,6 +15,7 @@ from akasha.domain.node import (
 )
 from akasha.domain.primitives import SEMVER_RE
 from akasha.errors import NodeConfigurationError
+from akasha.nodes.agent import AgentNode
 from akasha.nodes.builtins import create_builtin_registry
 from akasha.nodes.llm import LlmNode
 from akasha.nodes.registry import NodeAlreadyRegisteredError, NodeRegistration
@@ -34,6 +37,13 @@ ROADMAP_NODES = {
     # Phase 27: needed by the example projects (vision §58).
     "core.set",
     "core.pick",
+    # Agents (ADR 0005): the tool loop and the tools it needs.
+    "core.agent",
+    "core.web_fetch",
+    "core.file_read",
+    "core.file_write",
+    "core.file_list",
+    "core.command",
 }
 REGISTRY = create_builtin_registry()
 BUILTINS = REGISTRY.list_nodes()
@@ -79,12 +89,23 @@ def test_capabilities_are_declared_truthfully() -> None:
         return {d.node_id for d in BUILTINS if getattr(d.capabilities, flag)}
 
     assert ids("is_control_flow") == {"core.if", "core.switch"}
-    assert ids("has_side_effects") == {"core.http", "core.smtp"}
-    # SMTP's blocking send cannot be interrupted (documented ceiling).
+    # core.agent: its tools may have side effects.
+    assert ids("has_side_effects") == {
+        "core.agent",
+        "core.command",
+        "core.file_write",
+        "core.http",
+        "core.smtp",
+    }
+    # SMTP's blocking send cannot be interrupted (documented ceiling); file
+    # I/O is short, bounded by the file size limit.
     assert ids("supports_cancellation") == {
+        "core.agent",
+        "core.command",
         "core.delay",
         "core.http",
         "core.llm",
+        "core.web_fetch",
         "core.web_search",
     }
 
@@ -133,6 +154,36 @@ def test_container_wires_its_ai_service_into_core_llm() -> None:
     node = container.nodes.get("core.llm")()
     assert isinstance(node, LlmNode)
     assert node._llm is container.ai
+
+
+def test_container_wires_ai_service_and_live_catalog_into_core_agent() -> None:
+    container = create_container(Settings(environment="test"))
+    node = container.nodes.get("core.agent")()
+    assert isinstance(node, AgentNode)
+    assert node._llm is container.ai
+    assert node._catalog is container.nodes.catalog
+
+
+async def test_workspace_and_command_settings_reach_the_nodes(
+    run_node: RunNode, tmp_path: Path
+) -> None:
+    settings = Settings(workspace_dir=tmp_path, command_allowed=["echo"])
+    registry = create_node_registry(settings)
+    written = await run_node(
+        registry.get("core.file_write")(), inputs={"path": "a.txt", "content": "hi"}
+    )
+    assert written.outputs == {"path": "a.txt", "size": 2}
+    echoed = await run_node(
+        registry.get("core.command")(),
+        config={"executable": "echo"},
+        inputs={"args": ["hello"]},
+    )
+    assert echoed.outputs["stdout"] == "hello\n"
+
+
+def test_workspace_dir_must_exist(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="directory"):
+        Settings(workspace_dir=tmp_path / "missing")
 
 
 def test_invalid_web_search_url_fails_fast() -> None:

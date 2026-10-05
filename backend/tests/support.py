@@ -26,7 +26,9 @@ from testcontainers.core.docker_client import DockerClient
 from akasha.domain.node import (
     CredentialResolver,
     Node,
+    NodeEvents,
     NodeExecutionContext,
+    NodeMetrics,
     NodeResult,
 )
 from akasha.domain.primitives import new_id
@@ -89,6 +91,9 @@ def make_context(
         is_cancelled=is_cancelled or (lambda: False),
         execution_input=dict(execution_input or {}),
         credentials=credentials,
+        # As the runtime builds them: only declared names are accepted.
+        metrics=NodeMetrics(node.definition.metrics),
+        events=NodeEvents(node.definition.events),
     )
 
 
@@ -116,6 +121,12 @@ CHAT_COMPLETION: dict[str, object] = {
 }
 
 
+PAGE_HTML = """<!doctype html><html><head><title>Akasha &amp; Agents</title>
+<style>body { color: red }</style><script>alert("x")</script></head>
+<body><nav>Home</nav><h1>Agent   engines</h1><p>Tools &lt;run&gt; in a loop.</p>
+<noscript>enable js</noscript><ul><li>search</li><li>fetch</li></ul></body></html>"""
+
+
 @dataclass
 class ServerState:
     requests: list[Recorded] = field(default_factory=list)
@@ -128,6 +139,9 @@ class ServerState:
     # /v1/chat/completions (OpenAI-compatible) answers with this.
     llm_status: int = 200
     llm_body: object = field(default_factory=lambda: dict(CHAT_COMPLETION))
+    # When non-empty, each chat completion pops the next reply (multi-turn
+    # agent conversations); ``llm_body`` answers once it is empty.
+    llm_bodies: list[object] = field(default_factory=list)
     llm_hang: bool = False
 
 
@@ -191,6 +205,8 @@ class _Handler(BaseHTTPRequestHandler):
                 self.send_header("Content-Type", "text/plain")
                 self.end_headers()
                 self.wfile.write(b"x" * 4096)
+            case ["page"]:
+                self._send(200, PAGE_HTML.encode(), "text/html; charset=utf-8")
             case ["malformed"]:
                 self._send(200, b"{nope", "application/json")
             case ["text"]:
@@ -211,7 +227,11 @@ class _Handler(BaseHTTPRequestHandler):
                 if self.state.llm_hang:
                     self.state.hang_entered.set()
                     self.state.release.wait(30)
-                self._json(self.state.llm_status, self.state.llm_body)
+                bodies = self.state.llm_bodies
+                self._json(
+                    self.state.llm_status,
+                    bodies.pop(0) if bodies else self.state.llm_body,
+                )
             case _:
                 self._send(404, b"not found", "text/plain")
 

@@ -124,6 +124,8 @@ _CODE_LOADERS = {"plugins/registry.py", "cli.py"}  # trusted, operator-chosen co
 # Runs uv with a fixed argv to install plugin libraries (ADR 0004); shell=
 # stays forbidden there too.
 _SUBPROCESS_USERS = {"plugins/dependencies.py"}
+# Starts operator-allowed programs as argv, never via a shell (ADR 0005).
+_PROCESS_STARTERS = {"nodes/command.py"}
 
 
 def test_no_arbitrary_code_execution_primitives() -> None:
@@ -151,6 +153,12 @@ def test_no_arbitrary_code_execution_primitives() -> None:
                 offenders.append(f"{rel}:{node.lineno}: {node.func.id}()")
             if isinstance(node.func, ast.Attribute) and node.func.attr == "system":
                 offenders.append(f"{rel}:{node.lineno}: .system()")
+            # asyncio starts processes without importing subprocess.
+            attr = node.func.attr if isinstance(node.func, ast.Attribute) else ""
+            if attr == "create_subprocess_shell" or (
+                attr == "create_subprocess_exec" and rel not in _PROCESS_STARTERS
+            ):
+                offenders.append(f"{rel}:{node.lineno}: {attr}()")
             for kw in node.keywords:
                 if kw.arg == "shell":
                     offenders.append(f"{rel}:{node.lineno}: shell=")

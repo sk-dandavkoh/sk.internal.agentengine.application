@@ -1,6 +1,6 @@
-"""Web built-ins: core.http and core.web_search.
+"""Web built-ins: core.http, core.web_fetch and core.web_search.
 
-Both go through ``fetch``: one bounded HTTP exchange with explicit timeouts,
+All go through ``fetch``: one bounded HTTP exchange with explicit timeouts,
 a response-size cap, manual redirect handling and a stable error
 classification (backend AGENTS §35/§36/§73/§74). Every connection the client
 opens, on every redirect hop, passes the destination guard and connects to
@@ -12,9 +12,11 @@ destination check into a check of the proxy.
 import asyncio
 import functools
 import json
+import re
 import ssl
 from collections.abc import Iterable
 from dataclasses import dataclass
+from html.parser import HTMLParser
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -45,6 +47,8 @@ MAX_REDIRECTS = 5
 METHODS = ("DELETE", "GET", "HEAD", "PATCH", "POST", "PUT")
 DEFAULT_METHOD = "GET"
 DEFAULT_MAX_RESULTS = 5
+DEFAULT_MAX_CHARS = 20_000
+MAX_CHARS = 200_000
 _DEFAULT_PORTS = {"http": 80, "https": 443}
 
 
@@ -411,6 +415,151 @@ class HttpNode(Node):
                 "status": response.status,
                 "headers": response.headers,
                 "body": decode_body(response),
+            }
+        )
+
+
+class _TextExtractor(HTMLParser):
+    """Readable text of an HTML page: no scripts, styles or markup. Text
+    only, no rendering: nothing in the page is executed or followed."""
+
+    _SKIP = frozenset({"script", "style", "noscript", "svg", "template", "head"})
+    _BLOCK = frozenset(
+        {"p", "div", "br", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6", "section"}
+    )
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+        self.title = ""
+        self._skipping = 0
+        self._in_title = False
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "title":
+            self._in_title = True
+        elif tag in self._SKIP:
+            self._skipping += 1
+        elif tag in self._BLOCK:
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "title":
+            self._in_title = False
+        elif tag in self._SKIP and self._skipping:
+            self._skipping -= 1
+
+    def handle_data(self, data: str) -> None:
+        if self._in_title:
+            self.title += data
+        elif not self._skipping:
+            self.parts.append(data)
+
+
+def html_to_text(markup: str) -> tuple[str, str]:
+    """``(title, text)`` with whitespace collapsed, one block per line."""
+    parser = _TextExtractor()
+    parser.feed(markup)
+    parser.close()
+    lines = (
+        re.sub(r"\s+", " ", line).strip() for line in "".join(parser.parts).split("\n")
+    )
+    return parser.title.strip(), "\n".join(line for line in lines if line)
+
+
+class WebFetchNode(Node):
+    """Fetches one page by URL and returns its readable text, e.g. a search
+    result an agent wants to read. The URL is user (or model) input, so the
+    full destination guard applies, on every redirect hop.
+
+    The text is untrusted third-party data (backend AGENTS §36).
+    """
+
+    definition = NodeDefinition(
+        metadata=NodeMetadata(
+            node_id="core.web_fetch",
+            name="Fetch Web Page",
+            description="Fetches a web page and returns its readable text.",
+            version=VERSION,
+            category="web",
+        ),
+        inputs=(
+            NodeInput("url", PortType.STRING, description="http(s) URL of the page."),
+        ),
+        outputs=(
+            NodeOutput("url", PortType.STRING, description="The requested URL."),
+            NodeOutput("status", PortType.NUMBER),
+            NodeOutput("title", PortType.STRING),
+            NodeOutput("text", PortType.STRING),
+            NodeOutput(
+                "truncated",
+                PortType.BOOLEAN,
+                description="True when the text was cut at max_chars.",
+            ),
+        ),
+        config_schema=closed_schema(
+            {
+                "max_chars": {
+                    "type": "integer",
+                    "minimum": 100,
+                    "maximum": MAX_CHARS,
+                    "default": DEFAULT_MAX_CHARS,
+                },
+                "timeout_seconds": {
+                    "type": "number",
+                    "minimum": 0.1,
+                    "maximum": MAX_TIMEOUT_SECONDS,
+                    "default": DEFAULT_TIMEOUT_SECONDS,
+                },
+            }
+        ),
+        capabilities=NodeCapabilities(supports_cancellation=True),
+    )
+
+    def __init__(
+        self,
+        policy: NetworkPolicy | None = None,
+        *,
+        max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
+    ) -> None:
+        self._policy = policy or NetworkPolicy()
+        self._max_bytes = max_response_bytes
+
+    async def execute(self, context: NodeExecutionContext) -> NodeResult:
+        cfg = context.config
+        url = context.inputs["url"].strip()
+        if urlsplit(url).scheme not in _DEFAULT_PORTS:
+            raise _error(
+                "only http and https URLs are allowed",
+                NodeErrorKind.VALIDATION,
+                "HTTP_INVALID_URL",
+            )
+        response = await fetch(
+            "GET",
+            url,
+            policy=self._policy,
+            time_limit=cfg.get("timeout_seconds", DEFAULT_TIMEOUT_SECONDS),
+            max_bytes=self._max_bytes,
+            headers={"accept": "text/html,text/plain;q=0.9,*/*;q=0.5"},
+            follow_redirects=True,
+        )
+        if response.status >= 400:
+            raise status_error(response.status, "HTTP_STATUS_ERROR")
+        text = response.content.decode(response.encoding or "utf-8", errors="replace")
+        title = ""
+        if response.content_type.split(";", 1)[0].strip().lower() in (
+            "text/html",
+            "application/xhtml+xml",
+        ):
+            title, text = html_to_text(text)
+        limit = cfg.get("max_chars", DEFAULT_MAX_CHARS)
+        return NodeResult(
+            {
+                "url": url,
+                "status": response.status,
+                "title": title,
+                "text": text[:limit],
+                "truncated": len(text) > limit,
             }
         )
 

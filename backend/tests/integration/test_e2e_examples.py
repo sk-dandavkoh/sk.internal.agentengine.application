@@ -51,6 +51,7 @@ from akasha.domain.primitives import new_id
 from akasha.runtime.scheduler import TriggerScheduler
 from tests.integration.test_llm_node_runtime import answer
 from tests.support import (
+    CHAT_COMPLETION,
     SMTP_LOGIN,
     LocalHttpServer,
     Mailpit,
@@ -109,7 +110,7 @@ class Engine:
 
 
 @pytest.fixture
-async def engine(db_url: str, redis_url: str) -> AsyncIterator[Engine]:
+async def engine(db_url: str, redis_url: str, tmp_path: Path) -> AsyncIterator[Engine]:
     with (
         serve_http() as server,
         run_mailpit() as mailpit,
@@ -127,6 +128,7 @@ async def engine(db_url: str, redis_url: str) -> AsyncIterator[Engine]:
             web_search_url=AnyHttpUrl(server.base_url),
             # Mailpit and the loopback servers live on private addresses.
             network_allow_private=True,
+            workspace_dir=tmp_path,
             # The test drives cron with its own scheduler on a fake clock.
             scheduler_enabled=False,
             worker_poll_seconds=0.05,
@@ -174,7 +176,7 @@ def configure_for_installation(
     """What an operator edits after loading an example: the LLM provider
     and model this installation offers, and its SMTP server."""
     for node in graph["nodes"]:
-        if node["node_type"] == "core.llm":
+        if node["node_type"] in ("core.llm", "core.agent"):
             node["config"] |= {"provider": "local", "model": "e2e-model"}
         if node["node_type"] == "core.smtp":
             node["config"] |= {
@@ -474,6 +476,78 @@ async def test_web_research(engine: Engine) -> None:
     (llm_request,) = requests_to(engine.server, "/v1/chat/completions")
     prompt = json.loads(llm_request.body)["messages"][-1]["content"]
     assert "https://acme.example/jobs" in prompt
+
+    await export_import_and_rerun(engine, project_id, {"topic": "again"})
+    assert_no_secret_escaped(engine, json.dumps(doc))
+
+
+def tool_call(call_id: str, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    return CHAT_COMPLETION | {
+        "choices": [
+            {
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": call_id,
+                            "type": "function",
+                            "function": {
+                                "name": name,
+                                "arguments": json.dumps(arguments),
+                            },
+                        }
+                    ],
+                },
+                "finish_reason": "tool_calls",
+            }
+        ]
+    }
+
+
+async def test_research_agent(engine: Engine) -> None:
+    await login(engine)
+    page = f"{engine.server.base_url}/page"
+    engine.server.state.llm_bodies = [
+        tool_call("c1", "search", {"query": "agent engines"}),
+        tool_call("c2", "read_page", {"url": page}),
+        tool_call(
+            "c3",
+            "save_brief",
+            {"path": "research/brief.md", "content": f"# Agents\n\nSource: {page}"},
+        ),
+        answer(f"Agents run tools in a loop ({page})."),
+    ]
+    project_id, draft = await create_and_publish(engine, "research-agent")
+
+    execution_id = await invoke(
+        engine, project_id, draft["triggers"][0]["id"], {"topic": "agent engines"}
+    )
+
+    doc = await inspect_completed(engine, project_id, execution_id)
+    outputs = outputs_by_label(doc)
+    assert outputs["summary"] == {"value": f"Agents run tools in a loop ({page})."}
+    steps = outputs["researcher"]["steps"]
+    assert [(s["tool"], s["node_type"], s["ok"]) for s in steps] == [
+        ("search", "core.web_search", True),
+        ("read_page", "core.web_fetch", True),
+        ("save_brief", "core.file_write", True),
+    ]
+    workspace = engine.container.settings.workspace_dir
+    assert workspace is not None
+    brief = workspace / project_id / "research" / "brief.md"
+    assert brief.read_text() == f"# Agents\n\nSource: {page}"
+
+    # Search, page fetch and four model calls really went over HTTP.
+    assert len(requests_to(engine.server, "/search")) == 1
+    assert len(requests_to(engine.server, "/page")) == 1
+    llm_requests = requests_to(engine.server, "/v1/chat/completions")
+    assert len(llm_requests) == 4
+    last = json.loads(llm_requests[-1].body)["messages"]
+    assert "Tools <run> in a loop." in last[-3]["content"]  # the page text
+    for request in llm_requests:
+        assert request.headers["authorization"] == f"Bearer {LLM_KEY}"
 
     await export_import_and_rerun(engine, project_id, {"topic": "again"})
     assert_no_secret_escaped(engine, json.dumps(doc))

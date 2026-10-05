@@ -15,8 +15,8 @@ to end by `backend/tests/deployment/test_compose_lifecycle.py` (see
 | `postgres` | `postgres:17.2` | system of record | volume `pgdata` |
 | `redis` | `redis:8.2.1-alpine` | execution queue (AOF on) | volume `redisdata` |
 | `migrate` | `akasha-backend:0.1.0` | `akasha migrate`, then exits 0 | — |
-| `api` | `akasha-backend:0.1.0` | HTTP API + trigger scheduler | volume `plugins` |
-| `worker` | `akasha-backend:0.1.0` | runs executions (`akasha worker`) | volume `plugins` |
+| `api` | `akasha-backend:0.1.0` | HTTP API + trigger scheduler | volumes `plugins`, `workspace` |
+| `worker` | `akasha-backend:0.1.0` | runs executions (`akasha worker`) | volumes `plugins`, `workspace` |
 | `ui` | `akasha-ui:0.1.0` | the UI; proxies the API | — |
 
 Start order is enforced: `secrets` completed → `postgres` healthy →
