@@ -53,6 +53,10 @@ class PluginMetadata:
     dependencies: tuple[Dependency, ...] = field(default_factory=tuple)
     nodes: tuple[PluginNode, ...] = field(default_factory=tuple)
     documentation: str = ""  # path of the docs file inside the package
+    # PEP 508 requirements of third-party libraries the plugin's code
+    # imports, validated by ``plugins.manifest``; installed per plugin by
+    # ``plugins.dependencies`` (ADR 0004).
+    python_requirements: tuple[str, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         if not _PLUGIN_ID_RE.match(self.plugin_id):

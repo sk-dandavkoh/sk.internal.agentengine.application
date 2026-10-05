@@ -15,6 +15,7 @@ rule lives here. Changes apply to this process; dedicated worker processes
 see them after a restart (§36).
 """
 
+import asyncio
 import tempfile
 from pathlib import Path
 from typing import Annotated, Any
@@ -123,6 +124,10 @@ def create_plugins_router() -> APIRouter:
         code: {"model": ErrorResponse} for code in (403, 404, 409, 422, 500)
     }
     router = APIRouter(prefix="/plugins", tags=["plugins"], responses=errors)
+    # Serializes lifecycle calls: ``prepare`` runs in a thread (it may
+    # install Python libraries for minutes, ADR 0004) and the registry is
+    # not locked itself. Registry state only changes on the event loop.
+    lifecycle = asyncio.Lock()
 
     @router.get("")
     async def list_plugins(request: Request) -> PluginList:
@@ -169,20 +174,27 @@ def create_plugins_router() -> APIRouter:
             ),
         )
         registry = _registry(request)
-        # ponytail: unpack, copy and import run on the event loop, which also
-        # serializes concurrent lifecycle calls on the (unlocked) registry.
-        # Move to a thread behind a lock if installs get large or slow.
-        with tempfile.TemporaryDirectory(prefix="akasha-plugin-upload-") as tmp:
-            record = registry.install(unpack_package(data, Path(tmp)))
+        # ponytail: unpack, copy and import stay on the event loop (bounded
+        # by the archive limits); only installing libraries is slow.
+        async with lifecycle:
+            with tempfile.TemporaryDirectory(prefix="akasha-plugin-upload-") as tmp:
+                package = unpack_package(data, Path(tmp))
+                await asyncio.to_thread(registry.prepare, package)
+                record = registry.install(package)
         return PluginOut.from_record(record)
 
     @router.post("/{plugin_id}/enable")
     async def enable_plugin(plugin_id: str, request: Request) -> PluginOut:
-        return PluginOut.from_record(_registry(request).enable(plugin_id))
+        registry = _registry(request)
+        async with lifecycle:
+            if registry.get(plugin_id).metadata is not None:
+                await asyncio.to_thread(registry.prepare, registry.path(plugin_id))
+            return PluginOut.from_record(registry.enable(plugin_id))
 
     @router.post("/{plugin_id}/disable")
     async def disable_plugin(plugin_id: str, request: Request) -> PluginOut:
-        return PluginOut.from_record(_registry(request).disable(plugin_id))
+        async with lifecycle:
+            return PluginOut.from_record(_registry(request).disable(plugin_id))
 
     @router.delete("/{plugin_id}")
     async def delete_plugin(
@@ -192,9 +204,10 @@ def create_plugins_router() -> APIRouter:
             bool, Query(description="Remove even though projects use it")
         ] = False,
     ) -> RemovePluginResponse:
-        users = await remove_plugin(
-            _registry(request), _projects(request), plugin_id, force=force
-        )
+        async with lifecycle:
+            users = await remove_plugin(
+                _registry(request), _projects(request), plugin_id, force=force
+            )
         return RemovePluginResponse(plugin_id=plugin_id, affected_projects=list(users))
 
     return router

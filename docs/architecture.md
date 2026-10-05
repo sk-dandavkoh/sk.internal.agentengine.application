@@ -1950,6 +1950,16 @@ Implementation (Phase 17, `backend/src/akasha/plugins/`, guide in
   `AKASHA_PLUGINS_HTTP_INSTALL` is set; `plugins.archive` unpacks uploads
   (relative regular files only, size and entry caps) before the usual
   install.
+- Third-party libraries (ADR 0004, `plugins/dependencies.py`): the manifest
+  lists PEP 508 `python_requirements`. The Engine installs them with uv
+  (wheels only) into `<plugins_dir>/.deps/<plugin id>` and appends that
+  directory to `sys.path` while the plugin is enabled. Resolution pins the
+  Engine's libraries and those of other plugins to their current
+  versions, so a process has one version of each library. A version that
+  conflicts with one already loaded is refused until a restart. A
+  directory that is missing or stale (other requirements, Python or Engine
+  libraries) is rebuilt on startup or enable. The HTTP API runs that slow
+  step in a thread, behind a lock that serializes lifecycle calls.
 
 ----------
 

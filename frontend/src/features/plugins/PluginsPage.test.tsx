@@ -257,6 +257,28 @@ describe('PluginsPage', () => {
         )
     })
 
+    it('shows why the Python libraries of a package could not be installed', async () => {
+        stubBackend({
+            'GET /plugins': () => list([]),
+            'POST /plugins': () =>
+                error(422, 'PLUGIN_DEPENDENCIES_FAILED', {
+                    plugin_id: 'acme',
+                    output: 'No solution found: httpx==0.1 conflicts with httpx==0.28.1',
+                }),
+        })
+        renderRoute('/plugins')
+        const dialog = await openInstall()
+
+        fireEvent.click(
+            dialog.getByRole('button', { name: 'Install and run plugin code' }),
+        )
+
+        const alert = await dialog.findByRole('alert')
+        expect(alert).toHaveTextContent(
+            'No solution found: httpx==0.1 conflicts with httpx==0.28.1',
+        )
+    })
+
     it('disables and enables through the backend and shows its new state', async () => {
         let state = 'enabled'
         const calls: string[] = []

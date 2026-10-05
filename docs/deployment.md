@@ -296,6 +296,18 @@ docker compose run --rm -v "$PWD/my-plugin:/tmp/plugin:ro" api plugin install /t
 docker compose restart api worker
 ```
 
+A plugin may declare Python libraries (`python_requirements`, ADR 0004).
+The backend installs them with uv into the `plugins` volume, at install
+time and again on startup when they are missing or were installed for an
+older engine. So installation, and the first start after an upgrade, need
+the package index. PyPI is the default. To use a private index or an
+offline wheelhouse, set uv's variables in `.env`, for example
+`UV_DEFAULT_INDEX=https://pypi.example/simple`, or `UV_FIND_LINKS=/wheels`
+with `UV_OFFLINE=1` and the wheels mounted. A failed install reports
+`PLUGIN_DEPENDENCIES_FAILED` with uv's explanation. A plugin that cannot
+get its libraries at startup is listed as `failed`. Developing plugins
+against a local stack: `docs/sdk.md` §11.
+
 Admins can also enable, disable and remove plugins in the UI (`/plugins`).
 Uploading a package there is off by default. Setting
 `AKASHA_PLUGINS_HTTP_INSTALL=true` turns it on, and then every admin account

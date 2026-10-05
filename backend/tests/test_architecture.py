@@ -121,6 +121,9 @@ def test_builtin_nodes_use_the_sdk_for_the_node_contract() -> None:
 _FORBIDDEN_CALLS = {"eval", "exec", "compile", "__import__"}
 _FORBIDDEN_MODULES = {"pickle", "marshal", "shelve", "dill", "yaml", "subprocess"}
 _CODE_LOADERS = {"plugins/registry.py", "cli.py"}  # trusted, operator-chosen code
+# Runs uv with a fixed argv to install plugin libraries (ADR 0004); shell=
+# stays forbidden there too.
+_SUBPROCESS_USERS = {"plugins/dependencies.py"}
 
 
 def test_no_arbitrary_code_execution_primitives() -> None:
@@ -130,9 +133,16 @@ def test_no_arbitrary_code_execution_primitives() -> None:
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for imported in _imports(path):
             root = imported.split(".")[0]
-            if root in _FORBIDDEN_MODULES:
+            if root in _FORBIDDEN_MODULES and not (
+                root == "subprocess" and rel in _SUBPROCESS_USERS
+            ):
                 offenders.append(f"{rel}: imports {imported}")
-            if root == "importlib" and rel not in _CODE_LOADERS:
+            # importlib.metadata reads distribution metadata, it runs no code.
+            if (
+                root == "importlib"
+                and imported != "importlib.metadata"
+                and rel not in _CODE_LOADERS
+            ):
                 offenders.append(f"{rel}: loads code via {imported}")
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):

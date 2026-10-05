@@ -30,6 +30,8 @@ const detailsSchema = z.object({
     dependents: z.array(z.string()).optional(), // PLUGIN_IN_USE (plugins)
     projects: z.array(z.string()).optional(), // PLUGIN_IN_USE (projects)
     path: z.string().optional(), // PLUGIN_PACKAGE_INVALID
+    output: z.string().optional(), // PLUGIN_DEPENDENCIES_FAILED: uv's explanation
+    distributions: z.array(z.string()).optional(), // ... already loaded: restart
 })
 
 /** The backend's error message plus whatever structured detail it sent. */
@@ -63,6 +65,12 @@ function PluginError({ error }: { error: unknown }) {
                     Entry: <code>{d.path}</code>
                 </p>
             )}
+            {d.output && (
+                <pre className="max-h-48 overflow-auto text-xs whitespace-pre-wrap break-words">
+                    {d.output}
+                </pre>
+            )}
+            {list('Libraries loaded in another version', d.distributions)}
             {list('Enabled plugins that depend on it', d.dependents)}
             {d.projects && d.projects.length > 0 && (
                 <div>

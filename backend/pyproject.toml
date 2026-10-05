@@ -15,6 +15,7 @@ dependencies = [
     "litellm~=1.103.1",
     "prometheus-client~=0.26",
     "psycopg[binary]>=3.2",
+    "packaging>=26.0",
     "pydantic-settings>=2.15.0",
     "redis~=8.1",
     "sqlalchemy[asyncio]>=2.0",
@@ -61,6 +62,8 @@ select = ["E", "F", "I", "UP", "B", "ASYNC", "S", "T20", "RUF"]
 "examples/**/test_*.py" = ["S101"]
 # The deployment test drives the docker CLI (fixed argv, no shell, PATH lookup).
 "tests/deployment/**" = ["S101", "S603", "S607"]
+# Runs uv with a fixed argv (no shell) to install plugin libraries (ADR 0004).
+"src/akasha/plugins/dependencies.py" = ["S603"]
 # The CLI's output is its interface: print is the point, not debug residue.
 "src/akasha/cli.py" = ["T201"]
 

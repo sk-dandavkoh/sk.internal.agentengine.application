@@ -23,9 +23,11 @@ from akasha.infrastructure.persistence import SqlAlchemyUnitOfWork
 from akasha.nodes.builtins import create_builtin_registry
 from akasha.nodes.registry import NodeRegistry
 from akasha.plugins.registry import PluginRegistry
+from akasha.sdk.testing import run_node
 from tests.integration.fixtures import AuthKit, make_auth_kit
 from tests.integration.test_cli import echo_graph, set_draft
 from tests.integration.test_triggers_api import assert_error
+from tests.test_plugin_dependencies import local_index, plugin_using
 from tests.test_plugins import SAMPLE, write_plugin
 
 pytestmark = pytest.mark.usefixtures("clean_db")
@@ -156,6 +158,32 @@ async def test_installs_an_uploaded_package(database: Database, tmp_path: Path) 
     assert (installed / "text_tools" / "akasha-plugin.json").is_file()
     # A restart sees the same installation.
     assert _registry(installed).get("text_tools").state == "enabled"
+
+
+async def test_upload_installs_the_python_libraries_the_plugin_declares(
+    database: Database, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    lib = local_index(tmp_path, monkeypatch).library("1.0")
+    installed = _installed(tmp_path)
+    nodes = NodeRegistry()
+    registry = PluginRegistry(installed, nodes)
+    package = plugin_using(tmp_path, lib, f"{lib}==1.0")
+    missing = plugin_using(tmp_path, lib, f"{lib}==9.0", plugin_id="broken")
+
+    async with _client(database, registry) as (client, _kit, admin):
+        response = await client.post(
+            "/api/v1/plugins", content=zipped(package), headers={**admin, **ZIP}
+        )
+        failed = await client.post(
+            "/api/v1/plugins", content=zipped(missing), headers={**admin, **ZIP}
+        )
+
+    assert response.status_code == 201, response.text
+    run = await run_node(nodes.resolve("acme.echo", ">=1.0.0")())
+    assert run.outputs == {"out": "1.0"}
+    assert_error(failed, 422, "PLUGIN_DEPENDENCIES_FAILED")
+    assert failed.json()["details"]["plugin_id"] == "broken"
+    assert sorted(p.name for p in (installed / ".deps").iterdir()) == ["acme"]
 
 
 async def test_package_at_the_archive_root_installs_too(

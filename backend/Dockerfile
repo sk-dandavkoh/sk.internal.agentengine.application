@@ -23,6 +23,8 @@ COPY src ./src
 RUN uv sync --frozen --no-dev
 
 FROM python:3.14.0-slim-trixie
+# Installs the Python libraries plugins declare (ADR 0004).
+COPY --from=uv /uv /bin/uv
 RUN useradd --system --uid 10001 --user-group --home-dir /app --no-create-home akasha \
     && mkdir -p /var/lib/akasha/plugins \
     && chown -R akasha:akasha /var/lib/akasha
@@ -32,7 +34,8 @@ ENV PATH=/app/.venv/bin:$PATH \
     AKASHA_ENVIRONMENT=production \
     AKASHA_HOST=0.0.0.0 \
     AKASHA_PORT=8000 \
-    AKASHA_PLUGINS_DIR=/var/lib/akasha/plugins
+    AKASHA_PLUGINS_DIR=/var/lib/akasha/plugins \
+    UV_PYTHON_DOWNLOADS=never
 WORKDIR /app
 USER akasha
 EXPOSE 8000

@@ -24,8 +24,9 @@ instead, and nothing else would change.
 
 Installed layout under the configured directory::
 
-    <plugins_dir>/<plugin_id>/   an installed package (copy of the source)
-    <plugins_dir>/state.json     {"disabled": [plugin ids]}
+    <plugins_dir>/<plugin_id>/        an installed package (copy of the source)
+    <plugins_dir>/.deps/<plugin_id>/  its Python libraries (``dependencies``)
+    <plugins_dir>/state.json          {"disabled": [plugin ids]}
 
 Single-process: another process (future workers) sees changes after a
 restart. Removal is not blocked by Projects using the plugin's nodes:
@@ -51,6 +52,7 @@ from akasha.domain.node import Node
 from akasha.domain.plugin import PluginMetadata, compatibility_issues
 from akasha.errors import AkashaError, ConfigurationError, InvalidStateTransitionError
 from akasha.nodes.registry import NodeRegistry
+from akasha.plugins.dependencies import PluginDependencies
 from akasha.plugins.manifest import PluginManifestError, read_manifest
 from akasha.sdk import SDK_VERSION
 
@@ -119,6 +121,7 @@ class PluginRegistry:
             )
         self._dir = directory
         self._nodes = nodes
+        self._deps = PluginDependencies(directory)
         self._engine_version = engine_version
         self._sdk_version = sdk_version
         self._records: dict[str, PluginRecord] = {}
@@ -140,6 +143,10 @@ class PluginRegistry:
 
     def list_plugins(self) -> list[PluginRecord]:
         return [self._records[k] for k in sorted(self._records)]
+
+    def path(self, plugin_id: str) -> Path:
+        """Where the installed package of ``plugin_id`` lives."""
+        return self._dir / plugin_id
 
     # -- lifecycle --------------------------------------------------------
 
@@ -202,24 +209,44 @@ class PluginRegistry:
                 "A plugin with this id is already installed.",
                 details={"plugin_id": metadata.plugin_id},
             )
-        self._check_compatible(metadata)
-        staging = self._dir / f".install-{uuid.uuid4().hex}"
         try:
-            _copy_package(source, staging)
-            # The source may have changed since it was validated.
-            if read_manifest(staging) != metadata:
-                raise PluginPackageError("The plugin package changed during install.")
-            staging.rename(target)
-        finally:
-            shutil.rmtree(staging, ignore_errors=True)
-        try:
-            self._activate(target, metadata)
+            self._check_compatible(metadata)
+            staging = self._dir / f".install-{uuid.uuid4().hex}"
+            try:
+                _copy_package(source, staging)
+                # The source may have changed since it was validated.
+                if read_manifest(staging) != metadata:
+                    raise PluginPackageError(
+                        "The plugin package changed during install."
+                    )
+                staging.rename(target)
+            finally:
+                shutil.rmtree(staging, ignore_errors=True)
+            try:
+                self._activate(target, metadata)
+            except BaseException:
+                shutil.rmtree(target, ignore_errors=True)
+                raise
         except BaseException:
-            shutil.rmtree(target, ignore_errors=True)
+            # Libraries ``prepare`` or ``_activate`` installed for it.
+            self._deps.remove(metadata.plugin_id)
             raise
         self._save_state()  # drops a stale "disabled" entry of an old install
         _log("plugin_installed", metadata)
         return self._records[metadata.plugin_id]
+
+    def prepare(self, package: Path) -> None:
+        """Install the Python libraries of the package at ``package`` (a
+        source to ``install``, or an installed plugin to ``enable``) ahead
+        of that call, which then finds them current. This is the slow part
+        of both, and it changes no registry state: callers may run it off
+        the event loop. Not concurrently with another lifecycle call."""
+        metadata = read_manifest(package)
+        installed = self._dir / metadata.plugin_id
+        if installed.exists() and package.resolve() != installed.resolve():
+            return  # ``install`` refuses it: leave the installed one's alone
+        self._check_compatible(metadata)
+        self._deps.ensure(metadata)
 
     def enable(self, plugin_id: str) -> PluginRecord:
         record = self.get(plugin_id)
@@ -255,6 +282,7 @@ class PluginRegistry:
             self._deactivate(plugin_id)
         del self._records[plugin_id]
         shutil.rmtree(self._dir / plugin_id)
+        self._deps.remove(plugin_id)
         self._save_state()
         logger.info(
             "plugin_removed", extra={"event": "plugin_removed", "plugin_id": plugin_id}
@@ -281,6 +309,9 @@ class PluginRegistry:
 
     def _activate(self, path: Path, metadata: PluginMetadata) -> None:
         self._check_compatible(metadata)
+        libraries = self._deps.ensure(metadata)
+        if libraries is not None:
+            self._deps.activate(metadata.plugin_id, libraries)
         registered: list[str] = []
         try:
             for node_cls in _load(path, metadata):
@@ -290,6 +321,7 @@ class PluginRegistry:
             for node_id in registered:
                 self._nodes.unregister(node_id)
             _unimport(metadata.plugin_id)
+            self._deps.deactivate(metadata.plugin_id)
             if isinstance(exc, AkashaError) or not isinstance(exc, Exception):
                 raise
             # ``register`` instantiates each node once: a plugin node's
@@ -317,6 +349,7 @@ class PluginRegistry:
             self._nodes.unregister(node.node_id)
         del self._versions[plugin_id]
         _unimport(plugin_id)
+        self._deps.deactivate(plugin_id)
         return metadata
 
     def _fail(

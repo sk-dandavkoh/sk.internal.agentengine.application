@@ -40,6 +40,8 @@ const failures: Record<string, string> = {
         'It is not compatible with this engine or SDK, a plugin it depends on is not enabled, or its dependencies form a cycle.',
     PLUGIN_LOAD_FAILED:
         'Its code raised an error while loading. The server log has the details.',
+    PLUGIN_DEPENDENCIES_FAILED:
+        'Its Python libraries could not be installed or conflict with libraries already loaded. The server log has the details.',
 }
 
 type Action =
