@@ -40,9 +40,12 @@ export function Field({
                 </p>
             )}
             {children}
+            {/* An alert: errors from the server appear after submit, while
+                focus is still on the submit button, and must be heard. */}
             {error && (
                 <p
                     id={`${id}-error`}
+                    role="alert"
                     className="text-sm font-medium text-danger-text"
                 >
                     {error}

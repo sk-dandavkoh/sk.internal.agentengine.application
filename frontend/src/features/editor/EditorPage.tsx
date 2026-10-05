@@ -62,6 +62,11 @@ function SaveStatus({
     )
 }
 
+// jsdom has no matchMedia.
+const prefersReducedMotion = () =>
+    typeof matchMedia === 'function' &&
+    matchMedia('(prefers-reduced-motion: reduce)').matches
+
 /** Shortcuts apply on the editor, never inside text fields (AGENTS §81). */
 function isTextInput(target: EventTarget) {
     return (
@@ -235,7 +240,7 @@ function DraftEditor({
         if (position)
             void setCenter(position.x + 90, position.y + 40, {
                 zoom: 1,
-                duration: 200,
+                duration: prefersReducedMotion() ? 0 : 200,
             })
     }
 
@@ -365,7 +370,11 @@ function DraftEditor({
                 </Alert>
             ) : null}
 
-            <div className="flex min-h-[32rem] flex-col gap-3 lg:flex-row">
+            {/* The canvas needs width: three columns only from 2xl (at lg
+                it shrank to a sliver between library and panels), library
+                beside canvas from xl, stacked below. DOM order stays the
+                visual order, so Tab order follows the layout. */}
+            <div className="flex flex-col gap-3 xl:grid xl:grid-cols-[18rem_minmax(0,1fr)] 2xl:min-h-[32rem] 2xl:grid-cols-[18rem_minmax(0,1fr)_24rem]">
                 <NodeLibrary
                     query={catalogQuery}
                     onAdd={(d) => {
@@ -378,7 +387,7 @@ function DraftEditor({
                     // keyboard shortcuts here.
                     tabIndex={-1}
                     aria-label="Graph canvas"
-                    className="h-[32rem] min-w-0 flex-1 overflow-hidden rounded-md border border-border bg-canvas lg:h-auto"
+                    className="h-[32rem] min-w-0 overflow-hidden rounded-md border border-border bg-canvas 2xl:h-auto"
                 >
                     <GraphCanvas
                         graph={state.graph}
@@ -409,7 +418,7 @@ function DraftEditor({
                         }}
                     />
                 </section>
-                <div className="flex flex-col gap-3 lg:w-96 lg:shrink-0">
+                <div className="flex flex-col gap-3 xl:col-span-2 2xl:col-span-1">
                     <ValidationPanel
                         workflow={workflow}
                         revision={state.revision}
@@ -466,6 +475,11 @@ function DraftEditor({
                         <h2 id="draft-nodes" className="mb-2 font-semibold">
                             Nodes ({state.graph.nodes.length})
                         </h2>
+                        {/* Adding, deleting, connecting or undoing changes
+                            the graph off-focus: announce its new size. */}
+                        <p role="status" className="sr-only">
+                            {`${String(state.graph.nodes.length)} nodes, ${String(state.graph.edges.length)} connections`}
+                        </p>
                         {state.graph.nodes.length === 0 ? (
                             <p className="text-sm text-muted">
                                 This draft has no nodes yet.

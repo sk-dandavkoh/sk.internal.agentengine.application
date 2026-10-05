@@ -1,4 +1,5 @@
 import { expect, test } from './fixtures'
+import { expectAccessible } from './a11y'
 import { stubSession } from './session'
 
 // Native behavior jsdom cannot provide (top layer, focus containment,
@@ -124,3 +125,13 @@ test('catalog fits a phone viewport without page-level horizontal scroll', async
     )
     expect(overflow).toBe(false)
 })
+
+// Every primitive and tone is on the catalog: one axe pass per scheme
+// guards the token contrasts (dark primary once failed 4.5:1 as link text).
+for (const colorScheme of ['light', 'dark'] as const)
+    test(`catalog passes axe in the ${colorScheme} color scheme`, async ({
+        page,
+    }) => {
+        await page.emulateMedia({ colorScheme })
+        await expectAccessible(page)
+    })

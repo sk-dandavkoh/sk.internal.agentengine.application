@@ -149,6 +149,9 @@ function LibraryItem({
             <details className="mt-1 text-xs">
                 <summary className="focus-ring cursor-pointer rounded text-muted">
                     Preview and details
+                    {/* Thirteen identical summaries are ambiguous out of
+                        context, e.g. in a screen reader's control list. */}
+                    <span className="sr-only"> of {d.name}</span>
                 </summary>
                 <div className="mt-1 flex flex-col gap-2">
                     {/* As it will look on the canvas. Hidden from assistive
@@ -202,7 +205,7 @@ export function NodeLibrary({
     return (
         <section
             aria-labelledby="node-library"
-            className="flex flex-col gap-2 rounded-md border border-border bg-surface p-3 lg:max-h-[40rem] lg:w-72 lg:overflow-y-auto"
+            className="flex flex-col gap-2 rounded-md border border-border bg-surface p-3 max-h-[24rem] overflow-y-auto xl:max-h-[32rem] 2xl:max-h-[40rem]"
         >
             <h2 id="node-library" className="font-semibold">
                 Node library

@@ -75,7 +75,7 @@ export function ChevronDownIcon() {
 
 export function Spinner() {
     return (
-        <Icon className="size-4 shrink-0 animate-spin">
+        <Icon className="size-4 shrink-0 animate-spin motion-reduce:animate-none">
             <path d="M10 2.5a7.5 7.5 0 1 0 7.5 7.5" />
         </Icon>
     )

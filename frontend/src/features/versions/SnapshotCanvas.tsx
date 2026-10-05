@@ -123,6 +123,9 @@ export function SnapshotCanvas({
                 nodesConnectable={false}
                 elementsSelectable={false}
                 edgesReconnectable={false}
+                // Read-only edges have no keyboard action; as Tab stops
+                // they only read out raw node ids.
+                edgesFocusable={false}
                 deleteKeyCode={null}
                 onNodeClick={(_, node) => {
                     onNodeClick?.(node.id)

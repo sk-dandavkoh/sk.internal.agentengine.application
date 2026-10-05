@@ -1,5 +1,6 @@
 import type { Locator, Page } from '@playwright/test'
 import { expect, test } from './fixtures'
+import { expectAccessible, expectNoHorizontalScroll } from './a11y'
 import { stubSession } from './session'
 
 // The draft editor in a real browser: layout-dependent behavior jsdom
@@ -580,3 +581,75 @@ test('stays usable with a graph at the node limit', async ({ page: p }) => {
     expect(saved[0]?.graph.nodes[262]?.position?.y).toBeGreaterThan(1400)
     expect(saved[0]?.graph.edges).toHaveLength(800)
 })
+
+test('builds and saves a graph by keyboard alone', async ({ page: p }) => {
+    const saved = await fakeBackend(p)
+    await p.goto('/projects/p1/editor')
+    const graphSize = p
+        .getByRole('status')
+        .filter({ hasText: /^\d+ nodes, \d+ connections$/ })
+    await expect(graphSize).toHaveText('2 nodes, 1 connections')
+
+    // Add from the library: the change is announced, focus stays put.
+    const add = p.getByRole('button', { name: 'Add core.log to graph' })
+    await add.focus()
+    await p.keyboard.press('Enter')
+    await expect(graphSize).toHaveText('3 nodes, 1 connections')
+    await expect(add).toBeFocused()
+
+    // Tab carries on from the library into the canvas, to the nodes, each
+    // with a visible focus ring.
+    const lead = node(p, /Lead in/)
+    for (let i = 0; i < 10; i++) {
+        await p.keyboard.press('Tab')
+        if (await lead.and(p.locator(':focus')).count()) break
+    }
+    await expect(lead).toBeFocused()
+    await expect(lead).toHaveCSS('outline-style', 'solid')
+
+    // Enter selects it and opens its inspector; connect through the form.
+    await p.keyboard.press('Enter')
+    await expect(lead).toHaveClass(/selected/)
+    const connections = p.getByRole('region', { name: 'Connections: Lead in' })
+    await connections
+        .getByLabel('To input')
+        .selectOption({ label: 'core.log › value' })
+    await connections
+        .getByRole('button', { name: 'Connect', exact: true })
+        .press('Enter')
+    await expect(graphSize).toHaveText('3 nodes, 2 connections')
+
+    // Back on the canvas node, Delete removes it with its connections.
+    await lead.focus()
+    await p.keyboard.press('Delete')
+    await expect(graphSize).toHaveText('2 nodes, 0 connections')
+
+    await p.keyboard.press('ControlOrMeta+s')
+    await expect(p.getByText('All changes saved to draft')).toBeVisible()
+    expect(saved.at(-1)?.graph.nodes.map((n) => n.node_type)).toEqual([
+        'core.log',
+        'core.log',
+    ])
+})
+
+// Phone, tablet, small laptop, laptop, desktop. The editor is desktop-first
+// but must not collapse: at 1024 px the canvas once shrank to a 40 px
+// sliver between the library and the side panels, and below lg it had no
+// height at all.
+for (const width of [390, 768, 1024, 1280, 1600])
+    test(`keeps the canvas usable at ${String(width)} px`, async ({
+        page: p,
+    }) => {
+        await fakeBackend(p)
+        await p.setViewportSize({ width, height: 900 })
+        await p.goto('/projects/p1/editor')
+        await expect(node(p, /Lead in/)).toBeVisible()
+
+        const canvas = await p
+            .getByRole('region', { name: 'Graph canvas' })
+            .boundingBox()
+        expect(canvas?.width).toBeGreaterThanOrEqual(Math.min(width - 48, 400))
+        expect(canvas?.height).toBeGreaterThanOrEqual(400)
+        await expectNoHorizontalScroll(p)
+        await expectAccessible(p)
+    })

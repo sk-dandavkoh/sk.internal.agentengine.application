@@ -22,13 +22,15 @@
     --color-muted: light-dark(var(--color-slate-600), var(--color-slate-400));
     --color-focus: light-dark(var(--color-indigo-600), var(--color-indigo-400));
 
+    /* Dark side is light enough for 4.5:1 as link text on every dark
+       surface, alert tones included, and under on-primary text. */
     --color-primary: light-dark(
         var(--color-indigo-700),
-        var(--color-indigo-500)
+        var(--color-indigo-300)
     );
     --color-primary-hover: light-dark(
         var(--color-indigo-800),
-        var(--color-indigo-400)
+        var(--color-indigo-200)
     );
     --color-on-primary: light-dark(var(--color-white), var(--color-slate-950));
     --color-danger: light-dark(var(--color-red-700), var(--color-red-500));
@@ -129,6 +131,26 @@
         transparent
     );
     --xy-selection-border: 1px dotted var(--color-primary);
+}
+
+/* React Flow's attribution link is #999 on white (2.8:1). */
+.draft-canvas .react-flow__attribution a {
+    color: var(--color-muted);
+}
+
+/* React Flow removes the focus outline of nodes and edges; Tab reaches
+   them, so keyboard users need the ring back (one more class than its
+   rules, whatever the stylesheet order). */
+.draft-canvas .react-flow__node.selectable:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+    border-radius: var(--radius-md);
+}
+.draft-canvas
+    .react-flow__edge.selectable:focus-visible
+    path.react-flow__edge-path {
+    stroke: var(--color-focus);
+    stroke-width: 3;
 }
 
 /* Connecting: ports and the drawn line say whether a connection fits.

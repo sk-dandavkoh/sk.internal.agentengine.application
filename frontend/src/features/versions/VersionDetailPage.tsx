@@ -38,6 +38,7 @@ import {
     useToast,
     type TableColumn,
 } from '../../components/ui'
+import { cx } from '../../lib/cx'
 import { RunVersion } from '../executions/RunVersion'
 import { ExecutionLink, StatusBadge } from '../executions/shared'
 import { ProjectFormDialog } from '../projects/ProjectFormDialog'
@@ -49,9 +50,17 @@ import { ProjectNotFound } from './VersionsPage'
 
 const EXECUTION_PAGE_SIZE = 20
 
-function Item({ term, children }: { term: string; children: ReactNode }) {
+function Item({
+    term,
+    children,
+    className,
+}: {
+    term: string
+    children: ReactNode
+    className?: string
+}) {
     return (
-        <div className="flex flex-col gap-0.5">
+        <div className={cx('flex flex-col gap-0.5', className)}>
             <dt className="text-muted">{term}</dt>
             <dd className="break-words">{children}</dd>
         </div>
@@ -93,14 +102,15 @@ function Metadata({
                 <Item term="Contents">
                     {`${String(version.graph.nodes.length)} nodes, ${String(version.graph.edges.length)} connections, ${String(version.triggers.length)} triggers, ${String(version.files.length)} files`}
                 </Item>
-                <div className="sm:col-span-2 lg:col-span-3">
-                    <Item term="Description">
-                        {/* Plain text, never HTML. */}
-                        <span className="whitespace-pre-wrap">
-                            {version.description || 'No description.'}
-                        </span>
-                    </Item>
-                </div>
+                <Item
+                    term="Description"
+                    className="sm:col-span-2 lg:col-span-3"
+                >
+                    {/* Plain text, never HTML. */}
+                    <span className="whitespace-pre-wrap">
+                        {version.description || 'No description.'}
+                    </span>
+                </Item>
             </dl>
         </Card>
     )
@@ -217,7 +227,7 @@ function ChangeList({ title, changes }: { title: string; changes: Changes }) {
     if (rows.length === 0) return null
     return (
         <div>
-            <h4 className="mb-1 font-medium">{title}</h4>
+            <h3 className="mb-1 font-medium">{title}</h3>
             <ul className="flex flex-col gap-1">
                 {rows.map(([kind, key]) => (
                     <li key={`${kind}:${key}`} className="flex gap-2">

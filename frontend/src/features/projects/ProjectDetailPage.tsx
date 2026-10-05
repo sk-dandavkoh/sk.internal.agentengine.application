@@ -21,6 +21,7 @@ import {
     useToast,
 } from '../../components/ui'
 import { formatDateTime } from '../../lib/format'
+import { cx } from '../../lib/cx'
 import { versionsPath } from '../versions/paths'
 import { VersionLink } from '../versions/shared'
 import { ProjectFormDialog } from './ProjectFormDialog'
@@ -30,9 +31,17 @@ type Action = 'edit' | 'duplicate' | 'delete' | null
 
 const projectPath = (id: string) => `/projects/${encodeURIComponent(id)}`
 
-function Item({ term, children }: { term: string; children: ReactNode }) {
+function Item({
+    term,
+    children,
+    className,
+}: {
+    term: string
+    children: ReactNode
+    className?: string
+}) {
     return (
-        <div className="flex flex-col gap-0.5">
+        <div className={cx('flex flex-col gap-0.5', className)}>
             <dt className="text-muted">{term}</dt>
             <dd className="break-words">{children}</dd>
         </div>
@@ -74,14 +83,15 @@ function Metadata({ project }: { project: Project }) {
                 <Item term="Draft contents">
                     {`${String(graph.nodes.length)} nodes, ${String(graph.edges.length)} connections, ${String(triggers.length)} triggers, ${String(project.files.length)} files`}
                 </Item>
-                <div className="sm:col-span-2 lg:col-span-3">
-                    <Item term="Description">
-                        {/* Plain text, never HTML. */}
-                        <span className="whitespace-pre-wrap">
-                            {project.description || 'No description.'}
-                        </span>
-                    </Item>
-                </div>
+                <Item
+                    term="Description"
+                    className="sm:col-span-2 lg:col-span-3"
+                >
+                    {/* Plain text, never HTML. */}
+                    <span className="whitespace-pre-wrap">
+                        {project.description || 'No description.'}
+                    </span>
+                </Item>
             </dl>
         </Card>
     )
