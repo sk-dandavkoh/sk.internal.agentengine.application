@@ -89,8 +89,8 @@ export function renderRoute(path: string) {
 
 /**
  * Settles once the initial navigation finished: lazy route modules are
- * loaded and loaders ran. Await it before `findBy*` queries on a heavy
- * route, so their 1 s budget covers rendering, not a cold module import.
+ * loaded and loaders ran. Await it when a test must act before anything
+ * is findable (e.g. advancing fake timers), or to time rendering alone.
  */
 function routerReady(router: ReturnType<typeof createMemoryRouter>) {
     return new Promise<void>((resolve) => {

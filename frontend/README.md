@@ -19,11 +19,42 @@ npm ci
 npx playwright install chromium   # once, only for E2E tests
 ```
 
+## Local development
+
+The UI needs a backend: every screen sits behind a session. Two terminals:
+
+```bash
+npm run dev:backend   # terminal 1: needs Docker and uv
+npm run dev           # terminal 2: http://localhost:5173
+```
+
+`dev:backend` runs the full-stack suite's throwaway backend
+(`tests/fullstack/backend.ts --dev`): the backend of this checkout on fresh
+PostgreSQL and Redis containers, migrated, with the in-process worker so
+executions run, on port 8000 (Vite's default proxy target). It creates an
+`admin` account and prints its generated password; sign in with that.
+Everything is gone after Ctrl+C, and the next start removes leftovers of a
+run that was killed. For data that survives restarts, run the backend
+yourself (`backend/README.md`, first admin via `/auth/setup`).
+
+Port 8000 taken? The script refuses to start instead of sharing the port.
+Pick another one for both sides:
+
+```bash
+AKASHA_E2E_API_PORT=8001 npm run dev:backend
+AKASHA_API_PROXY_TARGET=http://127.0.0.1:8001 npm run dev
+```
+
+(or put `AKASHA_API_PROXY_TARGET` in `.env.local`). The built-in example
+projects are in `backend/examples/projects/` (see `backend/README.md`).
+
 ## Commands
 
 | Command                  | Purpose                                              |
 | ------------------------ | ---------------------------------------------------- |
 | `npm run dev`            | Dev server on http://localhost:5173                  |
+| `npm run dev:backend`    | Throwaway backend for `dev` (see Local development)  |
+| `npm run check`          | Format check, lint, typecheck, unit tests, build     |
 | `npm run build`          | Typecheck, then production bundle into `dist/`       |
 | `npm run preview`        | Serve `dist/` locally                                |
 | `npm run typecheck`      | `tsc -b` over app and tooling configs                |
@@ -37,7 +68,7 @@ npx playwright install chromium   # once, only for E2E tests
 Quality gate before finishing a phase:
 
 ```bash
-npm run format:check && npm run lint && npm run typecheck && npm test && npm run build && npm run test:e2e && npm run test:fullstack
+npm run check && npm run test:e2e && npm run test:fullstack
 ```
 
 **Full-stack suite** (`tests/fullstack/`, `playwright.fullstack.config.ts`):
@@ -73,13 +104,14 @@ frontend/
 │   ├── main.tsx        entry point: mounts <App/>
 │   ├── app/            app root: router, shell layout, route boundaries
 │   ├── api/            the only backend communication layer (see API layer)
-│   ├── components/ui/  design system primitives (import from the index)
-│   ├── features/       product areas (dashboard, …); a feature owns its screens
 │   ├── components/     QuerySection: loading/error/stale states of one query
+│   ├── components/ui/  design system primitives (import from the index)
+│   ├── features/       product areas; a feature owns its screens, hooks and logic
 │   ├── lib/            small framework-free helpers (cx, format, form)
 │   ├── styles/         global CSS: Tailwind v4 entry and design tokens
-│   └── test/           Vitest setup; app.tsx renders routes against a stub backend
-├── tests/e2e/          Playwright specs
+│   └── test/           Vitest setup and test harness (see Testing)
+├── tests/e2e/          Playwright specs against a stubbed API
+├── tests/fullstack/    Playwright specs against the real backend; backend.ts
 ├── index.html
 ├── vite.config.ts      Vite + Vitest config
 ├── playwright.config.ts
@@ -88,9 +120,109 @@ frontend/
 └── tsconfig.node.json  tooling configs and e2e tests
 ```
 
-Later phases add directories as they gain content, following `AGENTS.md` §6:
-`features/<domain>/`, `hooks/`, `schemas/`, `types/`. Unit and component tests sit next to the code as
-`*.test.ts(x)`.
+There are no global `hooks/`, `schemas/` or `types/` directories (`AGENTS.md`
+§6 lists them as examples): hooks live in the feature that uses them, API
+schemas and the types inferred from them in `src/api/`. Unit and component
+tests sit next to the code as `*.test.ts(x)`; `*.node.test.ts` runs in Node
+instead of jsdom (the API client against a real HTTP server).
+
+### Adding a feature
+
+A screen is a route, a feature folder and the API calls it needs. Take
+`features/reports/` as the model:
+
+1. **API**: the service function in `src/api/<router>.ts` (Zod response
+   schema, type inferred from it), its query options in `queries.ts` (key in
+   `queryKeys`) or its mutation hook in `mutations.ts` (with what it
+   invalidates). Add the call to `contract.node.test.ts`; its coverage test
+   fails until you do. A new backend endpoint means regenerating
+   `src/api/openapi.json` (see "Contract with the backend").
+2. **Route**: a `lazy` entry in `src/app/routes.tsx`, and a `navItems` entry
+   in `src/app/navigation.ts` if it is a top-level area.
+3. **Screen**: `features/<area>/<Name>Page.tsx`, composed from
+   `components/ui` (`PageHeader`, `Card`, `Table`, …). Wrap each query in
+   `QuerySection` for loading, error, stale and empty states. Navigable state
+   (filters, tabs, page) goes in the URL.
+4. **Tests**: `<Name>Page.test.tsx` next to it (see Testing), plus a
+   Playwright spec only for what needs a real browser.
+5. **Docs**: a section in this README, like the ones below.
+
+### Conventions
+
+- **Errors**: every API failure is an `ApiError` with a `kind` (see API
+  layer). Show `error.message` (user-facing by construction) via
+  `ErrorState`, `Alert` or a field's `error`; map 422 `details` to fields;
+  answer 409 by reloading, never by overwriting. Do not catch errors to hide
+  them, and never show stack traces. A thrown render error reaches the route
+  boundary.
+- **No `fetch`** outside `src/api/` (ESLint enforces it), no
+  `dangerouslySetInnerHTML`, no secrets in state, storage, URLs or logs.
+- **Components**: function components, named exports, props typed inline or
+  as an `interface` above the component. Split a file when it holds more than
+  one screen-level responsibility (the editor is the model: canvas, library,
+  inspector and panels are separate files).
+- **Backend decides**: status, validity, permissions and compatibility come
+  from responses. Local checks are UX hints only (`AGENTS.md` §7).
+
+## Testing
+
+`npm test` runs every `src/**/*.test.ts(x)` in jsdom; `npm run test:watch`
+reruns on change. No test reaches a network.
+
+**Screen tests** (`src/test/app.tsx`) render real routes with the real
+router, `ApiClient` and `QueryClient`; only `fetch` is replaced:
+
+```tsx
+import { ok, apiError, pending, renderRoute, stubBackend } from '../../test/app'
+
+it('shows the report', async () => {
+    const requests = stubBackend({
+        'GET /reports/executions/exec_1': () => ok(report()),
+        'POST /executions/exec_1/cancel': () =>
+            apiError(409, 'EXECUTION_STATE', 'Already finished.'),
+    })
+    const { ready } = renderRoute('/reports/exec_1')
+    await ready // the lazy route is loaded; findBy* now times rendering only
+    expect(await screen.findByRole('heading', { name: /Report/ })).toBeVisible()
+    expect(requests.map((url) => url.pathname)).toContain(
+        '/api/v1/reports/executions/exec_1',
+    )
+})
+```
+
+- `stubBackend(handlers)`: keys are `"METHOD /path"` below `/api/v1`; a
+  handler gets the `URL` and `RequestInit` and returns `ok(body)`,
+  `apiError(status, code, message)` (the backend's error envelope), any
+  `{ status, body }`, or `pending()` to stay loading. Unknown routes answer 404. The user is signed in as `testUser` (admin) unless the test overrides
+  `GET /auth/session` (`noSession()` for signed out). It returns the request
+  log.
+- **Fixtures**: build response bodies with small functions at the top of the
+  test file that return a valid backend object and take overrides
+  (`execution(id, status)`, `project(overrides)`). They must match the
+  backend contract, since the client validates every response: a fixture the
+  schema rejects shows up as a "malformed response" error, not as a pass.
+- **Live updates**: `WebSocket` is `FakeWebSocket` (`src/test/websocket.ts`)
+  in every test. Drive it by hand: `serverOpen()`, `serverSend(frame)`,
+  `serverClose(code)`, and read `frames()` the client sent. Use fake timers
+  for backoff, never sleeps.
+- **Browser gaps**: jsdom has no layout and no real modal dialogs;
+  `setup.ts` stubs just enough for React Flow and `<dialog>` to mount.
+  Geometry, focus trapping and Escape belong in Playwright.
+- Locale is pinned to en-US in `setup.ts`, so formatted output is stable.
+
+**E2E** (`tests/e2e/`, `npm run test:e2e`): Playwright against the
+production build with the API stubbed through `page.route`. Call
+`stubSession(page)` (`tests/e2e/session.ts`) after the spec's own catch-all
+route. Use it for real-browser behavior: drag, layout, focus, native
+dialogs. The design-system catalog `/dev/ui` is its target for primitives.
+
+**Full stack** (`tests/fullstack/`, `npm run test:fullstack`): see above.
+Use it for journeys whose value is the real backend (publish, run,
+inspect).
+
+There is no Storybook: `/dev/ui` already renders every primitive in every
+state and both themes, and feature screens are best seen against
+`dev:backend`.
 
 ## Decisions
 
@@ -102,8 +234,7 @@ Later phases add directories as they gain content, following `AGENTS.md` §6:
 - **E2E runs against the production build** (`build` + `preview`), not the dev
   server, so it exercises what ships.
 - **React Router (data mode)**: routes live in `src/app/routes.tsx`; areas
-  are `lazy` routes so each feature becomes its own chunk. Until a feature's
-  phase lands, its route points at the shared `PlaceholderPage` chunk.
+  are `lazy` routes so each feature becomes its own chunk.
 - **Boundaries**: the root route's `errorElement` catches shell failures; a
   pathless content route's `errorElement` keeps the sidebar usable when a page
   fails. Unknown paths render `NotFoundPage` inside the shell. The first load
@@ -524,6 +655,24 @@ UI shows `[REDACTED]` as sent and stores nothing in browser storage. Node
 inputs are not shown: the backend does not persist them (the upstream
 outputs are what a node received).
 
+## Monitoring
+
+`/monitoring` (`features/monitoring/`): the runs created in a time window,
+from `GET /monitoring/summary?since=&until=` (at most 31 days; the
+backend aggregates persisted executions, not Prometheus counters). The range
+(last hour, 24 hours, 7 days or custom) lives in the URL; a preset is
+anchored when picked, and Refresh moves it to now.
+
+- Headline stats (success and failure rate over finished runs, with the
+  denominator), a stacked timeline with a table carrying the same numbers,
+  durations per outcome, top error codes and per-node-type performance
+  (completions, failures, retries, durations, tokens, cost per currency).
+- "Right now" (status counts) and system status are current state, not the
+  window.
+- `model.ts` only formats and mirrors the backend's custom-range rules for
+  field errors; every figure is the backend's. Data the backend does not
+  have (trigger breakdown, provider usage, queue depth) is not shown.
+
 ## Reports
 
 `/reports` (`features/reports/`) lists finished executions (completed,
@@ -608,6 +757,22 @@ timed_out`, `project.published`) and a source: this project, or any
   reference" and its input stays empty.
 - Unknown config keys are kept on edit. The type of an existing trigger is
   fixed: delete it and create a new one instead.
+
+## Plugins
+
+`/plugins` (`features/plugins/`, admin only) lists installed plugins from
+`GET /plugins`: state, version, engine/SDK constraints, dependencies, node
+types and, for a failed plugin, its reason. Plugins are executable code, so a
+trust warning is always shown (ADR 0001).
+
+- Enable, disable and remove go through the backend after a confirmation;
+  a removal that projects block can be forced behind a second confirmation.
+  Compatibility, validity and in-use are the backend's answer, shown with
+  its error details.
+- Install uploads a `.zip` only when the operator turned on
+  `AKASHA_PLUGINS_HTTP_INSTALL` (`install_enabled` in the list); otherwise
+  the page points to the CLI.
+- Plugin metadata is untrusted and rendered as plain text only.
 
 ## Authentication
 

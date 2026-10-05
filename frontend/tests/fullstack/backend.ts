@@ -5,36 +5,65 @@
 // Playwright's globalTeardown (teardown.ts) removes them, and leftovers of a
 // crashed run are removed here before starting.
 //
+// `--dev` (`npm run dev:backend`) serves the same backend on port 8000
+// (or AKASHA_E2E_API_PORT) for `npm run dev`, creates a first admin and
+// prints its throwaway password. Its containers have their own label, so a full-stack run never removes a
+// running dev backend. Data is gone when it stops: that is the point.
+//
 // Node rather than a shell script: Playwright starts web servers through
 // cmd.exe on Windows, which cannot run one. Run as `node backend.ts`
 // (type stripping, Node >= 22.18).
 import { execFileSync, spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
+import { connect } from 'node:net'
 import { resolve } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 
-const port = process.env.AKASHA_E2E_API_PORT
+const dev = process.argv.includes('--dev')
+// 8000: the proxy target `npm run dev` uses by default (vite.config.ts).
+const port = process.env.AKASHA_E2E_API_PORT ?? (dev ? '8000' : undefined)
 if (!port) throw new Error('AKASHA_E2E_API_PORT is not set')
-const label = 'akasha-e2e=fullstack'
+// Windows lets the server bind 127.0.0.1 next to another program's 0.0.0.0
+// on the same port, so a clash would not fail: requests would silently
+// reach whichever listener answers. Refuse up front instead.
+const taken = await new Promise<boolean>((done) => {
+    const socket = connect(Number(port), '127.0.0.1')
+    socket.once('connect', () => {
+        socket.destroy()
+        done(true)
+    })
+    socket.once('error', () => {
+        done(false)
+    })
+})
+if (taken)
+    throw new Error(
+        `Port ${port} is already in use. Stop that program or set ` +
+            'AKASHA_E2E_API_PORT (and, for `npm run dev`, AKASHA_API_PROXY_TARGET).',
+    )
+const label = `akasha-e2e=${dev ? 'dev' : 'fullstack'}`
 const backend = resolve(import.meta.dirname, '../../../backend')
 
 const docker = (...args: string[]) =>
     execFileSync('docker', args, { encoding: 'utf8' }).trim()
 
-async function until(check: () => void) {
+async function until(check: () => unknown) {
     for (;;) {
         try {
-            check()
+            await check()
             return
         } catch {
-            // Not ready yet: the container is still starting.
+            // Not ready yet: the container or server is still starting.
             await sleep(300)
         }
     }
 }
 
-const stale = docker('ps', '-aq', '--filter', `label=${label}`)
-if (stale) docker('rm', '-f', ...stale.split(/\s+/))
+function removeContainers() {
+    const ids = docker('ps', '-aq', '--filter', `label=${label}`)
+    if (ids) docker('rm', '-f', ...ids.split(/\s+/))
+}
+removeContainers()
 
 const pg = docker(
     'run',
@@ -88,7 +117,7 @@ const env: NodeJS.ProcessEnv = Object.fromEntries(
     Object.entries(process.env).filter(([key]) => !key.startsWith('AKASHA_')),
 )
 Object.assign(env, {
-    AKASHA_ENVIRONMENT: 'test',
+    AKASHA_ENVIRONMENT: dev ? 'development' : 'test',
     AKASHA_DATABASE_URL: `postgresql://akasha:akasha@127.0.0.1:${hostPort(pg, '5432/tcp')}/akasha`,
     AKASHA_REDIS_URL: `redis://127.0.0.1:${hostPort(redis, '6379/tcp')}/0`,
     AKASHA_HOST: '127.0.0.1',
@@ -112,4 +141,34 @@ execFileSync('uv', [...akasha, 'migrate'], { env, stdio: 'inherit' })
 const server = spawn('uv', [...akasha, 'serve'], { env, stdio: 'inherit' })
 for (const signal of ['SIGTERM', 'SIGINT'] as const)
     process.on(signal, () => server.kill(signal))
-server.on('exit', (code) => process.exit(code ?? 1))
+server.on('exit', (code) => {
+    if (dev) removeContainers()
+    process.exit(code ?? 1)
+})
+
+if (dev) {
+    const api = `http://127.0.0.1:${port}`
+    await until(async () => {
+        // Bounded: a listener that accepts but never answers would hang it.
+        const ready = await fetch(`${api}/ready`, {
+            signal: AbortSignal.timeout(2000),
+        })
+        if (!ready.ok) throw new Error('not ready')
+    })
+    const credentials = {
+        username: 'admin',
+        password: randomBytes(12).toString('hex'),
+    }
+    const setup = await fetch(`${api}/api/v1/auth/setup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(credentials),
+    })
+    if (!setup.ok) throw new Error(`auth/setup failed: ${String(setup.status)}`)
+    // A throwaway account on a throwaway database, printed so the developer
+    // can sign in; it dies with this process.
+    console.log(
+        `\nDev backend on ${api} (empty database, gone on Ctrl+C).\n` +
+            `Run \`npm run dev\` and sign in as ${credentials.username} / ${credentials.password}\n`,
+    )
+}

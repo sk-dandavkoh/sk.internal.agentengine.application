@@ -783,8 +783,9 @@ test('a run started in the UI is listed, opened and cancelled', async ({
     await p
         .getByRole('button', { name: 'Cancel execution', exact: true })
         .click()
-    // Running: the worker stops it cooperatively, after the request.
-    await expect(p.getByText('Cancellation requested')).toBeVisible()
+    // Running: the worker stops it cooperatively, after the request. Not
+    // asserted: the in-between "Cancellation requested", which the page
+    // shows only if its refetch beats the worker (it often does not).
     await expect(p.getByText('Cancelled').first()).toBeVisible()
     await expect(
         p.getByRole('button', { name: `Cancel execution ${executionId}` }),

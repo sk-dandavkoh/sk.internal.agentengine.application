@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom/vitest'
-import { cleanup } from '@testing-library/react'
+import { cleanup, configure } from '@testing-library/react'
 import { afterEach, beforeEach, vi } from 'vitest'
 import { FakeWebSocket } from './websocket'
 
@@ -31,6 +31,12 @@ Number.prototype.toLocaleString = function (
 ) {
     return new NumberFormat(locales ?? TEST_LOCALE, options).format(this)
 }
+
+// A screen test's first findBy* also waits for its lazy route module, and a
+// cold import of a feature chunk can exceed the 1 s default on a busy
+// machine (a VersionsPage test failed that way). findBy* resolves as soon
+// as the element appears, so the budget costs time only when a test fails.
+configure({ asyncUtilTimeout: 5000 })
 
 beforeEach(() => {
     // Live updates never reach a real server in unit/component tests.
