@@ -8,7 +8,7 @@ import {
     useDuplicateProject,
     useUpdateProject,
 } from '../../api/mutations'
-import type { Project } from '../../api/projects'
+import { exportProject, type Project } from '../../api/projects'
 import { projectQueries, queryKeys } from '../../api/queries'
 import { QuerySection } from '../../components/QuerySection'
 import {
@@ -21,6 +21,7 @@ import {
     useToast,
 } from '../../components/ui'
 import { formatDateTime } from '../../lib/format'
+import { saveFile } from '../../lib/saveFile'
 import { cx } from '../../lib/cx'
 import { versionsPath } from '../versions/paths'
 import { VersionLink } from '../versions/shared'
@@ -97,6 +98,41 @@ function Metadata({ project }: { project: Project }) {
     )
 }
 
+/** The draft's package, as the backend wrote it. */
+function ExportProject({ project }: { project: Project }) {
+    const client = useApiClient()
+    const toast = useToast()
+    const [busy, setBusy] = useState(false)
+    const download = async () => {
+        setBusy(true)
+        try {
+            const data = await exportProject(client, project.id)
+            // The id, not the name: server data stays out of file names.
+            const safe = project.id.replace(/[^\w-]/g, '_')
+            saveFile(`${safe}-draft.akasha.zip`, data)
+            toast.notify({
+                tone: 'success',
+                title: 'Project exported',
+                description:
+                    'Credential values are not part of the package, only their references.',
+            })
+        } catch (error) {
+            toast.notify({
+                tone: 'danger',
+                title: 'Could not export the project',
+                description: errorMessage(error),
+            })
+        } finally {
+            setBusy(false)
+        }
+    }
+    return (
+        <Button loading={busy} onClick={() => void download()}>
+            Export
+        </Button>
+    )
+}
+
 function ProjectView({ project }: { project: Project }) {
     const [action, setAction] = useState<Action>(null)
     const update = useUpdateProject()
@@ -155,6 +191,7 @@ function ProjectView({ project }: { project: Project }) {
                         >
                             Edit details
                         </Button>
+                        <ExportProject project={project} />
                         <Button
                             onClick={() => {
                                 setAction('duplicate')

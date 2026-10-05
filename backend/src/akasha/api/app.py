@@ -16,7 +16,7 @@ from akasha.api.schemas import ErrorResponse, accept_request_id, request_id
 from akasha.bootstrap import Container, create_container
 from akasha.config import Settings, load_settings
 from akasha.errors import AkashaError
-from akasha.observability.logging import configure_logging, log_context
+from akasha.observability.logging import log_context
 from akasha.security.redaction import redact_mapping, redact_text
 
 logger = logging.getLogger("akasha")
@@ -36,10 +36,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
 def create_app(
     settings: Settings | None = None, container: Container | None = None
 ) -> FastAPI:
+    # Logging is the process's (akasha.main), never the factory's: an
+    # in-process caller such as a test keeps its own handlers.
     settings = settings or load_settings()
-    # In tests, pytest owns the logging handlers; the app must not evict them.
-    if settings.environment != "test":
-        configure_logging(settings.log_level)
     app = FastAPI(title="akasha-engine", version="0.1.0", lifespan=lifespan)
     app.state.container = container or create_container(settings)
 

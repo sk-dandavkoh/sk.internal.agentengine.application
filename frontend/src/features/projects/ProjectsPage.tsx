@@ -24,6 +24,7 @@ import {
 } from '../../components/ui'
 import { formText } from '../../lib/form'
 import { formatDateTime } from '../../lib/format'
+import { ImportProjectDialog } from './ImportProjectDialog'
 import { ProjectFormDialog } from './ProjectFormDialog'
 import { ProjectStatusBadge } from './ProjectStatusBadge'
 import { projectStatusLabels } from './status'
@@ -220,6 +221,7 @@ export function ProjectsPage() {
         placeholderData: keepPreviousData,
     })
     const [creating, setCreating] = useState(false)
+    const [importing, setImporting] = useState(false)
     const offset = params.offset ?? 0
     const newProject = (
         <Button
@@ -237,7 +239,18 @@ export function ProjectsPage() {
             <PageHeader
                 title="Projects"
                 description="Create, find and open the projects you can access."
-                actions={newProject}
+                actions={
+                    <>
+                        <Button
+                            onClick={() => {
+                                setImporting(true)
+                            }}
+                        >
+                            Import project
+                        </Button>
+                        {newProject}
+                    </>
+                }
             />
             <Filters params={params} update={update} />
             <QuerySection query={query} subject="projects">
@@ -313,6 +326,13 @@ export function ProjectsPage() {
                     setCreating(false)
                 }}
             />
+            {importing && (
+                <ImportProjectDialog
+                    onClose={() => {
+                        setImporting(false)
+                    }}
+                />
+            )}
         </>
     )
 }

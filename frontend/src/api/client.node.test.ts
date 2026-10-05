@@ -12,7 +12,7 @@ import { z } from 'zod'
 import { fetchSession, login, logout } from './auth'
 import { ApiClient } from './client'
 import { ApiError } from './errors'
-import { getProject, publishProject } from './projects'
+import { exportProject, getProject, publishProject } from './projects'
 
 type Handler = (req: IncomingMessage, body: string, res: ServerResponse) => void
 
@@ -177,6 +177,33 @@ describe('successful requests', () => {
             cookie: true,
         })
         expect(result).toEqual(session)
+    })
+})
+
+describe('downloads', () => {
+    it('returns binary bytes untouched; a failure is still an ApiError', async () => {
+        // Not valid UTF-8: reading it as text would mangle it.
+        const zip = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0xff, 0xfe, 0x00])
+        let seen = ''
+        handler = (req, _body, res) => {
+            seen = req.url ?? ''
+            res.writeHead(200, { 'Content-Type': 'application/zip' })
+            res.end(zip)
+        }
+        const blob = await exportProject(client(), 'p 1', 2)
+        expect(seen).toBe('/api/v1/projects/p%201/export?version=2')
+        expect(Buffer.from(await blob.arrayBuffer())).toEqual(zip)
+
+        handler = (_req, _body, res) => {
+            json(res, 404, {
+                code: 'PROJECT_NOT_FOUND',
+                message: 'Project not found.',
+                details: {},
+                request_id: 'r',
+            })
+        }
+        const error = await failure(exportProject(client(), 'p'))
+        expect(error).toMatchObject({ kind: 'not_found', status: 404 })
     })
 })
 

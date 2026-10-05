@@ -55,6 +55,7 @@ const jsonBody = z.object({
     content: z
         .object({
             'application/json': z.object({ schema: jsonSchema }).optional(),
+            'application/zip': z.object({}).optional(),
         })
         .optional(),
 })
@@ -189,6 +190,8 @@ interface Call {
     path: string
     schema: z.ZodType
     body: unknown
+    /** A download: the bytes are the response, not JSON. */
+    binary?: boolean
 }
 
 /** Records each request instead of sending it (`request` delegates here). */
@@ -201,6 +204,20 @@ class RecordingClient extends ApiClient {
         options: RequestOptions = {},
     ): Promise<{ data: z.output<S>; body: string }> {
         this.calls.push({ method, path, schema, body: options.body })
+        return new Promise<never>(() => undefined)
+    }
+    override download(
+        method: HttpMethod,
+        path: string,
+        options: RequestOptions = {},
+    ): Promise<Blob> {
+        this.calls.push({
+            method,
+            path,
+            schema: z.undefined(),
+            body: options.body,
+            binary: true,
+        })
         return new Promise<never>(() => undefined)
     }
 }
@@ -238,6 +255,8 @@ void projects.validateProject(recorder, 'p', 1)
 void projects.publishProject(recorder, 'p', 1)
 void projects.listProjectVersions(recorder, 'p')
 void projects.getProjectVersion(recorder, 'p', 1)
+void projects.exportProject(recorder, 'p', 1)
+void projects.importProject(recorder, new Blob(['zip']))
 void executions.listExecutions(recorder, { status: ['failed'], limit: 5 })
 void executions.getExecutionStatusCounts(recorder)
 void executions.listProjectExecutions(recorder, 'p', { version: 1 })
@@ -321,6 +340,12 @@ describe('frontend schemas match the backend OpenAPI contract', () => {
                 .filter((status) => status.startsWith('2'))
                 .sort()[0]
             expect(success, 'documented success response').toBeDefined()
+            const content = op.responses[success ?? '']?.content ?? {}
+            if (call.binary) {
+                expect(Object.keys(content)).toEqual(['application/zip'])
+                expect(call.body).toBeUndefined()
+                return
+            }
             const responseSchema =
                 op.responses[success ?? '']?.content?.['application/json']
                     ?.schema

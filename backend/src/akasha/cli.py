@@ -675,7 +675,9 @@ async def _run(args: Args, settings: Settings) -> int:
         await container.shutdown()
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def main(argv: Sequence[str] | None = None, *, configure_logs: bool = True) -> int:
+    """``configure_logs=False``: an in-process caller (a test) keeps its own
+    logging handlers; the console script always configures logging."""
     args = build_parser().parse_args(argv)
     if args.handler is None:  # serve: uvicorn owns the process and its loop
         from akasha.main import main as serve
@@ -688,10 +690,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         details = {".".join(map(str, e["loc"])): e["msg"] for e in exc.errors()}
         _error(args, "CONFIGURATION_ERROR", "Invalid configuration.", details)
         return EXIT_FAILED
-    # In tests, pytest owns the logging handlers (as in ``create_app``).
-    if settings.environment != "test":
-        level = "INFO" if args.verbose else "WARNING"
-        configure_logging(level, structured=False, stream=sys.stderr)
+    if configure_logs:
+        if args.handler is worker:
+            # A service like the API (JSON on stdout, AKASHA_LOG_LEVEL): the
+            # level also decides which node log lines runs store.
+            configure_logging(settings.log_level)
+        else:
+            level = "INFO" if args.verbose else "WARNING"
+            configure_logging(level, structured=False, stream=sys.stderr)
     try:
         return asyncio.run(_run(args, settings))
     except AkashaError as exc:

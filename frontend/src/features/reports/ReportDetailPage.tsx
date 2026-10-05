@@ -33,23 +33,7 @@ import { ms } from '../executions/inspector/format'
 import { RunSnapshot, Usage } from '../executions/inspector/OverviewPanel'
 import { StatusBadge, Time } from '../executions/shared'
 import { VersionLink } from '../versions/shared'
-
-// Long enough for the browser to start reading the blob; a revoke right
-// after click() can cancel the download in some browsers.
-const REVOKE_AFTER_MS = 40_000
-
-function saveFile(name: string, body: string) {
-    const url = URL.createObjectURL(
-        new Blob([body], { type: 'application/json' }),
-    )
-    const link = document.createElement('a')
-    link.href = url
-    link.download = name
-    link.click()
-    setTimeout(() => {
-        URL.revokeObjectURL(url)
-    }, REVOKE_AFTER_MS)
-}
+import { saveFile } from '../../lib/saveFile'
 
 /** The backend's canonical export, saved unchanged (never re-serialized). */
 function DownloadReport({ executionId }: { executionId: string }) {
@@ -62,7 +46,10 @@ function DownloadReport({ executionId }: { executionId: string }) {
             const body = await exportExecutionReport(client, executionId)
             // The id is server data: keep the file name to safe characters.
             const safe = executionId.replace(/[^\w-]/g, '_')
-            saveFile(`execution-report-${safe}.json`, body)
+            saveFile(
+                `execution-report-${safe}.json`,
+                new Blob([body], { type: 'application/json' }),
+            )
         } catch (error) {
             toast.notify({
                 tone: 'danger',

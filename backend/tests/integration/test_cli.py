@@ -60,7 +60,7 @@ def cli_env(monkeypatch: pytest.MonkeyPatch, db_url: str) -> None:
 @pytest.fixture
 def cli(capsys: pytest.CaptureFixture[str]) -> Cli:
     async def run(*argv: str) -> Result:
-        code = await asyncio.to_thread(main, list(argv))
+        code = await asyncio.to_thread(main, list(argv), configure_logs=False)
         captured = capsys.readouterr()
         return Result(code, captured.out, captured.err)
 
@@ -395,7 +395,7 @@ async def test_backup_and_restore_stream_through_stdio(
     """``backup -o -`` / ``restore -``: how Compose operators move backups
     in and out of containers (docs/deployment.md)."""
     project_id = await published(projects)
-    code = await asyncio.to_thread(main, ["backup", "-o", "-"])
+    code = await asyncio.to_thread(main, ["backup", "-o", "-"], configure_logs=False)
     captured = capsysbinary.readouterr()
     assert code == EXIT_OK, captured.err
     assert b"wrote -" in captured.err  # the summary stays off stdout

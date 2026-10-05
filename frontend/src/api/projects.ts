@@ -349,3 +349,33 @@ export function getProjectVersion(
         { signal },
     )
 }
+
+/** Matches the backend's cap (application/project_package.py). */
+export const MAX_PROJECT_PACKAGE_BYTES = 16 * 1024 * 1024
+
+/** The project package (.akasha.zip) of the draft, or of published
+ * `version`. Credential values are never part of it: only references. */
+export function exportProject(
+    client: ApiClient,
+    projectId: string,
+    version?: number,
+) {
+    return client.download('GET', `${path(projectId)}/export`, {
+        query: { version },
+    })
+}
+
+export const importResultSchema = z.object({
+    /** A new, never-published project holding the package's draft. */
+    project: projectSchema,
+    validation: validationResultSchema,
+    /** Referenced credentials this installation does not have yet. */
+    missing_credentials: z.array(z.string()),
+})
+export type ImportResult = z.infer<typeof importResultSchema>
+
+export function importProject(client: ApiClient, file: Blob) {
+    return client.request('POST', '/projects/import', importResultSchema, {
+        rawBody: { data: file, contentType: 'application/zip' },
+    })
+}

@@ -3,8 +3,10 @@ codes, output, and the node/plugin commands that need no database.
 Database-backed commands: tests/integration/test_cli.py."""
 
 import json
+import logging
 import os
 import stat
+import sys
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -76,7 +78,7 @@ def cli_env(monkeypatch: pytest.MonkeyPatch) -> None:
 def cli(capsys: pytest.CaptureFixture[str]) -> Iterator[Cli]:
     def run(*argv: str) -> Result:
         try:
-            code = main(list(argv))
+            code = main(list(argv), configure_logs=False)
         except SystemExit as exc:  # argparse: usage errors, --help, --version
             code = int(exc.code or 0)
         captured = capsys.readouterr()
@@ -367,3 +369,39 @@ def test_backup_file_mode_helper(tmp_path: Path) -> None:
     with pytest.raises(FileExistsError):
         _write_private(str(path), b"other")
     assert path.read_bytes() == b"data"
+
+
+def test_console_script_configures_logging_in_the_test_environment(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # cli_env sets AKASHA_ENVIRONMENT=test: no longer a reason to skip.
+    root = logging.getLogger()
+    handlers, level = root.handlers[:], root.level
+    try:
+        assert main(["--verbose", "node", "list"]) == EXIT_OK
+        assert root.level == logging.INFO
+    finally:
+        root.handlers[:] = handlers
+        root.setLevel(level)
+    capsys.readouterr()
+
+
+def test_worker_logs_like_a_service(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Regression: the worker logged at WARNING unless -v, so a dedicated
+    # worker stored no INFO node log lines whatever AKASHA_LOG_LEVEL said.
+    monkeypatch.setenv("AKASHA_LOG_LEVEL", "INFO")
+    root = logging.getLogger()
+    handlers, level = root.handlers[:], root.level
+    try:
+        # No database configured: it stops, but only after logging is set.
+        assert main(["worker"]) == EXIT_FAILED
+        assert root.level == logging.INFO
+        [handler] = root.handlers
+        assert isinstance(handler, logging.StreamHandler)
+        assert handler.stream is sys.stdout
+    finally:
+        root.handlers[:] = handlers
+        root.setLevel(level)
+    capsys.readouterr()

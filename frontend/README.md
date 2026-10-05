@@ -218,7 +218,26 @@ dialogs. The design-system catalog `/dev/ui` is its target for primitives.
 
 **Full stack** (`tests/fullstack/`, `npm run test:fullstack`): see above.
 Use it for journeys whose value is the real backend (publish, run,
-inspect).
+inspect). `session.ts` holds the shared helpers (admin API context,
+cookie sign-in, download capture, a minimal zip reader for packages).
+
+- `journey.spec.ts`: the V1 journey in one test of steps, UI only: login
+  form → dashboard → create project → editor (add, configure, connect,
+  save) → manual trigger → validate → publish → run from the trigger →
+  live view to the end → inspector (nodes, logs, graph) → monitoring
+  (figures checked against the summary response the page received) →
+  report and its download → export → import → validate, publish and run
+  the import. `api` only reads back what the backend stored.
+- `credentials.spec.ts`: create a credential, reference it from a node,
+  export (the package holds the reference, never the secret; no API
+  response the page received holds it), delete it, import (reported
+  missing); a corrupt package is refused with the backend's message.
+- `projects.spec.ts`: lifecycle details (conflicts, versions, cancel,
+  dropped live connection, failed-run diagnosis, triggers, event triggers,
+  sessions). `a11y.spec.ts`: axe and overflow sweep of every screen.
+
+Waits are on observable state (`expect(...)`, `waitForResponse`,
+`expect.poll` against the API), never on sleeps.
 
 There is no Storybook: `/dev/ui` already renders every primitive in every
 state and both themes, and feature screens are best seen against
@@ -332,8 +351,9 @@ store.
 (Phase 07) is initialized from `project.draft`, edited locally and persisted
 only through `useUpdateProject`; it never writes into the query cache.
 
-Not covered: project import/export (binary ZIP bodies; the client speaks
-JSON only), user management (Phase 21).
+Binary responses (project packages) go through `ApiClient.download`, with
+the same headers and error mapping. Not covered: user management
+(Phase 21).
 
 Tests: `client.node.test.ts` runs the client against a real local HTTP server
 (Vitest `node` environment; typechecked by `tsconfig.node.json`).
@@ -380,7 +400,16 @@ in the URL, so links and Back restore the view. All of it runs on the
 backend (`GET /projects?q=&status=&sort=`), never on a client-side copy.
 `/projects/:projectId` shows the metadata and offers Open editor
 (`/projects/:id/editor`, Phase 07), Edit details (name and description),
-Duplicate and Delete.
+Duplicate, Export and Delete.
+
+**Import/export**: Export downloads the draft's package
+(`GET /projects/{id}/export`, `.akasha.zip`, saved byte for byte through
+`ApiClient.download`); credential values are never in it, only
+`credential:<name>` references. Import project (on `/projects`) uploads a
+package (`POST /projects/import`, size-checked in the browser for UX only)
+and shows the backend's answer: the new draft-only project, its validation
+result and the referenced credentials this installation lacks, or the
+refusal with its requirement issues. Nothing is published or run.
 
 Writes are authoritative, not optimistic: a dialog stays open with a
 pending button until the backend answers, and the screen shows only data
@@ -661,7 +690,8 @@ outputs are what a node received).
 from `GET /monitoring/summary?since=&until=` (at most 31 days; the
 backend aggregates persisted executions, not Prometheus counters). The range
 (last hour, 24 hours, 7 days or custom) lives in the URL; a preset is
-anchored when picked, and Refresh moves it to now.
+anchored when picked (ending at the end of the current minute, so a run
+created just now is inside), and Refresh moves it to now.
 
 - Headline stats (success and failure rate over finished runs, with the
   denominator), a stacked timeline with a table carrying the same numbers,
@@ -839,8 +869,8 @@ is never a control.
 - **Storage**: only the theme is stored (`localStorage`); ESLint rejects
   storage anywhere else. Secrets stay in uncontrolled inputs and in
   `gcTime: 0` mutations (Credentials, Authentication).
-- **Downloads**: report exports are saved as `application/json` blobs with a
-  sanitized file name. **Uploads**: the plugin package is size-checked in the
+- **Downloads**: report exports (`application/json`) and project packages
+  are saved as blobs with sanitized file names (`lib/saveFile.ts`). **Uploads**: the plugin package is size-checked in the
   browser for UX; the backend validates it.
 - **Errors**: users see backend envelope messages (redacted server-side) or
   fixed fallbacks, never stack traces or raw responses.

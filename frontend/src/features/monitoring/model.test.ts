@@ -14,12 +14,18 @@ import {
 const NOW = Date.parse('2026-10-04T12:34:56.789Z')
 
 describe('time windows', () => {
-    it('anchors presets at the current minute', () => {
+    it('anchors presets at the end of the current minute', () => {
         expect(presetWindow('1h', NOW)).toEqual({
-            since: '2026-10-04T11:34:00.000Z',
-            until: '2026-10-04T12:34:00.000Z',
+            since: '2026-10-04T11:35:00.000Z',
+            until: '2026-10-04T12:35:00.000Z',
         })
-        expect(presetWindow('7d', NOW).since).toBe('2026-09-27T12:34:00.000Z')
+        expect(presetWindow('7d', NOW).since).toBe('2026-09-27T12:35:00.000Z')
+        // A run created just now is inside, also on a minute boundary
+        // (regression: the window used to end at the start of the minute).
+        for (const now of [NOW, Date.parse('2026-10-04T12:34:00.000Z')])
+            expect(Date.parse(presetWindow('1h', now).until)).toBeGreaterThan(
+                now,
+            )
         // Same minute, same window: the query key does not churn.
         expect(presetWindow('24h', NOW + 3_000)).toEqual(
             presetWindow('24h', NOW),

@@ -21,6 +21,7 @@ import {
     createProject,
     deleteProject,
     duplicateProject,
+    importProject,
     publishProject,
     restoreProjectVersion,
     updateProject,
@@ -74,6 +75,14 @@ const invalidate = (
 export function useCreateProject() {
     return useApiMutation(
         (client, input: CreateProjectInput) => createProject(client, input),
+        (qc) => invalidate(qc, queryKeys.projects.lists()),
+    )
+}
+
+/** Creates a new draft-only project from an uploaded package. */
+export function useImportProject() {
+    return useApiMutation(
+        (client, file: Blob) => importProject(client, file),
         (qc) => invalidate(qc, queryKeys.projects.lists()),
     )
 }

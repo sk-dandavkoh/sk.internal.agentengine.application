@@ -22,10 +22,11 @@ export function isRange(value: string | null): value is Range {
     )
 }
 
-/** Ends at `now` rounded down to the minute, so the query key and the
- * buckets stay put until the user refreshes. */
+/** Ends at the end of the current minute, so the query key and the
+ * buckets stay put until the user refreshes, and a run created this minute
+ * is inside (the backend counts `created_at < until`). */
 export function presetWindow(preset: Preset, now: number): MonitoringWindow {
-    const until = Math.floor(now / 60_000) * 60_000
+    const until = (Math.floor(now / 60_000) + 1) * 60_000
     return {
         since: new Date(until - PRESETS[preset].ms).toISOString(),
         until: new Date(until).toISOString(),

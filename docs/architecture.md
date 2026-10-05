@@ -2535,7 +2535,13 @@ Node log history (frontend Phase 15, `akasha.runtime.node_logs`):
   case-insensitive substring of the message; fields are not searched). Redacted again on the way
   out. Visibility follows the execution (`authorize_path`).
 - Ceilings: lines below the process log level are not stored (the logger's
-  level gates before any handler); no retention policy yet, lines live as
+  level gates before any handler). The processes that run executions set
+  that level from `AKASHA_LOG_LEVEL` in every environment: `akasha serve`
+  (`akasha.main.create_served_app`) and `akasha worker` (JSON on stdout,
+  like the API). `create_app` itself never configures logging, so
+  in-process callers (tests) keep their handlers; other CLI commands log
+  WARNING (INFO with `-v`) to stderr, which also bounds what an in-process
+  `akasha project run` stores; no retention policy yet, lines live as
   long as their execution (deleted with it, `ON DELETE CASCADE`).
 
 ----------

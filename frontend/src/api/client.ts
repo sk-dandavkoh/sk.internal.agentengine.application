@@ -75,6 +75,46 @@ export class ApiClient {
         schema: S,
         options: RequestOptions = {},
     ): Promise<{ data: z.output<S>; body: string }> {
+        const {
+            status,
+            requestId,
+            value: text,
+        } = await this.exchange(method, path, options, (response) =>
+            response.text(),
+        )
+        let data: unknown
+        try {
+            data = text === '' ? undefined : JSON.parse(text)
+        } catch (cause) {
+            throw malformed(status, requestId, cause)
+        }
+        const parsed = schema.safeParse(data)
+        if (!parsed.success) throw malformed(status, requestId, parsed.error)
+        return { data: parsed.data, body: text }
+    }
+
+    /** A binary response (e.g. a project package), its bytes untouched;
+     * failures are ApiErrors exactly as for `request`. */
+    async download(
+        method: HttpMethod,
+        path: string,
+        options: RequestOptions = {},
+    ): Promise<Blob> {
+        return (
+            await this.exchange(method, path, options, (response) =>
+                response.blob(),
+            )
+        ).value
+    }
+
+    /** Sends the request; a successful response is read by `read`, a
+     * failed one becomes an ApiError. */
+    private async exchange<T>(
+        method: HttpMethod,
+        path: string,
+        options: RequestOptions,
+        read: (response: Response) => Promise<T>,
+    ): Promise<{ status: number; requestId: string; value: T }> {
         const requestId = crypto.randomUUID()
         // Ids in paths come from route params a crafted link controls, and
         // encodeURIComponent keeps '.': URL parsing would collapse a "." or
@@ -115,6 +155,13 @@ export class ApiClient {
                 body,
                 signal,
             })
+            if (response.ok)
+                return {
+                    status: response.status,
+                    requestId:
+                        response.headers.get('X-Request-ID') ?? requestId,
+                    value: await read(response),
+                }
             text = await response.text()
         } catch (cause) {
             const kind = options.signal?.aborted
@@ -130,27 +177,17 @@ export class ApiClient {
             })
         }
 
-        const responseId = response.headers.get('X-Request-ID') ?? requestId
-        if (!response.ok) {
-            const error = httpError(response.status, text, responseId)
-            if (
-                error.kind === 'authentication' &&
-                error.code !== 'INVALID_CREDENTIALS'
-            )
-                this.onSessionEnded?.()
-            throw error
-        }
-
-        let data: unknown
-        try {
-            data = text === '' ? undefined : JSON.parse(text)
-        } catch (cause) {
-            throw malformed(response.status, responseId, cause)
-        }
-        const parsed = schema.safeParse(data)
-        if (!parsed.success)
-            throw malformed(response.status, responseId, parsed.error)
-        return { data: parsed.data, body: text }
+        const error = httpError(
+            response.status,
+            text,
+            response.headers.get('X-Request-ID') ?? requestId,
+        )
+        if (
+            error.kind === 'authentication' &&
+            error.code !== 'INVALID_CREDENTIALS'
+        )
+            this.onSessionEnded?.()
+        throw error
     }
 
     private url(path: string, query: RequestOptions['query']): string {
