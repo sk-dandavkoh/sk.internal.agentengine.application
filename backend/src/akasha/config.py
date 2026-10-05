@@ -95,6 +95,9 @@ class Settings(BaseSettings):
     # Authentication (Phase 20). Sessions expire this long after login;
     # there is no sliding renewal.
     session_ttl_seconds: int = Field(default=12 * 60 * 60, ge=60, le=30 * 24 * 60 * 60)
+    # The browser session cookie (ADR 0002) is sent only over HTTPS. Turn off
+    # only for plain-HTTP setups on a non-localhost address (e.g. a test rig).
+    session_cookie_secure: bool = True
     # Static bearer token for Prometheus to scrape /metrics. Unset → only an
     # admin session may read /metrics. Never commit it.
     metrics_token: SecretStr | None = Field(default=None, min_length=32)

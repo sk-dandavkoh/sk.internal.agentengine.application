@@ -25,18 +25,24 @@ expired session (also when it is revoked mid-stream), 4404 unknown or not
 visible execution (one answer for both, like HTTP 404), 1011 internal or
 configuration error. Any other close is transient: reconnect.
 
-No Origin check is needed: there is no ambient credential (no cookies), a
-cross-site page cannot subscribe without a session token.
+The web UI has no token (ADR 0002): it subscribes with an empty token and
+the handshake's session cookie counts instead, but only when the handshake
+comes from a page on this origin (``Origin`` matches ``Host`` or
+``X-Forwarded-Host``). A WebSocket has no CORS and cannot carry the
+anti-CSRF header, so the Origin check is what keeps another page on the
+same site from riding on the cookie.
 """
 
 import asyncio
 import logging
 from typing import Literal
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from fastapi.websockets import WebSocketState
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from akasha.api.auth import SESSION_COOKIE
 from akasha.api.executions import EventOut
 from akasha.application.auth import AuthenticationRequiredError
 from akasha.application.executions import ExecutionNotFoundError
@@ -132,10 +138,11 @@ async def _stream(websocket: WebSocket, c: Container, execution_id: str) -> None
             )
     except (TimeoutError, ValidationError) as exc:
         raise _Closed(CLOSE_PROTOCOL, "Expected a subscribe frame.") from exc
+    token = subscribe.token or _cookie_token(websocket)
     try:
-        if not subscribe.token:
+        if not token:
             raise AuthenticationRequiredError("Authentication required.")
-        identity = await c.auth.authenticate(subscribe.token)
+        identity = await c.auth.authenticate(token)
         await c.authorization.require_execution(identity, execution_id)
     except AuthenticationRequiredError as exc:
         raise _Closed(CLOSE_UNAUTHENTICATED, "Authentication required.") from exc
@@ -181,6 +188,18 @@ async def _stream(websocket: WebSocket, c: Container, execution_id: str) -> None
         except TimeoutError:
             pass
         try:
-            await c.auth.authenticate(subscribe.token)
+            await c.auth.authenticate(token)
         except AuthenticationRequiredError as exc:
             raise _Closed(CLOSE_UNAUTHENTICATED, "Session expired.") from exc
+
+
+def _cookie_token(websocket: WebSocket) -> str:
+    origin = websocket.headers.get("origin")
+    hosts = {
+        websocket.headers.get("host"),
+        websocket.headers.get("x-forwarded-host"),
+    } - {None}
+    if origin is None or urlsplit(origin).netloc not in hosts:
+        return ""
+    token = websocket.cookies.get(SESSION_COOKIE, "")
+    return token if len(token) <= _MAX_TOKEN_LENGTH else ""

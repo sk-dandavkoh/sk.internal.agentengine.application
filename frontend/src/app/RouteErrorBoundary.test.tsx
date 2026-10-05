@@ -1,34 +1,30 @@
-import { render, screen } from '@testing-library/react'
-import { createMemoryRouter, RouterProvider } from 'react-router'
-import { describe, expect, it, vi } from 'vitest'
+import { screen } from '@testing-library/react'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiError } from '../api/errors'
-import { routes } from './routes'
+import { renderRoute, stubBackend } from '../test/app'
 
-// Make one area crash while rendering, so the real route tree's
+// Make two areas crash while rendering, so the real route tree's
 // boundaries are exercised rather than a test-only tree.
-vi.mock('./PlaceholderPage', () => ({
-    PlaceholderPage: ({ title }: { title: string }) => {
-        if (title === 'Reports') {
-            throw new Error('TypeError: secret internal detail')
-        }
-        if (title === 'Settings') {
-            throw new ApiError({
-                kind: 'network',
-                message: 'Server unreachable.',
-            })
-        }
-        return <h1>{title}</h1>
+vi.mock('../features/reports/ReportsPage', () => ({
+    ReportsPage: () => {
+        throw new Error('TypeError: secret internal detail')
     },
 }))
+vi.mock('../features/settings/SettingsPage', () => ({
+    SettingsPage: () => {
+        throw new ApiError({ kind: 'network', message: 'Server unreachable.' })
+    },
+}))
+
+beforeEach(() => {
+    stubBackend()
+})
 
 describe('RouteErrorBoundary', () => {
     it('contains a page crash inside the shell without leaking details', async () => {
         vi.spyOn(console, 'error').mockImplementation(() => undefined)
         vi.spyOn(console, 'warn').mockImplementation(() => undefined)
-        const router = createMemoryRouter(routes, {
-            initialEntries: ['/reports'],
-        })
-        render(<RouterProvider router={router} />)
+        renderRoute('/reports')
 
         expect(await screen.findByRole('alert')).toHaveTextContent(
             'Something went wrong',
@@ -47,10 +43,7 @@ describe('RouteErrorBoundary', () => {
     it('shows the user-facing message of an API failure', async () => {
         vi.spyOn(console, 'error').mockImplementation(() => undefined)
         vi.spyOn(console, 'warn').mockImplementation(() => undefined)
-        const router = createMemoryRouter(routes, {
-            initialEntries: ['/settings'],
-        })
-        render(<RouterProvider router={router} />)
+        renderRoute('/settings')
 
         expect(await screen.findByRole('alert')).toHaveTextContent(
             'Server unreachable.',

@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
+import { stubSession } from './session'
 
 // Layout needs a real browser: jsdom has no CSS. The backend is stubbed at
 // the network boundary so the bundle runs its real API client.
@@ -137,6 +138,7 @@ async function stubBackend(p: Page) {
             ? route.fulfill({ status: 404 })
             : route.fulfill({ json: body })
     })
+    await stubSession(p)
 }
 
 async function openDashboard(p: Page) {
@@ -205,6 +207,8 @@ test('an unreachable backend shows one error, not one per section', async ({
     page: p,
 }) => {
     await p.route('**/api/v1/**', (route) => route.abort('connectionrefused'))
+    // Signed in earlier; the backend went away since.
+    await stubSession(p)
     await p.goto('/dashboard')
 
     // Network errors are retried first (queryClient.ts), then collapse.

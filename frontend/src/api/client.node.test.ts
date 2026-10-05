@@ -9,7 +9,7 @@ import {
 import type { AddressInfo } from 'node:net'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import { z } from 'zod'
-import { fetchCurrentUser, login, logout } from './auth'
+import { fetchSession, login, logout } from './auth'
 import { ApiClient } from './client'
 import { ApiError } from './errors'
 
@@ -52,13 +52,12 @@ function json(
     res.end(JSON.stringify(data))
 }
 
-function client(options: { token?: string; timeoutMs?: number } = {}) {
+function client(options: { timeoutMs?: number } = {}) {
     return new ApiClient({
         baseUrl,
         ...(options.timeoutMs !== undefined && {
             timeoutMs: options.timeoutMs,
         }),
-        getToken: () => options.token,
     })
 }
 
@@ -80,6 +79,7 @@ const user = {
     created_at: '2026-10-01T12:00:00Z',
     updated_at: '2026-10-01T12:00:00+00:00',
 }
+const session = { expires_at: '2026-10-02T00:00:00Z', user }
 
 describe('successful requests', () => {
     it('sends method, path, query, JSON body and headers; returns parsed data', async () => {
@@ -89,7 +89,7 @@ describe('successful requests', () => {
             json(res, 200, { id: 'p1', extra: 'ignored' })
         }
 
-        const result = await client({ token: 'tok' }).request(
+        const result = await client().request(
             'POST',
             '/projects',
             z.object({ id: z.string() }),
@@ -112,7 +112,9 @@ describe('successful requests', () => {
         expect(seen?.body).toBe('{"name":"x"}')
         expect(seen?.req.headers['content-type']).toBe('application/json')
         expect(seen?.req.headers.accept).toBe('application/json')
-        expect(seen?.req.headers.authorization).toBe('Bearer tok')
+        // The session is the HttpOnly cookie; scripts never set a token.
+        expect(seen?.req.headers.authorization).toBeUndefined()
+        expect(seen?.req.headers['x-akasha-csrf']).toBe('1')
         expect(seen?.req.headers['x-request-id']).toMatch(/^[0-9a-f-]{36}$/)
     })
 
@@ -139,15 +141,14 @@ describe('successful requests', () => {
         expect(seen?.req.headers['content-type']).toBe('application/zip')
     })
 
-    it('omits Authorization and Content-Type when there is no token or body', async () => {
+    it('omits Content-Type when there is no body', async () => {
         let headers: IncomingMessage['headers'] = {}
         handler = (req, _body, res) => {
             headers = req.headers
-            json(res, 200, user)
+            json(res, 200, session)
         }
 
-        await expect(fetchCurrentUser(client())).resolves.toEqual(user)
-        expect(headers.authorization).toBeUndefined()
+        await expect(fetchSession(client())).resolves.toEqual(session)
         expect(headers['content-type']).toBeUndefined()
     })
 
@@ -155,25 +156,26 @@ describe('successful requests', () => {
         handler = (_req, _body, res) => {
             res.writeHead(204).end()
         }
-        await expect(logout(client({ token: 'tok' }))).resolves.toBeUndefined()
+        await expect(logout(client())).resolves.toBeUndefined()
     })
 
     it('posts login credentials and validates the session response', async () => {
         let body = ''
         handler = (_req, b, res) => {
             body = b
-            json(res, 200, {
-                token: 't',
-                expires_at: '2026-10-02T00:00:00Z',
-                user,
-            })
+            json(res, 200, { token: null, ...session })
         }
         const result = await login(client(), {
             username: 'ada',
             password: 'pw',
         })
-        expect(JSON.parse(body)).toEqual({ username: 'ada', password: 'pw' })
-        expect(result.user.username).toBe('ada')
+        // The session goes into the HttpOnly cookie, never into the app.
+        expect(JSON.parse(body)).toEqual({
+            username: 'ada',
+            password: 'pw',
+            cookie: true,
+        })
+        expect(result).toEqual(session)
     })
 })
 
@@ -230,9 +232,7 @@ describe('API errors', () => {
                 },
             )
         }
-        const error = await failure(
-            fetchCurrentUser(client({ token: 'expired' })),
-        )
+        const error = await failure(fetchSession(client()))
         expect(error.kind).toBe('authentication')
         expect(error.message).toBe('Session expired.')
     })
@@ -261,7 +261,7 @@ describe('malformed responses', () => {
         handler = (_req, _body, res) => {
             json(res, 200, { ...user, role: 'root' })
         }
-        const error = await failure(fetchCurrentUser(client()))
+        const error = await failure(fetchSession(client()))
         expect(error.kind).toBe('malformed_response')
         expect(error.status).toBe(200)
         expect(error.cause).toBeInstanceOf(z.ZodError)
@@ -281,7 +281,7 @@ describe('malformed responses', () => {
         handler = (_req, _body, res) => {
             res.writeHead(200).end()
         }
-        const error = await failure(fetchCurrentUser(client()))
+        const error = await failure(fetchSession(client()))
         expect(error.kind).toBe('malformed_response')
     })
 })

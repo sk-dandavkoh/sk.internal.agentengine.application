@@ -3,6 +3,35 @@ import { cleanup } from '@testing-library/react'
 import { afterEach, beforeEach, vi } from 'vitest'
 import { FakeWebSocket } from './websocket'
 
+// The app formats in the user's locale; tests assert en-US output, so the
+// machine's locale must not leak in (AGENTS §16). Node takes the default
+// from the OS (on Windows LANG is ignored), hence pinned here: a missing
+// locale argument means en-US. Before any module creates a formatter.
+const TEST_LOCALE = 'en-US'
+const { NumberFormat, DateTimeFormat } = Intl
+type Locales = Intl.LocalesArgument
+// Functions, not arrows: the app calls them with `new`.
+Intl.NumberFormat = function (
+    locales?: Locales,
+    options?: Intl.NumberFormatOptions,
+) {
+    return new NumberFormat(locales ?? TEST_LOCALE, options)
+} as unknown as typeof Intl.NumberFormat
+Intl.DateTimeFormat = function (
+    locales?: Locales,
+    options?: Intl.DateTimeFormatOptions,
+) {
+    return new DateTimeFormat(locales ?? TEST_LOCALE, options)
+} as unknown as typeof Intl.DateTimeFormat
+// Specified as Intl.NumberFormat. Date#toLocale* is not used by the app.
+Number.prototype.toLocaleString = function (
+    this: number,
+    locales?: Locales,
+    options?: Intl.NumberFormatOptions,
+) {
+    return new NumberFormat(locales ?? TEST_LOCALE, options).format(this)
+}
+
 beforeEach(() => {
     // Live updates never reach a real server in unit/component tests.
     FakeWebSocket.instances = []

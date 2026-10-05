@@ -101,9 +101,9 @@ export function subscribeExecution(
         const ws = new WebSocket(url.href)
         socket = ws
         ws.onopen = () => {
-            // In the frame, never the URL: URLs end up in logs.
-            const token = client.getToken?.() ?? ''
-            ws.send(JSON.stringify({ type: 'subscribe', token, after }))
+            // No token: the handshake's session cookie authenticates
+            // (same-origin only, ADR 0002).
+            ws.send(JSON.stringify({ type: 'subscribe', after }))
         }
         ws.onmessage = (message: MessageEvent) => {
             if (stopped) return

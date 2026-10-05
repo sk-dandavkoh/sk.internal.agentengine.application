@@ -69,11 +69,14 @@ def _extract(
     archive: zipfile.ZipFile, info: zipfile.ZipInfo, target: Path, budget: int
 ) -> int:
     """Write one entry below ``target``; returns the bytes written."""
-    name = info.filename
+    # As stored: on Windows ``filename`` has backslashes turned into "/" and
+    # is cut at a NUL, so validating it would differ by platform.
+    name = info.orig_filename
     path = PurePosixPath(name)
     if (
         not name
         or "\\" in name
+        or "\x00" in name
         or path.is_absolute()
         or any(part in ("", ".", "..") for part in name.rstrip("/").split("/"))
         or ":" in path.parts[0]  # "C:" drive prefixes

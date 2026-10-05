@@ -210,7 +210,11 @@ const recorder = new RecordingClient()
 // test below fails if one is missing.
 void auth.login(recorder, { username: 'u', password: 'p' })
 void auth.logout(recorder)
-void auth.fetchCurrentUser(recorder)
+void auth.fetchSession(recorder)
+void auth.changePassword(recorder, {
+    current_password: 'a',
+    new_password: 'b',
+})
 const draft = projects.projectDraftSchema.parse({})
 void projects.listProjects(recorder, {
     offset: 0,

@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
 
-// Removes the containers (PostgreSQL, Redis) of tests/fullstack/backend.sh. Done
+// Removes the containers (PostgreSQL, Redis) of tests/fullstack/backend.ts. Done
 // here, not by a signal trap in the script: Playwright's server shutdown
 // does not reliably give a shell the chance to clean up.
 export default function teardown() {

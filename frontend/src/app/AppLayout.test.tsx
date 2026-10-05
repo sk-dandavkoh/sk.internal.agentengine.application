@@ -1,7 +1,30 @@
+import { QueryClientProvider } from '@tanstack/react-query'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { createMemoryRouter, Link, RouterProvider } from 'react-router'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
+import { ApiClient } from '../api/client'
+import { ApiClientContext } from '../api/context'
+import { createQueryClient } from '../api/queryClient'
+import { ToastProvider } from '../components/ui'
+import { stubBackend } from '../test/app'
 import { AppLayout } from './AppLayout'
+
+beforeEach(() => {
+    stubBackend()
+})
+
+// The layout alone: its session menu needs the API and query providers.
+function renderLayout(router: ReturnType<typeof createMemoryRouter>) {
+    render(
+        <ApiClientContext value={new ApiClient()}>
+            <QueryClientProvider client={createQueryClient()}>
+                <ToastProvider>
+                    <RouterProvider router={router} />
+                </ToastProvider>
+            </QueryClientProvider>
+        </ApiClientContext>,
+    )
+}
 
 describe('AppLayout', () => {
     it('signals a pending navigation until the next page is ready', async () => {
@@ -25,7 +48,7 @@ describe('AppLayout', () => {
             ],
             { initialEntries: ['/'] },
         )
-        render(<RouterProvider router={router} />)
+        renderLayout(router)
 
         fireEvent.click(await screen.findByRole('link', { name: 'Go slow' }))
 
@@ -56,7 +79,7 @@ describe('AppLayout', () => {
             ],
             { initialEntries: ['/'] },
         )
-        render(<RouterProvider router={router} />)
+        renderLayout(router)
         const link = await screen.findByRole('link', { name: 'Next' })
         expect(screen.getByRole('main')).not.toHaveFocus()
 

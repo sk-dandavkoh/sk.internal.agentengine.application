@@ -73,6 +73,9 @@ export const queryKeys = {
     nodeConfigValidation: (nodeType: string, config: JsonObject) =>
         ['nodes', nodeType, 'config-validation', config] as const,
     system: () => ['system', 'status'] as const,
+    /** The signed-in session (features/auth). Survives a user switch;
+     * everything else is dropped then. */
+    session: () => ['auth', 'session'] as const,
     monitoring: (window: MonitoringWindow) =>
         ['monitoring', 'summary', window] as const,
     plugins: () => ['plugins'] as const,

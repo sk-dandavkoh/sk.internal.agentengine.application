@@ -42,14 +42,14 @@ npm run format:check && npm run lint && npm run typecheck && npm test && npm run
 
 **Full-stack suite** (`tests/fullstack/`, `playwright.fullstack.config.ts`):
 the production bundle against the backend of this checkout, nothing
-stubbed. `backend.sh` starts PostgreSQL 17.2 (tmpfs storage) and Redis in
+stubbed. `backend.ts` (a Node script, so it also runs on Windows) starts PostgreSQL 17.2 (tmpfs storage) and Redis in
 labelled containers, migrates and serves the backend with its in-process
 worker on port 8765 (preview on 4174), so executions really run; every run
 starts with an empty database. Specs that need a run to stay RUNNING use a
 long `core.delay` node and cancel it. The suite creates the
-first admin through `/auth/setup` and, until the login UI exists (Phase
-21), the browser sends that admin's token as a request header.
-`globalTeardown` removes the containers; `backend.sh` also removes leftovers
+first admin through `/auth/setup`; browsers sign in like the UI does, with
+the session cookie (the auth specs through the login form itself).
+`globalTeardown` removes the containers; `backend.ts` also removes leftovers
 of a crashed run. Needs Docker and `uv`.
 
 ## Configuration
@@ -119,8 +119,9 @@ Later phases add directories as they gain content, following `AGENTS.md` §6:
 `XMLHttpRequest` everywhere else in `src/`.
 
 - **`client.ts` — `ApiClient.request(method, path, schema, options)`**: base
-  URL `/api/v1` (same origin), JSON bodies, query params, `Bearer` token from
-  the injected `getToken`, an `X-Request-ID` per request (the backend logs it),
+  URL `/api/v1` (same origin), JSON bodies, query params, the
+  `X-Akasha-CSRF` header that lets the backend accept the HttpOnly session
+  cookie (see "Authentication"), an `X-Request-ID` per request (the backend logs it),
   a timeout (default 30 s, per request overridable) and caller cancellation via
   `signal`. Every response body is validated with its Zod `schema`; an empty
   body (204) parses as `undefined`, so no-content calls pass `z.undefined()`.
@@ -137,9 +138,9 @@ Later phases add directories as they gain content, following `AGENTS.md` §6:
 - **`context.ts`**: the `ApiClient` is injected through `ApiClientContext` /
   `useApiClient()`, never imported as a singleton.
 - **Services**: one module per backend router, functions taking the client,
-  e.g. `auth.ts` (`login`, `logout`, `fetchCurrentUser`), `projects.ts`,
-  `executions.ts`, `reports.ts`, `nodes.ts`, `credentials.ts`, `plugins.ts`.
-  Session storage and login UI follow in Phase 21.
+  e.g. `auth.ts` (`login`, `logout`, `fetchSession`, `changePassword`),
+  `projects.ts`, `executions.ts`, `reports.ts`, `nodes.ts`, `credentials.ts`,
+  `plugins.ts`.
 - **Live updates**: `live.ts` follows one execution over the backend
   WebSocket (`docs/architecture.md` §23); see "Live execution" below.
 
@@ -491,10 +492,8 @@ state:
   and logs are throttled to one per second (`RECONCILE_INTERVAL_MS`), the
   first immediately; the end of the stream refetches at once.
 
-The session token goes in the subscribe frame, never the URL. Until the
-login UI (Phase 21) wires `getToken`, the frame carries no token and the
-page says live updates are unavailable; the full-stack suite injects the
-token with `page.routeWebSocket`, as it injects the HTTP header.
+The subscribe frame carries no token: the backend authenticates the
+handshake by the session cookie, for the UI's own origin only (ADR 0002).
 
 Tests drive a hand-controlled `FakeWebSocket` (`src/test/websocket.ts`,
 installed for every test, so none reaches a network) and fake timers for
@@ -610,6 +609,47 @@ timed_out`, `project.published`) and a source: this project, or any
 - Unknown config keys are kept on edit. The type of an existing trigger is
   fixed: delete it and create a new one instead.
 
+## Authentication
+
+The backend owns the session (architecture §59, ADR 0002). The UI signs in
+with `POST /auth/login` and `"cookie": true`, so the session token goes into
+an `HttpOnly`, `SameSite=Strict` cookie and never reaches JavaScript: no
+token in state, storage, URLs or logs. Every request sends `X-Akasha-CSRF`,
+the header without which the backend ignores the cookie (CSRF). The live
+WebSocket is authenticated by the same cookie, same origin only.
+
+- **Session state** (`features/auth/session.ts`): one TanStack query,
+  `['auth', 'session']` (`GET /auth/session`), is the only place the UI
+  knows who is signed in: `active` (user, absolute `expires_at`) or
+  `anonymous` (`expired` when this tab's session ended). A reload restores
+  the session from the cookie. A failed check (backend down, 5xx) shows an
+  error with Try again, not the login page.
+- **Session end**: any 401 except a wrong password (`INVALID_CREDENTIALS`),
+  from whichever request, calls `ApiClient`'s `onSessionEnded`, which ends
+  the UI session. This covers expiry, revocation, logout in another tab and
+  password changes elsewhere.
+- **Protected routes**: `RequireSession` wraps the whole shell. Without a
+  session it redirects to `/login` and passes the requested location in
+  history state, never a `?next=` parameter, so a crafted link cannot
+  redirect elsewhere. After the redirect it drops every cached query except
+  the session, so the next user never sees the previous user's data.
+  Hiding routes is UX: the backend refuses every request without a
+  session anyway.
+- **Login** (`/login`): backend messages for wrong credentials (the same
+  message for unknown users) and throttling (429). After sign-in the user
+  returns to the requested page. The password lives only in the form and in
+  mutation variables, which are dropped once the form unmounts
+  (`gcTime: 0`).
+- **Logout** (sidebar): `POST /auth/logout` revokes the session and expires
+  the cookie. If logout fails for any reason other than an already dead
+  session, the UI stays signed in and says so: the cookie would still work.
+- **Settings** (`/settings`): account (username, role, created, session
+  expiry), change password (other sessions are revoked; a wrong current
+  password is a field error, not a sign-out), theme (system/light/dark),
+  engine status (the dashboard's System card). Not included: user
+  management for admins (backend `/users` exists) and the first-admin setup
+  (an operator step, `docs/deployment.md`).
+
 ## Design system
 
 All UI is composed from `src/components/ui` (`import { Button, Dialog } from
@@ -622,8 +662,10 @@ state, both themes); it is also the E2E target for native browser behavior.
 `canvas`, `surface`, `surface-muted`, `border`, `border-strong`, `fg`, `muted`,
 `focus`, `primary`/`on-primary`, `danger`/`on-danger`, and per-tone
 `{neutral,info,success,warning,danger}-{soft,text}` — never raw palette
-classes. Dark theme follows `prefers-color-scheme`; `data-theme="light"` on
-`<html>` opts out. Every interactive element uses the `focus-ring` utility.
+classes. Each token is `light-dark(light, dark)`: the root's `color-scheme`
+follows the OS, and `data-theme="light"|"dark"` on `<html>` (Settings,
+stored in localStorage as `akasha.theme`) pins it. Every interactive element
+uses the `focus-ring` utility.
 
 **Conventions**
 

@@ -27,8 +27,7 @@ function event(position: number, event_type = 'node.started') {
     }
 }
 
-/** `null`: no session token at all. */
-function follow(token: string | null = 'session-token') {
+function follow() {
     const states: LiveState[] = []
     const delivered: number[] = []
     const ends: string[] = []
@@ -39,7 +38,7 @@ function follow(token: string | null = 'session-token') {
             delivered.push(...events.map((e) => e.position)),
         onEnd: (status: string) => ends.push(status),
     }
-    const client = new ApiClient({ getToken: () => token ?? undefined })
+    const client = new ApiClient()
     const unsubscribe = subscribeExecution(client, ID, handlers)
     return { states, delivered, ends, handlers, unsubscribe }
 }
@@ -60,16 +59,14 @@ afterEach(() => {
 })
 
 describe('subscribeExecution', () => {
-    it('subscribes on the same origin with the token in the frame, not the URL', () => {
+    it('subscribes on the same origin without a token: the cookie authenticates', () => {
         const live = follow()
         const ws = lastSocket()
         expect(ws.url).toBe(`ws://localhost:3000/api/v1/executions/${ID}/live`)
         expect(live.states).toEqual(['connecting'])
 
         ws.serverOpen()
-        expect(ws.frames()).toEqual([
-            { type: 'subscribe', token: 'session-token', after: 0 },
-        ])
+        expect(ws.frames()).toEqual([{ type: 'subscribe', after: 0 }])
         ws.serverSend({ type: 'subscribed', execution_id: ID, after: 0 })
         expect(live.states).toEqual(['connecting', 'live'])
         expect(live.handlers.onSubscribed).toHaveBeenCalledOnce()
@@ -112,9 +109,7 @@ describe('subscribeExecution', () => {
         const second = lastSocket()
         second.serverOpen()
         // Missed events come from the server's log, after position 4.
-        expect(second.frames()).toEqual([
-            { type: 'subscribe', token: 'session-token', after: 4 },
-        ])
+        expect(second.frames()).toEqual([{ type: 'subscribe', after: 4 }])
         second.serverSend({ type: 'subscribed', execution_id: ID, after: 4 })
         expect(live.states.at(-1)).toBe('live')
         // Every (re)subscribe refetches the authoritative state.
@@ -145,11 +140,7 @@ describe('subscribeExecution', () => {
     })
 
     it('does not retry a rejected session or an unknown execution', () => {
-        const unauthenticated = follow(null)
-        lastSocket().serverOpen()
-        expect(lastSocket().frames()).toEqual([
-            { type: 'subscribe', token: '', after: 0 },
-        ])
+        const unauthenticated = follow()
         lastSocket().serverClose(4401)
         const notFound = follow()
         lastSocket().serverClose(4404)

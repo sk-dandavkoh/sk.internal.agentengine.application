@@ -8,8 +8,10 @@ export interface ApiClientOptions {
     baseUrl?: string
     /** Per-request default; a request may override it. */
     timeoutMs?: number
-    /** Session token source. The auth feature owns where the token lives. */
-    getToken?: () => string | undefined
+    /** Called when the backend says the session is gone (401 other than a
+     * wrong password), whatever request noticed; the auth feature owns
+     * what happens next. */
+    onSessionEnded?: () => void
 }
 
 export interface RequestOptions {
@@ -29,6 +31,9 @@ export interface RequestOptions {
 
 export const DEFAULT_BASE_URL = '/api/v1'
 export const DEFAULT_TIMEOUT_MS = 30_000
+/** Makes the backend accept the session cookie (ADR 0002): a cross-origin
+ * page cannot send it without a CORS preflight the backend never grants. */
+export const CSRF_HEADER = 'X-Akasha-CSRF'
 
 /**
  * The only place the frontend speaks HTTP to the backend. Every response is
@@ -38,13 +43,12 @@ export class ApiClient {
     /** Also read by the live connection (live.ts): the same origin. */
     readonly baseUrl: string
     private readonly timeoutMs: number
-    /** Also read by the live connection (live.ts): one token source. */
-    readonly getToken: (() => string | undefined) | undefined
+    private readonly onSessionEnded: (() => void) | undefined
 
     constructor(options: ApiClientOptions = {}) {
         this.baseUrl = options.baseUrl ?? DEFAULT_BASE_URL
         this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
-        this.getToken = options.getToken
+        this.onSessionEnded = options.onSessionEnded
     }
 
     /**
@@ -80,9 +84,10 @@ export class ApiClient {
         const headers: Record<string, string> = {
             Accept: 'application/json',
             'X-Request-ID': requestId,
+            // The session itself is an HttpOnly cookie the browser attaches
+            // (same-origin): page scripts never hold the token.
+            [CSRF_HEADER]: '1',
         }
-        const token = this.getToken?.()
-        if (token) headers['Authorization'] = `Bearer ${token}`
         let body: string | Blob | null = null
         if (options.rawBody) {
             headers['Content-Type'] = options.rawBody.contentType
@@ -117,7 +122,15 @@ export class ApiClient {
         }
 
         const responseId = response.headers.get('X-Request-ID') ?? requestId
-        if (!response.ok) throw httpError(response.status, text, responseId)
+        if (!response.ok) {
+            const error = httpError(response.status, text, responseId)
+            if (
+                error.kind === 'authentication' &&
+                error.code !== 'INVALID_CREDENTIALS'
+            )
+                this.onSessionEnded?.()
+            throw error
+        }
 
         let data: unknown
         try {

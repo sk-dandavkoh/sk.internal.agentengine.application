@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
+import { stubSession } from './session'
 
 // The project lifecycle in a real browser (native <dialog>, focus, layout).
 // The backend is an in-memory fake at the network boundary that enforces
@@ -121,6 +122,7 @@ async function fakeBackend(p: Page, initial: FakeProject[] = []) {
         }
         return reply(fail(405, 'METHOD_NOT_ALLOWED', 'Not allowed.'))
     })
+    await stubSession(p)
 }
 
 test('create, open, rename, duplicate and delete in a real browser', async ({

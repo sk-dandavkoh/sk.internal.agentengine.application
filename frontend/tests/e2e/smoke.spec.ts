@@ -1,4 +1,10 @@
 import { expect, test } from '@playwright/test'
+import { stubSession } from './session'
+
+// No backend behind the preview server: only the session is answered.
+test.beforeEach(async ({ page }) => {
+    await stubSession(page)
+})
 
 test('production build boots into the dashboard', async ({ page }) => {
     await page.goto('/')

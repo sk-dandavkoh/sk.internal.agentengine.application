@@ -1,8 +1,8 @@
 import { z } from 'zod'
 import type { ApiClient } from './client'
 
-// Contracts of backend api/auth.py. Session handling (where the token lives,
-// login UI, redirects) belongs to the auth feature (roadmap Phase 21).
+// Contracts of backend api/auth.py. The browser session is an HttpOnly
+// cookie (ADR 0002): no function here ever hands a token to the app.
 
 export const userSchema = z.object({
     id: z.string(),
@@ -14,33 +14,51 @@ export const userSchema = z.object({
 })
 export type User = z.infer<typeof userSchema>
 
-export const loginResponseSchema = z.object({
-    token: z.string().min(1),
+export const sessionSchema = z.object({
     expires_at: z.iso.datetime({ offset: true }),
     user: userSchema,
 })
-export type LoginResponse = z.infer<typeof loginResponseSchema>
+export type Session = z.infer<typeof sessionSchema>
+
+// `token` is null for a cookie login; listed only so the contract stays exact.
+export const loginResponseSchema = sessionSchema.extend({
+    token: z.string().nullable(),
+})
 
 export interface Credentials {
     username: string
     password: string
 }
 
-export function login(
+export async function login(
     client: ApiClient,
     credentials: Credentials,
     signal?: AbortSignal,
-) {
-    return client.request('POST', '/auth/login', loginResponseSchema, {
-        body: credentials,
-        signal,
-    })
+): Promise<Session> {
+    const { expires_at, user } = await client.request(
+        'POST',
+        '/auth/login',
+        loginResponseSchema,
+        { body: { ...credentials, cookie: true }, signal },
+    )
+    return { expires_at, user }
 }
 
 export function logout(client: ApiClient, signal?: AbortSignal) {
     return client.request('POST', '/auth/logout', z.undefined(), { signal })
 }
 
-export function fetchCurrentUser(client: ApiClient, signal?: AbortSignal) {
-    return client.request('GET', '/auth/me', userSchema, { signal })
+export function fetchSession(client: ApiClient, signal?: AbortSignal) {
+    return client.request('GET', '/auth/session', sessionSchema, { signal })
+}
+
+export function changePassword(
+    client: ApiClient,
+    body: { current_password: string; new_password: string },
+    signal?: AbortSignal,
+) {
+    return client.request('POST', '/auth/password', z.undefined(), {
+        body,
+        signal,
+    })
 }

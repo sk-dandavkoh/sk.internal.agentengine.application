@@ -436,9 +436,7 @@ describe('Live updates', () => {
 
         const ws = lastSocket()
         ws.serverOpen()
-        expect(ws.frames()).toEqual([
-            { type: 'subscribe', token: '', after: 0 },
-        ])
+        expect(ws.frames()).toEqual([{ type: 'subscribe', after: 0 }])
         const readsBefore = backend.detailReads
         ws.serverSend({ type: 'subscribed', execution_id: 'exec_1', after: 0 })
         expect(screen.getByText('Live')).toBeInTheDocument()
@@ -501,9 +499,7 @@ describe('Live updates', () => {
             const second = lastSocket()
             expect(second).not.toBe(first)
             second.serverOpen()
-            expect(second.frames()).toEqual([
-                { type: 'subscribe', token: '', after: 3 },
-            ])
+            expect(second.frames()).toEqual([{ type: 'subscribe', after: 3 }])
             second.serverSend({
                 type: 'subscribed',
                 execution_id: 'exec_1',

@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { NavLink, Outlet, useLocation, useNavigation } from 'react-router'
+import { SessionMenu } from '../features/auth/SessionMenu'
 import { cx } from '../lib/cx'
 import { navItems } from './navigation'
 
@@ -50,6 +51,7 @@ export function AppLayout() {
                         ))}
                     </ul>
                 </nav>
+                <SessionMenu />
             </header>
             <div className="relative min-w-0 flex-1">
                 {isNavigating && (

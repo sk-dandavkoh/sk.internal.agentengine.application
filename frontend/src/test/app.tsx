@@ -9,6 +9,7 @@ import { ApiClientContext } from '../api/context'
 import { createQueryClient } from '../api/queryClient'
 import { routes } from '../app/routes'
 import { ToastProvider } from '../components/ui'
+import { expireSession } from '../features/auth/session'
 
 export interface Reply {
     status: number
@@ -23,16 +24,34 @@ export function apiError(status: number, code: string, message: string) {
 }
 export const pending = () => new Promise<Reply>(() => undefined)
 
+export const testUser = {
+    id: 'u_admin',
+    username: 'ada',
+    role: 'admin',
+    disabled: false,
+    created_at: '2026-10-01T08:00:00Z',
+    updated_at: '2026-10-01T08:00:00Z',
+}
+export const testSession = {
+    expires_at: '2026-10-05T20:00:00Z',
+    user: testUser,
+}
+export const noSession = () =>
+    apiError(401, 'AUTHENTICATION_REQUIRED', 'Authentication required.')
+
 /**
  * Stubs `fetch` with `handlers`, keyed `"GET /projects"` (path below
- * /api/v1). Unknown routes answer 404. Returns the request log.
+ * /api/v1). Unknown routes answer 404. Signed in as `testUser` unless
+ * `GET /auth/session` is overridden. Returns the request log (without the
+ * session checks).
  */
 export function stubBackend(handlers: Record<string, Handler> = {}) {
+    handlers = { 'GET /auth/session': () => ok(testSession), ...handlers }
     const requests: URL[] = []
     vi.stubGlobal('fetch', async (input: string, init: RequestInit) => {
         const url = new URL(input, 'http://app.test')
-        requests.push(url)
         const key = `${init.method ?? 'GET'} ${url.pathname.replace('/api/v1', '')}`
+        if (key !== 'GET /auth/session') requests.push(url)
         const handler = handlers[key]
         const reply = handler
             ? await handler(url, init)
@@ -51,8 +70,13 @@ export function stubBackend(handlers: Record<string, Handler> = {}) {
 export function renderRoute(path: string) {
     const router = createMemoryRouter(routes, { initialEntries: [path] })
     const queryClient = createQueryClient()
+    const client = new ApiClient({
+        onSessionEnded: () => {
+            expireSession(queryClient)
+        },
+    })
     render(
-        <ApiClientContext value={new ApiClient()}>
+        <ApiClientContext value={client}>
             <QueryClientProvider client={queryClient}>
                 <ToastProvider>
                     <RouterProvider router={router} />

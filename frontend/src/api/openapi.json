@@ -1386,17 +1386,24 @@
             "type": "string"
           },
           "token": {
-            "title": "Token",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token"
           },
           "user": {
             "$ref": "#/components/schemas/UserDetail"
           }
         },
         "required": [
-          "token",
           "expires_at",
-          "user"
+          "user",
+          "token"
         ],
         "title": "LoginResponse",
         "type": "object"
@@ -2512,6 +2519,53 @@
         "title": "Role",
         "type": "string"
       },
+      "SessionDetail": {
+        "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "user": {
+            "$ref": "#/components/schemas/UserDetail"
+          }
+        },
+        "required": [
+          "expires_at",
+          "user"
+        ],
+        "title": "SessionDetail",
+        "type": "object"
+      },
+      "SessionLoginRequest": {
+        "properties": {
+          "cookie": {
+            "default": false,
+            "title": "Cookie",
+            "type": "boolean"
+          },
+          "password": {
+            "format": "password",
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Password",
+            "type": "string",
+            "writeOnly": true
+          },
+          "username": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Username",
+            "type": "string"
+          }
+        },
+        "required": [
+          "username",
+          "password"
+        ],
+        "title": "SessionLoginRequest",
+        "type": "object"
+      },
       "StatusCounts": {
         "description": "Every execution status with its count (zero included).",
         "properties": {
@@ -2962,7 +3016,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/LoginRequest"
+                "$ref": "#/components/schemas/SessionLoginRequest"
               }
             }
           },
@@ -2988,6 +3042,16 @@
               }
             },
             "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
           },
           "422": {
             "content": {
@@ -3121,6 +3185,38 @@
           }
         },
         "summary": "Change Password",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/session": {
+      "get": {
+        "description": "The caller's session: who, and until when (absolute expiry).",
+        "operationId": "session_api_v1_auth_session_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          }
+        },
+        "summary": "Session",
         "tags": [
           "auth"
         ]

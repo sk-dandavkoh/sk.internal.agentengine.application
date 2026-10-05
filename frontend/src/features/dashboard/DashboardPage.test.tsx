@@ -383,11 +383,7 @@ describe('Dashboard', () => {
                 key,
                 ((url, init) =>
                     down
-                        ? apiError(
-                              401,
-                              'AUTHENTICATION_REQUIRED',
-                              'Authentication required.',
-                          )
+                        ? apiError(500, 'INTERNAL_ERROR', 'Engine failure.')
                         : handler(url, init)) satisfies Handler,
             ]),
         )
@@ -398,7 +394,7 @@ describe('Dashboard', () => {
             await screen.findByText('Could not load the dashboard')
         ).closest('[role="alert"]')
         if (!(alert instanceof HTMLElement)) throw new Error('no alert')
-        expect(alert).toHaveTextContent('Authentication required.')
+        expect(alert).toHaveTextContent('Engine failure.')
         expect(screen.getAllByRole('alert')).toHaveLength(1)
         // The sections give way to it.
         expect(screen.getAllByRole('heading', { level: 2 })).toHaveLength(1)

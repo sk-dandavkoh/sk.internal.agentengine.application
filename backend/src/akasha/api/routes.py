@@ -5,9 +5,11 @@ Access policy (architecture §149), in one place:
 - public: /health, /ready, /docs + /openapi.json, POST /api/v1/auth/setup,
   POST /api/v1/auth/login, POST /api/v1/webhooks/...
 - WS /api/v1/executions/{id}/live: authenticates and authorizes in its
-  first frame (``akasha.api.live``), the same session + execution rule
+  first frame or, same-origin only, by the session cookie
+  (``akasha.api.live``), the same session + execution rule
 - /metrics: the configured scrape token, else an admin session
-- every other /api/v1 route: a session (``current_identity``) with access to
+- every other /api/v1 route: a session (``current_identity``: bearer
+  token, or the session cookie plus the X-Akasha-CSRF header) with access to
   the project/execution in its path (``authorize_path``); credentials,
   users and plugins additionally need an admin (``require_admin``); the node catalog
   (/api/v1/nodes), /api/v1/system/status and the cross-project execution

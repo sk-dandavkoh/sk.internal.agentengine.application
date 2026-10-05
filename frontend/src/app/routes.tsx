@@ -1,24 +1,29 @@
 import { redirect, type RouteObject } from 'react-router'
+import { RequireSession } from '../features/auth/RequireSession'
 import { AppLayout } from './AppLayout'
 import { AppLoading } from './AppLoading'
-import { navItems } from './navigation'
 import { NotFoundPage } from './NotFoundPage'
 import { RouteErrorBoundary } from './RouteErrorBoundary'
 
-// Each area is code-split. Until its phase lands, an area points at the shared
-// placeholder chunk; the feature then swaps in its own module here.
-function placeholder(title: string): NonNullable<RouteObject['lazy']> {
-    return async () => {
-        const { PlaceholderPage } = await import('./PlaceholderPage')
-        return { element: <PlaceholderPage title={title} /> }
-    }
-}
-
 export const routes: RouteObject[] = [
     {
-        // Root boundary: catches failures of the layout itself.
+        path: '/login',
+        errorElement: <RouteErrorBoundary />,
+        HydrateFallback: AppLoading,
+        lazy: async () => {
+            const { LoginPage } = await import('../features/auth/LoginPage')
+            return { Component: LoginPage }
+        },
+    },
+    {
+        // Root boundary: catches failures of the layout itself. Every area
+        // below needs a session (UX; the backend enforces it).
         path: '/',
-        element: <AppLayout />,
+        element: (
+            <RequireSession>
+                <AppLayout />
+            </RequireSession>
+        ),
         errorElement: <RouteErrorBoundary />,
         HydrateFallback: AppLoading,
         children: [
@@ -100,6 +105,14 @@ export const routes: RouteObject[] = [
                         },
                     },
                     {
+                        path: '/settings',
+                        lazy: async () => {
+                            const { SettingsPage } =
+                                await import('../features/settings/SettingsPage')
+                            return { Component: SettingsPage }
+                        },
+                    },
+                    {
                         path: '/reports/:executionId',
                         lazy: async () => {
                             const { ReportDetailPage } =
@@ -107,23 +120,6 @@ export const routes: RouteObject[] = [
                             return { Component: ReportDetailPage }
                         },
                     },
-                    ...navItems
-                        .filter(
-                            (item) =>
-                                ![
-                                    '/dashboard',
-                                    '/projects',
-                                    '/executions',
-                                    '/monitoring',
-                                    '/credentials',
-                                    '/reports',
-                                    '/plugins',
-                                ].includes(item.path),
-                        )
-                        .map((item): RouteObject => ({
-                            path: item.path,
-                            lazy: placeholder(item.label),
-                        })),
                     {
                         path: '/projects/:projectId/versions',
                         lazy: async () => {

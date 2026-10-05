@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
+import { stubSession } from './session'
 
 // The draft editor in a real browser: layout-dependent behavior jsdom
 // cannot show (drag geometry, edge paths, minimap, wheel zoom). The backend
@@ -146,6 +147,7 @@ async function fakeBackend(
             },
         })
     })
+    await stubSession(p)
     return saved
 }
 

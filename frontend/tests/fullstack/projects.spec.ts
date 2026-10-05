@@ -5,6 +5,7 @@ import {
     request as http,
     test,
     type APIRequestContext,
+    type Page,
     type WebSocketRoute,
 } from '@playwright/test'
 
@@ -12,18 +13,19 @@ import {
 // backend (playwright.fullstack.config.ts): nothing is stubbed.
 //
 // The database is empty at the start of every run, so the first admin is
-// created here. Until the login UI exists (Phase 21) the browser gets the
-// session token as a request header; everything else is the real app.
+// created here. Browsers sign in like the UI does: a cookie session
+// (ADR 0002); `api` (test setup only) uses a bearer token.
 
 let api: APIRequestContext
-let token = ''
+const UI_HEADERS = { 'X-Akasha-CSRF': '1' }
+const admin = () => ({
+    username: 'e2e-admin',
+    password: process.env.AKASHA_E2E_ADMIN_PASSWORD ?? '',
+})
 
 test.beforeAll(async ({ baseURL }) => {
     if (!baseURL) throw new Error('baseURL is not configured')
-    const credentials = {
-        username: 'e2e-admin',
-        password: process.env.AKASHA_E2E_ADMIN_PASSWORD,
-    }
+    const credentials = admin()
     const anonymous = await http.newContext({ baseURL })
     // 409: an earlier worker of this run already created the admin.
     expect([201, 409]).toContain(
@@ -35,7 +37,7 @@ test.beforeAll(async ({ baseURL }) => {
         data: credentials,
     })
     expect(login.status()).toBe(200)
-    token = String(((await login.json()) as { token: unknown }).token)
+    const token = String(((await login.json()) as { token: unknown }).token)
     await anonymous.dispose()
     api = await http.newContext({
         baseURL,
@@ -47,8 +49,17 @@ test.afterAll(async () => {
     await api.dispose()
 })
 
+/** Signs the page's browser context in: the session cookie is set. */
+async function signIn(page: Page) {
+    const response = await page.request.post('/api/v1/auth/login', {
+        data: { ...admin(), cookie: true },
+        headers: UI_HEADERS,
+    })
+    expect(response.status()).toBe(200)
+}
+
 test.beforeEach(async ({ page }) => {
-    await page.setExtraHTTPHeaders({ Authorization: `Bearer ${token}` })
+    await signIn(page)
 })
 
 /** A name unique to this test: tests share one database. */
@@ -544,15 +555,119 @@ test('validate, fix and publish a draft as an immutable version', async ({
     ).toBeVisible()
 })
 
-test('without a session the backend refuses and the UI says so', async ({
+test('without a session every area leads to the login page', async ({
     browser,
 }) => {
-    const page = await browser.newPage() // no Authorization header
+    const page = await browser.newPage() // no session cookie
     await page.goto('/projects')
-    await expect(page.getByRole('alert')).toContainText(
-        'Could not load projects',
-    )
+    await expect(
+        page.getByRole('heading', { name: 'Sign in to Akasha' }),
+    ).toBeVisible()
+    await expect(page).toHaveURL('/login')
+    // The backend, not the hidden route, is what refuses.
+    const direct = await page.request.get('/api/v1/projects', {
+        headers: UI_HEADERS,
+    })
+    expect(direct.status()).toBe(401)
     await page.close()
+})
+
+test('sign in, survive a reload, sign out', async ({ browser }) => {
+    const context = await browser.newContext()
+    const page = await context.newPage()
+    await page.goto('/projects')
+    const username = page.getByLabel(/^Username/)
+    const password = page.getByLabel(/^Password/)
+    const submit = page.getByRole('button', { name: 'Sign in' })
+
+    // Wrong password: the backend's message, no session.
+    await username.fill(admin().username)
+    await password.fill('not the password at all')
+    await submit.click()
+    await expect(page.getByRole('alert')).toContainText(
+        'Invalid username or password.',
+    )
+    expect(await context.cookies()).toEqual([])
+
+    await password.fill(admin().password)
+    await submit.click()
+    await expect(
+        page.getByRole('heading', { level: 1, name: 'Projects' }),
+    ).toBeVisible()
+    await expect(page).toHaveURL('/projects')
+
+    // The session lives in an HttpOnly cookie page scripts cannot read.
+    const [cookie] = await context.cookies()
+    expect(cookie).toMatchObject({
+        name: 'akasha_session',
+        httpOnly: true,
+        sameSite: 'Strict',
+        path: '/api/v1',
+    })
+    expect(await page.evaluate<string>('document.cookie')).toBe('')
+    const stored = await page.evaluate<string>(
+        'JSON.stringify([localStorage, sessionStorage])',
+    )
+    expect(stored).not.toContain(cookie?.value ?? '?')
+
+    // Reload: restored from the cookie, no new sign-in.
+    await page.reload()
+    await expect(
+        page.getByRole('heading', { level: 1, name: 'Projects' }),
+    ).toBeVisible()
+
+    await page.getByRole('link', { name: 'Settings' }).click()
+    await expect(page.getByText('e2e-admin').first()).toBeVisible()
+
+    await page.getByRole('button', { name: 'Sign out' }).click()
+    await expect(
+        page.getByRole('heading', { name: 'Sign in to Akasha' }),
+    ).toBeVisible()
+    expect(await context.cookies()).toEqual([])
+    // Revoked server-side: a copy of the old cookie is worthless.
+    const replay = await page.request.get('/api/v1/auth/session', {
+        headers: {
+            ...UI_HEADERS,
+            Cookie: `akasha_session=${cookie?.value ?? ''}`,
+        },
+    })
+    expect(replay.status()).toBe(401)
+    await page.goto('/projects')
+    await expect(page).toHaveURL('/login')
+    await context.close()
+})
+
+test('a session ended elsewhere sends the user to sign in again', async ({
+    page: p,
+}) => {
+    await p.goto('/dashboard')
+    await expect(
+        p.getByRole('heading', { level: 1, name: 'Dashboard' }),
+    ).toBeVisible()
+
+    // Signed out in another tab of the same browser: the same cookie.
+    const status = await p.evaluate<number>(
+        `fetch('/api/v1/auth/logout', {
+            method: 'POST',
+            headers: { 'X-Akasha-CSRF': '1' },
+        }).then((r) => r.status)`,
+    )
+    expect(status).toBe(204)
+
+    await p
+        .getByRole('navigation', { name: 'Main' })
+        .getByRole('link', { name: 'Projects' })
+        .click()
+    await expect(
+        p.getByRole('heading', { name: 'Sign in to Akasha' }),
+    ).toBeVisible()
+    await expect(p.getByRole('status')).toContainText('Your session has ended')
+
+    // Signing in again returns to the page that was asked for.
+    await p.getByLabel(/^Username/).fill(admin().username)
+    await p.getByLabel(/^Password/).fill(admin().password)
+    await p.getByRole('button', { name: 'Sign in' }).click()
+    await expect(p).toHaveURL('/projects')
 })
 
 test('versions are listed, inspected, compared and show their runs', async ({
@@ -691,9 +806,9 @@ test('a run is followed live, across a dropped connection, to its end', async ({
     )
     const { id: executionId } = (await run.json()) as { id: string }
 
-    // The real backend stream. Until the login UI exists (Phase 21) the app
-    // has no token to put in its subscribe frame; this adds it, like the
-    // request header above. Everything else passes through unchanged.
+    // The real backend stream, authenticated by the session cookie of the
+    // handshake (no token in the frame); passed through unchanged, only
+    // observed and dropped on demand.
     const subscribes: { after: number }[] = []
     let connection: WebSocketRoute | undefined
     await p.routeWebSocket(/\/live$/, (ws) => {
@@ -702,7 +817,7 @@ test('a run is followed live, across a dropped connection, to its end', async ({
         ws.onMessage((message) => {
             const frame = JSON.parse(String(message)) as { after: number }
             subscribes.push(frame)
-            server.send(JSON.stringify({ ...frame, token }))
+            server.send(JSON.stringify(frame))
         })
     })
 

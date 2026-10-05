@@ -346,7 +346,7 @@ describe('CredentialsPage', () => {
         ).toBeDisabled()
     })
 
-    it('explains an expired session', async () => {
+    it('sends an expired session to the login page', async () => {
         stubBackend({
             'GET /credentials': () =>
                 apiError(
@@ -355,9 +355,13 @@ describe('CredentialsPage', () => {
                     'Your session has expired.',
                 ),
         })
-        renderRoute('/credentials')
-        expect(await screen.findByRole('alert')).toHaveTextContent(
-            'Your session has expired.',
+        const { router } = renderRoute('/credentials')
+        expect(
+            await screen.findByRole('heading', { name: 'Sign in to Akasha' }),
+        ).toBeInTheDocument()
+        expect(router.state.location.pathname).toBe('/login')
+        expect(screen.getByRole('status')).toHaveTextContent(
+            'Your session has ended',
         )
     })
 })

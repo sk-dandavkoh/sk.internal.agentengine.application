@@ -1,8 +1,11 @@
 """Authentication endpoints and the request guards every protected route uses.
 
 Clients send ``Authorization: Bearer <token>`` (from ``POST /auth/login``).
-No cookies, so there is no ambient credential a cross-site request could
-ride on (no CSRF surface).
+The web UI instead logs in with ``"cookie": true`` and never sees the token:
+it rides in an HttpOnly cookie (ADR 0002). The cookie counts only on
+requests that also carry the ``X-Akasha-CSRF`` header, which a cross-origin
+page cannot add without a CORS preflight this API never grants, and a form
+or an ``<img>`` cannot add at all (CSRF).
 
 Guards, applied router-wide in ``routes.create_api_v1_router`` so a new
 route is protected by default:
@@ -32,9 +35,21 @@ from akasha.application.auth import (
 )
 from akasha.application.projects import MAX_PAGE_SIZE, Page
 from akasha.domain.identity import MAX_PASSWORD_LENGTH, Identity, Role, User
-from akasha.errors import ConfigurationError
+from akasha.errors import AkashaError, ConfigurationError
 
 _MAX_TOKEN_LENGTH = 256
+SESSION_COOKIE = "akasha_session"
+# Covers /api/v1 including the live WebSocket, nothing else on the origin.
+SESSION_COOKIE_PATH = "/api/v1"
+CSRF_HEADER = "X-Akasha-CSRF"
+
+
+class CsrfHeaderRequiredError(AkashaError):
+    """A cookie login without the anti-CSRF header."""
+
+    code = "CSRF_HEADER_REQUIRED"
+    http_status = 403
+
 
 Username = Annotated[str, Field(min_length=1, max_length=64)]
 Password = Annotated[SecretStr, Field(min_length=1, max_length=MAX_PASSWORD_LENGTH)]
@@ -61,11 +76,21 @@ def _users(request: Request) -> UserService:
     return service
 
 
+def _bounded(token: str | None) -> str | None:
+    return token if token and len(token) <= _MAX_TOKEN_LENGTH else None
+
+
 def bearer_token(request: Request) -> str | None:
     scheme, _, token = request.headers.get("authorization", "").partition(" ")
-    token = token.strip()
-    if scheme.lower() != "bearer" or not token or len(token) > _MAX_TOKEN_LENGTH:
-        return None
+    return _bounded(token.strip()) if scheme.lower() == "bearer" else None
+
+
+def session_token(request: Request) -> str | None:
+    """The bearer token, else the session cookie if the request proves it
+    comes from the UI's own origin (``X-Akasha-CSRF``)."""
+    token = bearer_token(request)
+    if token is None and CSRF_HEADER.lower() in request.headers:
+        token = _bounded(request.cookies.get(SESSION_COOKIE))
     return token
 
 
@@ -73,7 +98,7 @@ Auth = Annotated[AuthenticationService, Depends(auth_service)]
 
 
 async def current_identity(request: Request, auth: Auth) -> Identity:
-    token = bearer_token(request)
+    token = session_token(request)
     if token is None:
         raise AuthenticationRequiredError("Authentication required.")
     identity = await auth.authenticate(token)
@@ -107,6 +132,12 @@ class LoginRequest(BaseModel):
     password: Password
 
 
+class SessionLoginRequest(LoginRequest):
+    # True: the session goes into an HttpOnly cookie, not the response body
+    # (browsers; needs the X-Akasha-CSRF header).
+    cookie: bool = False
+
+
 class UserDetail(BaseModel):
     id: str
     username: str
@@ -127,10 +158,21 @@ class UserDetail(BaseModel):
         )
 
 
-class LoginResponse(BaseModel):
-    token: str
+class SessionDetail(BaseModel):
     expires_at: datetime
     user: UserDetail
+
+    @classmethod
+    def from_domain(cls, identity: Identity) -> "SessionDetail":
+        return cls(
+            expires_at=identity.session.expires_at,
+            user=UserDetail.from_domain(identity.user),
+        )
+
+
+class LoginResponse(SessionDetail):
+    # Null for a cookie login: the token never reaches page scripts.
+    token: str | None
 
 
 class ChangePasswordRequest(BaseModel):
@@ -161,6 +203,11 @@ class UserPage(BaseModel):
         )
 
 
+def _cookie_secure(request: Request) -> bool:
+    secure: bool = request.app.state.container.settings.session_cookie_secure
+    return secure
+
+
 def _errors(*codes: int) -> dict[int | str, dict[str, Any]]:
     return {code: {"model": ErrorResponse} for code in codes}
 
@@ -180,11 +227,27 @@ def create_auth_router() -> APIRouter:
         user = await auth.setup(body.username, body.password.get_secret_value())
         return UserDetail.from_domain(user)
 
-    @router.post("/login", responses=_errors(401, 422, 429))
-    async def login(body: LoginRequest, auth: Auth) -> LoginResponse:
+    @router.post("/login", responses=_errors(401, 403, 422, 429))
+    async def login(
+        body: SessionLoginRequest, request: Request, response: Response, auth: Auth
+    ) -> LoginResponse:
+        if body.cookie and CSRF_HEADER.lower() not in request.headers:
+            # Else a cross-site form could log the victim into the
+            # attacker's account (login CSRF).
+            raise CsrfHeaderRequiredError(f"A cookie login needs {CSRF_HEADER}.")
         result = await auth.login(body.username, body.password.get_secret_value())
+        if body.cookie:
+            response.set_cookie(
+                SESSION_COOKIE,
+                result.token,
+                expires=result.session.expires_at,
+                path=SESSION_COOKIE_PATH,
+                secure=_cookie_secure(request),
+                httponly=True,
+                samesite="strict",
+            )
         return LoginResponse(
-            token=result.token,
+            token=None if body.cookie else result.token,
             expires_at=result.session.expires_at,
             user=UserDetail.from_domain(result.user),
         )
@@ -192,13 +255,28 @@ def create_auth_router() -> APIRouter:
     @router.post(
         "/logout", status_code=status.HTTP_204_NO_CONTENT, responses=_errors(401)
     )
-    async def logout(identity: CurrentIdentity, auth: Auth) -> Response:
+    async def logout(
+        request: Request, identity: CurrentIdentity, auth: Auth
+    ) -> Response:
         await auth.logout(identity)
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
+        response = Response(status_code=status.HTTP_204_NO_CONTENT)
+        response.delete_cookie(
+            SESSION_COOKIE,
+            path=SESSION_COOKIE_PATH,
+            secure=_cookie_secure(request),
+            httponly=True,
+            samesite="strict",
+        )
+        return response
 
     @router.get("/me", responses=_errors(401))
     async def me(identity: CurrentIdentity) -> UserDetail:
         return UserDetail.from_domain(identity.user)
+
+    @router.get("/session", responses=_errors(401))
+    async def session(identity: CurrentIdentity) -> SessionDetail:
+        """The caller's session: who, and until when (absolute expiry)."""
+        return SessionDetail.from_domain(identity)
 
     @router.post(
         "/password",

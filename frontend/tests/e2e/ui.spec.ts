@@ -1,8 +1,10 @@
 import { expect, test } from '@playwright/test'
+import { stubSession } from './session'
 
 // Native behavior jsdom cannot provide (top layer, focus containment,
 // Escape, focus return), checked on the design-system catalog page.
 test.beforeEach(async ({ page }) => {
+    await stubSession(page)
     await page.goto('/dev/ui')
     await expect(
         page.getByRole('heading', { level: 1, name: 'UI catalog' }),
@@ -101,6 +103,17 @@ for (const [colorScheme, lightness] of [
         )
     })
 }
+
+test('a theme pinned in Settings overrides the OS color scheme', async ({
+    page,
+}) => {
+    await page.emulateMedia({ colorScheme: 'light' })
+    await page.evaluate('document.documentElement.dataset.theme = "dark"')
+    await expect(page.locator('body')).toHaveCSS(
+        'background-color',
+        /^oklch\(0\.12/,
+    )
+})
 
 test('catalog fits a phone viewport without page-level horizontal scroll', async ({
     page,

@@ -20,6 +20,12 @@ def make_zip(*entries: tuple[str | zipfile.ZipInfo, bytes]) -> bytes:
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as zf:
         for name, data in entries:
+            if isinstance(name, str) and ("\\" in name or "\x00" in name):
+                # Stored as given, like a hostile archive: ZipInfo would
+                # turn "\" into "/" on Windows and cut at the NUL.
+                info = zipfile.ZipInfo(name)
+                info.filename = name
+                name = info
             zf.writestr(name, data)
     return buffer.getvalue()
 
@@ -75,6 +81,7 @@ def test_requires_a_manifest_at_root_or_one_directory(
         "C:/evil.py",
         "pkg/./x.py",
         "pkg//x.py",
+        "pkg/x.py\x00.exe",
     ],
 )
 def test_rejects_unsafe_paths(tmp_path: Path, target: Path, name: str) -> None:

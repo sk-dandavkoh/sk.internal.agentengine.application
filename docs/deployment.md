@@ -47,14 +47,24 @@ timeout above that (nginx's default is 60 s) keeps it open. Without upgrade
 support live updates stay on "Reconnecting" in the UI; everything else
 keeps working. nginx example:
 
+The UI's live stream is authenticated by the session cookie, and only
+when the handshake's `Origin` matches the host the browser used (ADR 0002).
+The proxy must therefore forward that host, as `Host` or
+`X-Forwarded-Host`. Otherwise live updates fail with "unavailable".
+
 ```nginx
 location /api/ {
     proxy_pass http://127.0.0.1:8000;
     proxy_http_version 1.1;
+    proxy_set_header Host $host;
     proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection $connection_upgrade;  # map, see nginx docs
 }
 ```
+
+Serve the UI over HTTPS: the session cookie is `Secure` and browsers drop
+it on plain HTTP (except on localhost). A plain-HTTP rig on another
+address can set `AKASHA_SESSION_COOKIE_SECURE=false`.
 
 ## 3. Installation
 

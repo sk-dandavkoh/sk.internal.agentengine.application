@@ -387,6 +387,159 @@ async def test_change_password_requires_the_current_password(env: Env) -> None:
     assert (await login(env, "admin")).status_code == 200  # unchanged
 
 
+# -- browser (cookie) sessions, ADR 0002 ----------------------------------------
+
+UI = {"X-Akasha-CSRF": "1"}
+
+
+async def cookie_login(env: Env, username: str = "admin") -> httpx.Response:
+    return await env.client.post(
+        "/api/v1/auth/login",
+        json={"username": username, "password": PASSWORD, "cookie": True},
+        headers=UI,
+    )
+
+
+def session_cookie(response: httpx.Response) -> dict[str, str]:
+    """The cookie as the browser would send it back (sent by hand: httpx
+    drops a Secure cookie over the test's plain http)."""
+    morsel = response.headers["set-cookie"].split(";")[0]
+    return {"Cookie": morsel}
+
+
+async def test_cookie_login_keeps_the_token_out_of_page_scripts(env: Env) -> None:
+    await env.admin()
+    response = await cookie_login(env)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["token"] is None
+    assert datetime.fromisoformat(body["expires_at"]) == env.clock.now + TTL
+    attributes = [a.strip().lower() for a in response.headers["set-cookie"].split(";")]
+    assert attributes[0].startswith("akasha_session=")
+    for expected in ("httponly", "secure", "samesite=strict", "path=/api/v1"):
+        assert expected in attributes, attributes
+    # Absolute expiry, like the session itself (no sliding renewal).
+    assert any(a.startswith("expires=") for a in attributes)
+
+    session = await env.client.get(
+        "/api/v1/auth/session", headers={**UI, **session_cookie(response)}
+    )
+    assert session.status_code == 200, session.text
+    assert session.json() == {
+        "expires_at": body["expires_at"],
+        "user": body["user"],
+    }
+
+
+async def test_bearer_login_sets_no_cookie(env: Env) -> None:
+    await env.admin()
+    response = await login(env, "admin")
+    assert response.json()["token"]
+    assert "set-cookie" not in response.headers
+
+
+async def test_the_cookie_counts_only_with_the_csrf_header(env: Env) -> None:
+    """A cross-site form or <img> sends the cookie (same-site, or a
+    browser without SameSite) but cannot add the header."""
+    await env.admin()
+    cookie = session_cookie(await cookie_login(env))
+    response = await env.client.get("/api/v1/projects", headers=cookie)
+    assert_error(response, 401, "AUTHENTICATION_REQUIRED")
+    response = await env.client.post("/api/v1/auth/logout", headers=cookie)
+    assert_error(response, 401, "AUTHENTICATION_REQUIRED")
+    ok = await env.client.get("/api/v1/projects", headers={**UI, **cookie})
+    assert ok.status_code == 200
+
+
+async def test_cookie_login_requires_the_csrf_header(env: Env) -> None:
+    """Login CSRF: a cross-site form must not log the victim's browser
+    into the attacker's account."""
+    await env.admin()
+    response = await env.client.post(
+        "/api/v1/auth/login",
+        json={"username": "admin", "password": PASSWORD, "cookie": True},
+    )
+    assert_error(response, 403, "CSRF_HEADER_REQUIRED")
+    assert "set-cookie" not in response.headers
+
+
+async def test_cookie_login_failures_set_no_cookie(env: Env) -> None:
+    await env.admin()
+    response = await env.client.post(
+        "/api/v1/auth/login",
+        json={"username": "admin", "password": "wrong password!", "cookie": True},
+        headers=UI,
+    )
+    assert_error(response, 401, "INVALID_CREDENTIALS")
+    assert "set-cookie" not in response.headers
+
+
+@pytest.mark.parametrize(
+    "cookie", ["akasha_session=not-a-session", "akasha_session=" + "x" * 300]
+)
+async def test_invalid_session_cookie_is_401(env: Env, cookie: str) -> None:
+    await env.admin()
+    response = await env.client.get(
+        "/api/v1/auth/session", headers={**UI, "Cookie": cookie}
+    )
+    assert_error(response, 401, "AUTHENTICATION_REQUIRED")
+
+
+async def test_cookie_session_expires(env: Env) -> None:
+    await env.admin()
+    headers = {**UI, **session_cookie(await cookie_login(env))}
+    env.clock.now += TTL
+    response = await env.client.get("/api/v1/auth/session", headers=headers)
+    assert_error(response, 401, "AUTHENTICATION_REQUIRED")
+
+
+async def test_logout_revokes_the_cookie_session_and_clears_the_cookie(
+    env: Env,
+) -> None:
+    await env.admin()
+    headers = {**UI, **session_cookie(await cookie_login(env))}
+    response = await env.client.post("/api/v1/auth/logout", headers=headers)
+    assert response.status_code == 204
+    cleared = response.headers["set-cookie"].lower()
+    assert cleared.startswith('akasha_session=""') and "max-age=0" in cleared
+    assert "path=/api/v1" in cleared
+    # Revoked server-side, not just forgotten by the browser: a copied
+    # cookie is dead too.
+    response = await env.client.get("/api/v1/auth/session", headers=headers)
+    assert_error(response, 401, "AUTHENTICATION_REQUIRED")
+
+
+async def test_session_endpoint_requires_a_session(env: Env) -> None:
+    await env.admin()
+    response = await env.client.get("/api/v1/auth/session")
+    assert_error(response, 401, "AUTHENTICATION_REQUIRED")
+
+
+async def test_session_cookie_secure_flag_is_configurable(
+    database: Database, node_definitions: dict[str, NodeDefinition]
+) -> None:
+    kit = make_auth_kit(database)
+    settings = Settings(
+        environment="test", log_level="CRITICAL", session_cookie_secure=False
+    )
+    app = create_app(
+        settings=settings,
+        container=Container(
+            settings=settings, database=database, **kit.container_fields()
+        ),
+    )
+    await kit.auth.setup("admin", PASSWORD)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
+        response = await c.post(
+            "/api/v1/auth/login",
+            json={"username": "admin", "password": PASSWORD, "cookie": True},
+            headers=UI,
+        )
+    assert response.status_code == 200, response.text
+    assert "secure" not in response.headers["set-cookie"].lower()
+
+
 # -- user management --------------------------------------------------------------
 
 

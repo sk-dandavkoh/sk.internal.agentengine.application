@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { defineConfig, devices } from '@playwright/test'
 
 // Full-stack E2E: the production bundle against the real backend of this
-// checkout on a fresh, empty database (tests/fullstack/backend.sh). Needs
+// checkout on a fresh, empty database (tests/fullstack/backend.ts). Needs
 // Docker and uv. Never reuses running servers: every run starts clean.
 // ponytail: fixed ports (strict, so a clash fails loudly); pick free ones
 // if this suite ever runs in parallel with itself.
@@ -25,7 +25,7 @@ export default defineConfig({
     projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
     webServer: [
         {
-            command: './tests/fullstack/backend.sh',
+            command: 'node tests/fullstack/backend.ts',
             env: { AKASHA_E2E_API_PORT: String(apiPort) },
             url: `http://127.0.0.1:${String(apiPort)}/ready`,
             timeout: 180_000,

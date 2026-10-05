@@ -1357,15 +1357,17 @@ Implemented (frontend Phase 14, `backend/src/akasha/api/live.py`):
   `events` (`items`: the `EventOut` of the HTTP event history, ascending by
   `position`), then `end` (`status`: the terminal status) and close 1000
   once the execution is terminal and every event was sent.
-- Authentication boundary: the session token travels in the subscribe
-  frame. Browsers cannot set headers on a WebSocket and URLs reach logs, so
-  neither a header nor a query parameter. The same rules as HTTP apply:
+- Authentication boundary: an API client puts its session token in the
+  subscribe frame. Browsers cannot set headers on a WebSocket and URLs reach
+  logs, so neither a header nor a query parameter. The web UI sends no
+  token: the handshake's session cookie counts instead (ADR 0002), but only
+  when its `Origin` host equals `Host` or `X-Forwarded-Host`, which blocks
+  cross-site WebSocket hijacking. The same rules as HTTP apply:
   a valid session (else close 4401; a missing token too) and access to the
   execution's project (else 4404, the same answer for unknown and hidden
   executions). The session is re-checked every poll, so logout, expiry or
-  a disabled user ends the stream (4401). No Origin check: there is no
-  ambient credential (no cookies). Malformed first frame: 4400; internal or
-  configuration error: 1011. Any other close is transient.
+  a disabled user ends the stream (4401). Malformed first frame: 4400;
+  internal or configuration error: 1011. Any other close is transient.
 - The stream is a tail of the persisted event log, not a second channel:
   every `AKASHA_LIVE_POLL_SECONDS` (0.5) it reads `position > after` from
   PostgreSQL (`ExecutionService.follow_events`, which reads the execution
@@ -2864,7 +2866,15 @@ Implementation (Phase 20, `domain/identity.py`, `application/auth.py`,
   Only their SHA-256 is stored (`sessions`). Sessions expire
   `AKASHA_SESSION_TTL_SECONDS` after login (absolute, no sliding renewal).
   Logout, a password change (other sessions), an admin password reset and
-  disabling a user revoke them. No cookies, so there is no CSRF surface.
+  disabling a user revoke them.
+- Browser sessions (frontend Phase 21, ADR 0002): `POST /auth/login` with
+  `"cookie": true` puts the token in an `HttpOnly`, `SameSite=Strict`,
+  `Secure` (`AKASHA_SESSION_COOKIE_SECURE`) cookie on `Path=/api/v1` and
+  answers `token: null`. The cookie counts only with the `X-Akasha-CSRF`
+  header (forms cannot send it; cross-origin scripts would need a CORS
+  preflight the API never grants), so CSRF stays closed. A cookie login
+  without it is 403 `CSRF_HEADER_REQUIRED` (login CSRF). Logout also
+  expires the cookie. `GET /auth/session` returns `{expires_at, user}`.
 - First run: `POST /auth/setup` creates the first admin only while the user
   table is empty (serialized by a table lock). Afterwards admins create
   accounts (`/users`). The last active admin cannot be disabled (row locks
@@ -2877,7 +2887,8 @@ Implementation (Phase 20, `domain/identity.py`, `application/auth.py`,
   now (see Phase 22).
 - Error codes: `AUTHENTICATION_REQUIRED` (401, missing/expired/revoked
   token, with `WWW-Authenticate: Bearer`), `INVALID_CREDENTIALS` (401),
-  `LOGIN_THROTTLED` (429), `PERMISSION_DENIED` (403).
+  `LOGIN_THROTTLED` (429), `PERMISSION_DENIED` (403),
+  `CSRF_HEADER_REQUIRED` (403).
 - Audit: `setup_completed`, `login_succeeded`, `login_failed`, `logout`,
   `password_changed`, `user_created`, `user_updated` are structured log
   events carrying ids only. The access log carries the caller's `user_id`.

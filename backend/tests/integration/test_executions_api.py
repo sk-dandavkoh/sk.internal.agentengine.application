@@ -18,6 +18,7 @@ import pytest
 import uvicorn
 from websockets.asyncio.client import ClientConnection, connect
 from websockets.exceptions import ConnectionClosed
+from websockets.typing import Origin
 
 from akasha import __version__
 from akasha.api.app import create_app
@@ -34,7 +35,13 @@ from akasha.infrastructure.persistence import SqlAlchemyUnitOfWork
 from akasha.nodes.builtins import create_builtin_registry
 from akasha.runtime.runtime import ExecutionRuntime
 from akasha.sdk import NodeError, NodeErrorKind
-from tests.integration.fixtures import SINK, SOURCE, AuthKit, make_auth_kit
+from tests.integration.fixtures import (
+    PASSWORD,
+    SINK,
+    SOURCE,
+    AuthKit,
+    make_auth_kit,
+)
 from tests.integration.test_triggers_api import assert_error, publish_with
 
 pytestmark = pytest.mark.usefixtures("clean_db")
@@ -693,6 +700,72 @@ async def test_live_closes_when_the_session_ends_mid_stream(
 
     # The next poll re-checks the session: a logged-out stream stops.
     assert await _close_code(ws) == 4401
+
+
+async def _cookie_session(env: Env) -> str:
+    """A browser login: the session exists only as the cookie value."""
+    response = await env.client.post(
+        "/api/v1/auth/login",
+        json={"username": "admin", "password": PASSWORD, "cookie": True},
+        headers={"X-Akasha-CSRF": "1"},
+    )
+    assert response.status_code == 200, response.text
+    return response.headers["set-cookie"].split(";")[0]
+
+
+async def _subscribe_with_cookie(
+    url: str, execution_id: str, cookie: str, origin: str | None
+) -> ClientConnection:
+    ws = await connect(
+        f"{url}/{execution_id}/live",
+        additional_headers={"Cookie": cookie},
+        origin=None if origin is None else Origin(origin),
+    )
+    await ws.send(json.dumps({"type": "subscribe", "after": 0}))
+    return ws
+
+
+async def test_live_accepts_the_session_cookie_from_the_same_origin(
+    env: Env, live_url: str
+) -> None:
+    pid, version, _ = await publish_with(env.client, [])
+    execution_id = await env.run(pid, version)
+    cookie = await _cookie_session(env)
+    host = live_url.removeprefix("ws://").split("/")[0]
+
+    ws = await _subscribe_with_cookie(live_url, execution_id, cookie, f"http://{host}")
+    assert (await _frame(ws))["type"] == "subscribed"
+    _, end = await _drain(ws)
+    assert end["status"] == "completed"
+
+
+@pytest.mark.parametrize("origin", ["http://evil.example", None])
+async def test_live_ignores_the_cookie_from_another_origin(
+    env: Env, live_url: str, origin: str | None
+) -> None:
+    """Cross-site WebSocket hijacking: the browser attaches the cookie to a
+    handshake any page opens, so only the UI's own origin may use it."""
+    pid, version, _ = await publish_with(env.client, [])
+    execution_id = await env.run(pid, version)
+    cookie = await _cookie_session(env)
+
+    ws = await _subscribe_with_cookie(live_url, execution_id, cookie, origin)
+    assert await _close_code(ws) == 4401
+
+
+async def test_live_accepts_the_proxy_forwarded_host(env: Env, live_url: str) -> None:
+    """Behind a reverse proxy that rewrites Host, X-Forwarded-Host names
+    the origin the browser saw."""
+    pid, version, _ = await publish_with(env.client, [])
+    execution_id = await env.run(pid, version)
+    cookie = await _cookie_session(env)
+    ws = await connect(
+        f"{live_url}/{execution_id}/live",
+        additional_headers={"Cookie": cookie, "X-Forwarded-Host": "akasha.example"},
+        origin=Origin("https://akasha.example"),
+    )
+    await ws.send(json.dumps({"type": "subscribe", "after": 0}))
+    assert (await _frame(ws))["type"] == "subscribed"
 
 
 # -- cancel ---------------------------------------------------------------------
