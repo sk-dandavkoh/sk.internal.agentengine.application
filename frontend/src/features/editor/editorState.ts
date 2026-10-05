@@ -5,6 +5,7 @@ import type {
     NodePosition,
 } from '../../api/projects'
 import type { JsonObject } from '../../api/schemas'
+import { randomHex } from '../../lib/randomHex'
 import { edgeKey, sameEdge } from './graphView'
 
 // Editor state of one project draft (frontend/AGENTS §29). Pure: the hook
@@ -419,4 +420,4 @@ const savable = (graph: Graph, edge: Edge) =>
     !graph.edges.some((e) => sameEdge(e, edge))
 
 /** A backend-shaped node id (`node_` + 32 hex digits). */
-export const newNodeId = () => `node_${crypto.randomUUID().replaceAll('-', '')}`
+export const newNodeId = () => `node_${randomHex()}`

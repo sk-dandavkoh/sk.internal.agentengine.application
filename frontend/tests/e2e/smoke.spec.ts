@@ -43,3 +43,26 @@ test('deep links to nested and unknown routes resolve client-side', async ({
         page.getByRole('heading', { level: 1, name: 'Page not found' }),
     ).toBeVisible()
 })
+
+test('a page chunk removed by a newer release offers a reload', async ({
+    page,
+}) => {
+    await page.goto('/dashboard')
+    // A tab opened before an upgrade asks for a chunk the new release no
+    // longer has (docs/deployment.md: assets 404, never index.html).
+    await page.route('**/assets/ExecutionsPage-*.js', (route) =>
+        route.fulfill({ status: 404 }),
+    )
+
+    await page
+        .getByRole('navigation', { name: 'Main' })
+        .getByRole('link', { name: 'Executions' })
+        .click()
+
+    await expect(
+        page.getByText('This page could not be displayed. Try reloading it.'),
+    ).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Reload' })).toBeVisible()
+    // The shell stays usable.
+    await expect(page.getByRole('navigation', { name: 'Main' })).toBeVisible()
+})

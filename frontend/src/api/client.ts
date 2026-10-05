@@ -1,5 +1,6 @@
 import type { z } from 'zod'
 import { ApiError, fallbackMessage, httpError } from './errors'
+import { randomHex } from '../lib/randomHex'
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
 
@@ -115,7 +116,7 @@ export class ApiClient {
         options: RequestOptions,
         read: (response: Response) => Promise<T>,
     ): Promise<{ status: number; requestId: string; value: T }> {
-        const requestId = crypto.randomUUID()
+        const requestId = randomHex()
         // Ids in paths come from route params a crafted link controls, and
         // encodeURIComponent keeps '.': URL parsing would collapse a "." or
         // ".." segment and send the request to another endpoint.

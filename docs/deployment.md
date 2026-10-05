@@ -66,10 +66,33 @@ Serve the UI over HTTPS: the session cookie is `Secure` and browsers drop
 it on plain HTTP (except on localhost). A plain-HTTP rig on another
 address can set `AKASHA_SESSION_COOKIE_SECURE=false`.
 
-The UI bundle (`frontend/dist`) carries its Content Security Policy as a
-`<meta>` tag. A `<meta>` cannot forbid framing, so the proxy serving the UI
-should add these headers, which stop clickjacking and MIME sniffing.
-`index.html` must not be cached, so a new release takes effect on reload.
+### The UI
+
+The UI is a static bundle, built reproducibly from the lockfile (two builds
+of one commit are byte-identical):
+
+```bash
+cd frontend
+npm ci
+npm run build          # typecheck, then the bundle into frontend/dist
+rsync -a dist/ proxy-host:/srv/akasha/frontend/
+```
+
+It has no runtime configuration. It calls the API on its own origin
+(`/api/v1`, live WebSocket included), so the proxy serves the UI and `/api/`
+under one host and the backend needs no CORS. Serve it at the root of that
+host: asset URLs are absolute (`/assets/...`). No source maps are built.
+
+Supported browsers: Chrome/Edge 116+, Firefox 128+, Safari 17.4+.
+
+The bundle carries its Content Security Policy as a `<meta>` tag. A
+`<meta>` cannot forbid framing, so the proxy adds these headers, which stop
+clickjacking and MIME sniffing. `index.html` must not be cached, so a new
+release takes effect on reload. Files in `/assets/` have content-hashed
+names and can be cached forever. A missing asset must be a 404, never
+`index.html`. Copy releases without deleting the old assets, so tabs opened
+before the upgrade can still load pages. If those assets are gone, the page
+shows "Reload".
 
 ```nginx
 location / {
@@ -80,7 +103,18 @@ location / {
     add_header Referrer-Policy same-origin always;
     add_header Cache-Control no-cache always;
 }
+location /assets/ {
+    root /srv/akasha/frontend;
+    try_files $uri =404;
+    # add_header is not inherited by a location that sets its own.
+    add_header X-Content-Type-Options nosniff always;
+    add_header Cache-Control "public, max-age=31536000, immutable" always;
+}
 ```
+
+When the backend is unreachable or the proxy answers 502/503/504, the UI
+retries reads twice, then says so and offers a retry. It never retries
+writes.
 
 ## 3. Installation
 

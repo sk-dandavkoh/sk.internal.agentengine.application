@@ -7,7 +7,15 @@ import {
     type ServerResponse,
 } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import {
+    afterAll,
+    beforeAll,
+    beforeEach,
+    describe,
+    expect,
+    it,
+    vi,
+} from 'vitest'
 import { z } from 'zod'
 import { fetchSession, login, logout } from './auth'
 import { ApiClient } from './client'
@@ -83,6 +91,21 @@ const user = {
 const session = { expires_at: '2026-10-02T00:00:00Z', user }
 
 describe('successful requests', () => {
+    it('works without crypto.randomUUID (plain-HTTP deployment, insecure context)', async () => {
+        vi.stubGlobal('crypto', {
+            getRandomValues: crypto.getRandomValues.bind(crypto),
+        })
+        let requestId: string | undefined
+        handler = (req, _body, res) => {
+            requestId = req.headers['x-request-id'] as string
+            json(res, 200, {})
+        }
+
+        await client().request('GET', '/x', z.object({}))
+
+        expect(requestId).toMatch(/^[0-9a-f]{32}$/)
+    })
+
     it('sends method, path, query, JSON body and headers; returns parsed data', async () => {
         let seen: { req: IncomingMessage; body: string } | undefined
         handler = (req, body, res) => {
@@ -116,7 +139,7 @@ describe('successful requests', () => {
         // The session is the HttpOnly cookie; scripts never set a token.
         expect(seen?.req.headers.authorization).toBeUndefined()
         expect(seen?.req.headers['x-akasha-csrf']).toBe('1')
-        expect(seen?.req.headers['x-request-id']).toMatch(/^[0-9a-f-]{36}$/)
+        expect(seen?.req.headers['x-request-id']).toMatch(/^[0-9a-f]{32}$/)
     })
 
     it('sends a raw body as-is with its content type', async () => {

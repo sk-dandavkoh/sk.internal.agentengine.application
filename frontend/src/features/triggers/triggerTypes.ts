@@ -1,4 +1,5 @@
 import type { Trigger, TriggerType } from '../../api/projects'
+import { randomHex } from '../../lib/randomHex'
 
 // Presentation of the backend's trigger types (domain/trigger.py). Which
 // configs are valid is the backend's call: PUT rejects structural errors,
@@ -54,8 +55,7 @@ export const MAX_INTERVAL_SECONDS = 365 * 24 * 60 * 60
 export const WEBHOOK_SECRET_FIELD = 'secret_credential'
 
 /** Same shape as backend `new_id("trig")`. */
-export const newTriggerId = () =>
-    `trig_${crypto.randomUUID().replaceAll('-', '')}`
+export const newTriggerId = () => `trig_${randomHex()}`
 
 /** One line describing what a trigger is configured to do. */
 export function triggerSummary(trigger: Trigger): string {

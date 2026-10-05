@@ -96,6 +96,12 @@ The browser always calls the backend on the same origin (`/api/v1/...`). In
 development Vite proxies it; in production a reverse proxy must do the same.
 This keeps the backend free of CORS configuration.
 
+The production bundle has no runtime configuration. Building, serving,
+caching, upgrades and supported browsers are covered in
+[`docs/deployment.md`](../docs/deployment.md#the-ui). Use
+`lib/randomHex.ts` for ids, not `crypto.randomUUID`: the latter does not
+exist in plain-HTTP deployments (insecure context).
+
 ## Structure
 
 ```text

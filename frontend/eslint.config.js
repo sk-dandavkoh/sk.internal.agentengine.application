@@ -66,6 +66,12 @@ export default defineConfig([
                     }),
                 ),
                 { object: 'document', property: 'write' },
+                {
+                    object: 'crypto',
+                    property: 'randomUUID',
+                    message:
+                        'Missing in insecure contexts (plain-HTTP deployments); use lib/randomHex.',
+                },
             ],
         },
     },
