@@ -575,6 +575,100 @@ describe('NodeInspector', () => {
         ).toBeInTheDocument()
     })
 
+    it('picks tool nodes from the catalog and edits their own settings', async () => {
+        const tools = {
+            type: 'object',
+            properties: {
+                tools: {
+                    type: 'array',
+                    items: {
+                        type: 'object',
+                        properties: {
+                            name: { type: 'string' },
+                            node_type: { type: 'string', format: 'node-type' },
+                            config: { type: 'object', format: 'node-config' },
+                        },
+                    },
+                },
+            },
+        }
+        const search = {
+            ...definition('acme.search', {
+                type: 'object',
+                properties: { max_results: { type: 'integer', default: 5 } },
+            }),
+            name: 'Search',
+            description: 'Searches the web.',
+        }
+        const branch = {
+            ...definition('acme.branch', {}),
+            name: 'Branch',
+            capabilities: { is_control_flow: true },
+        }
+        const checked: JsonObject[] = []
+        const { saved } = backend({
+            schema: tools,
+            handlers: {
+                'GET /nodes': () =>
+                    ok({
+                        items: [definition('acme.rich', tools), search, branch],
+                        port_compatibility: {},
+                    }),
+                'POST /nodes/acme.search/config/validate': (_url, init) => {
+                    const body = JSON.parse(init.body as string) as {
+                        config: JsonObject
+                    }
+                    checked.push(body.config)
+                    return ok({
+                        valid: false,
+                        issues: [
+                            { path: ['max_results'], message: 'must be <= 10' },
+                        ],
+                    })
+                },
+            },
+        })
+        const { inspector } = await openInspector()
+
+        const list = within(inspector.getByRole('group', { name: 'Tools' }))
+        fireEvent.click(list.getByRole('button', { name: 'Add item' }))
+        const picker = list.getByRole('combobox', { name: /^Node type/ })
+        // Control-flow nodes and tool hosts (no nested agents) are not offered.
+        expect(
+            within(picker)
+                .getAllByRole('option')
+                .map((o) => o.textContent),
+        ).toEqual(['Choose a node…', 'Search (acme.search)'])
+        expect(
+            list.getByText('Choose a node to see its settings.'),
+        ).toBeInTheDocument()
+
+        fireEvent.change(picker, { target: { value: 'acme.search' } })
+        expect(picker).toHaveAccessibleDescription('Searches the web.')
+        const settings = within(
+            list.getByRole('group', { name: 'Config: Search' }),
+        )
+        const max = settings.getByRole('textbox', { name: /^Max results/ })
+        expect(max).toHaveAttribute('placeholder', '5')
+        type(max, '50')
+        // The tool's settings are checked as that node's, not the agent's.
+        await waitFor(() => {
+            expect(checked.at(-1)).toEqual({ max_results: 50 })
+        })
+        expect(await settings.findAllByText(/must be <= 10/)).not.toHaveLength(
+            0,
+        )
+        await saveDraft()
+        expect(saved.at(-1)).toEqual({
+            tools: [{ node_type: 'acme.search', config: { max_results: 50 } }],
+        })
+
+        // A changed pick drops the old node's settings, never carries them over.
+        fireEvent.change(picker, { target: { value: '' } })
+        await saveDraft()
+        expect(saved.at(-1)).toEqual({ tools: [{}] })
+    })
+
     it('does not offer a form for a node type missing from the catalog', async () => {
         const { requests } = backend({
             nodeType: 'acme.gone',

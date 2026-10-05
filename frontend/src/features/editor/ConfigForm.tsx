@@ -1,17 +1,25 @@
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { useId, useState, type ReactNode } from 'react'
+import { useApiClient } from '../../api/context'
+import type { NodeDefinition } from '../../api/nodes'
+import { nodeQueries } from '../../api/queries'
 import { Button, Checkbox, Input, Select, Textarea } from '../../components/ui'
 import {
+    describePath,
     display,
     emptyValue,
     fits,
     humanize,
     isObject,
+    issuesByPath,
     pathKey,
+    properties,
     type ConfigPath,
     type FieldSpec,
     type JsonValue,
     type Property,
 } from './configSchema'
+import { useDebounced, VALIDATION_DELAY_MS } from './useDebounced'
 import { CredentialInput } from '../credentials/CredentialInput'
 
 // Renders any config schema the backend sends: one control per field kind,
@@ -32,6 +40,8 @@ interface FieldProps {
     optional: boolean
     onChange: Change
     issues: ReadonlyMap<string, string[]>
+    /** For a `nodeConfig` field: the node type picked next to it. */
+    nodeType?: string | undefined
 }
 
 const errorFor = (issues: FieldProps['issues'], path: ConfigPath) =>
@@ -159,6 +169,10 @@ function Control(props: FieldProps) {
             return <TextField {...props} multiline={props.spec.multiline} />
         case 'credential':
             return <CredentialField {...props} />
+        case 'nodeType':
+            return <NodeTypeField {...props} />
+        case 'nodeConfig':
+            return <NodeConfigField {...props} />
         case 'number':
             return <NumberField {...props} integer={props.spec.integer} />
         case 'boolean':
@@ -258,6 +272,133 @@ function CredentialField({
                 onChange(reference ?? (optional ? undefined : ''))
             }}
         />
+    )
+}
+
+/** Node types offered as a tool. Mirrors the backend's rule for the UX only
+ * (it rejects the rest when the agent starts): control-flow nodes answer
+ * nothing, and a node that hosts tools itself would nest agents. */
+const offeredAsTool = (d: NodeDefinition) =>
+    d.capabilities['is_control_flow'] !== true &&
+    !properties(d.config_schema).some((p) =>
+        p.spec.kind === 'list' && p.spec.items.kind === 'object'
+            ? p.spec.items.properties.some((q) => q.spec.kind === 'nodeType')
+            : false,
+    )
+
+function useNodeCatalog() {
+    return useQuery(nodeQueries.catalog(useApiClient()))
+}
+
+function NodeTypeField(props: FieldProps) {
+    const { spec, label, path, value, required, optional, onChange, issues } =
+        props
+    const catalog = useNodeCatalog()
+    if (!catalog.data) return <TextField {...props} multiline={false} />
+    const offered = catalog.data.items.filter(offeredAsTool)
+    const selected = typeof value === 'string' ? value : ''
+    const picked = offered.find((d) => d.node_type === selected)
+    const categories = [...new Set(offered.map((d) => d.category))]
+    return (
+        <Select
+            label={label}
+            required={required}
+            description={picked?.description ?? helpText(spec)}
+            error={
+                errorFor(issues, path) ??
+                (selected !== '' && !picked
+                    ? `"${selected}" is not an available tool node.`
+                    : undefined)
+            }
+            value={selected}
+            onChange={(e) => {
+                onChange(
+                    e.target.value === '' && optional
+                        ? undefined
+                        : e.target.value,
+                )
+            }}
+        >
+            <option value="">Choose a node…</option>
+            {selected !== '' && !picked && (
+                <option value={selected}>{selected}</option>
+            )}
+            {categories.map((category) => (
+                <optgroup key={category} label={category}>
+                    {offered
+                        .filter((d) => d.category === category)
+                        .map((d) => (
+                            <option key={d.node_type} value={d.node_type}>
+                                {d.name} ({d.node_type})
+                            </option>
+                        ))}
+                </optgroup>
+            ))}
+        </Select>
+    )
+}
+
+/** The picked node's own settings form, checked by the backend like a
+ * node on the canvas: the agent's schema alone says nothing about them. */
+function NodeConfigField(props: FieldProps) {
+    const { path, value, nodeType, onChange } = props
+    const client = useApiClient()
+    const catalog = useNodeCatalog()
+    const definition = catalog.data?.items.find((d) => d.node_type === nodeType)
+    const config = isObject(value) ? value : {}
+    const settled = useDebounced(config, VALIDATION_DELAY_MS)
+    const check = useQuery({
+        ...nodeQueries.configValidation(client, nodeType ?? '', settled),
+        enabled: definition !== undefined,
+        placeholderData: keepPreviousData,
+    })
+    if (!definition)
+        return nodeType && catalog.data ? (
+            <JsonField
+                {...props}
+                hint={`"${nodeType}" is not in the node catalog; edit its settings as JSON.`}
+            />
+        ) : (
+            <Group {...props}>
+                <p className="text-sm text-muted">
+                    Choose a node to see its settings.
+                </p>
+            </Group>
+        )
+    const fields = properties(definition.config_schema)
+    // Paths relative to the tool config, shown under the tool's fields.
+    const nested = (check.data?.issues ?? []).map((i) => ({
+        ...i,
+        path: [...path, ...i.path],
+    }))
+    return (
+        <Group {...props} label={`${props.label}: ${definition.name}`}>
+            {fields.length === 0 ? (
+                <p className="text-sm text-muted">This node has no settings.</p>
+            ) : (
+                <PropertyFields
+                    properties={fields}
+                    value={config}
+                    path={path}
+                    issues={new Map([...props.issues, ...issuesByPath(nested)])}
+                    onChange={(next) => {
+                        onChange(next)
+                    }}
+                />
+            )}
+            {nested.length > 0 && (
+                <ul
+                    aria-label={`${props.label} problems`}
+                    className="list-inside list-disc text-sm text-danger-text"
+                >
+                    {nested.map((issue, i) => (
+                        <li key={i}>
+                            {describePath(issue.path)}: {issue.message}
+                        </li>
+                    ))}
+                </ul>
+            )}
+        </Group>
     )
 }
 
@@ -623,13 +764,22 @@ export function PropertyFields({
 }) {
     const known = new Set(properties.map((p) => p.key))
     const unknown = Object.keys(value).filter((k) => !known.has(k))
+    const typeKey = properties.find((p) => p.spec.kind === 'nodeType')?.key
+    const nodeType =
+        typeKey !== undefined && typeof value[typeKey] === 'string'
+            ? value[typeKey]
+            : undefined
     const set = (key: string, next: JsonValue | undefined) => {
-        onChange(
+        let object =
             next === undefined
                 ? withoutKey(value, key)
-                : { ...value, [key]: next },
-            key,
-        )
+                : { ...value, [key]: next }
+        // Settings written for the previous node would not fit the new one.
+        if (key === typeKey && next !== value[key])
+            for (const p of properties)
+                if (p.spec.kind === 'nodeConfig')
+                    object = withoutKey(object, p.key)
+        onChange(object, key)
     }
     return (
         <div className="flex flex-col gap-4">
@@ -643,6 +793,7 @@ export function PropertyFields({
                     required={required}
                     optional
                     issues={issues}
+                    nodeType={nodeType}
                     onChange={(next) => {
                         set(key, next)
                     }}

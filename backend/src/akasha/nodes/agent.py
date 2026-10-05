@@ -213,9 +213,16 @@ class AgentNode(Node):
                                 "type": "string",
                                 "description": "Empty: the node's description.",
                             },
-                            "node_type": {"type": "string", "minLength": 1},
+                            # Forms offer a node picker and the picked node's
+                            # own settings; the checks run when the agent starts.
+                            "node_type": {
+                                "type": "string",
+                                "minLength": 1,
+                                "format": "node-type",
+                            },
                             "config": {
                                 "type": "object",
+                                "format": "node-config",
                                 "description": "Fixed config of the tool node.",
                             },
                         },

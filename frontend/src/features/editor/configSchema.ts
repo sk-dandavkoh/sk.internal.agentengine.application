@@ -13,6 +13,11 @@ export type ConfigPath = readonly (string | number)[]
 export const CREDENTIAL_REFERENCE_FORMAT = 'credential-reference'
 /** `format` of a prompt template string. */
 export const TEMPLATE_FORMAT = 'template'
+/** `format` of a string naming a registered node type (agent tools). */
+export const NODE_TYPE_FORMAT = 'node-type'
+/** `format` of an object holding the config of the node type named by the
+ * `node-type` field next to it. */
+export const NODE_CONFIG_FORMAT = 'node-config'
 
 interface Annotations {
     title: string | undefined
@@ -27,6 +32,8 @@ export type FieldSpec = Annotations &
     (
         | { kind: 'text'; multiline: boolean }
         | { kind: 'credential' }
+        | { kind: 'nodeType' }
+        | { kind: 'nodeConfig' }
         | { kind: 'number'; integer: boolean }
         | { kind: 'boolean' }
         | { kind: 'select'; options: JsonValue[] }
@@ -82,6 +89,8 @@ export function fieldSpec(schema: JsonValue | undefined): FieldSpec {
         case 'string':
             if (s['format'] === CREDENTIAL_REFERENCE_FORMAT)
                 return { ...base, kind: 'credential' }
+            if (s['format'] === NODE_TYPE_FORMAT)
+                return { ...base, kind: 'nodeType' }
             return {
                 ...base,
                 kind: 'text',
@@ -93,6 +102,8 @@ export function fieldSpec(schema: JsonValue | undefined): FieldSpec {
         case 'boolean':
             return { ...base, kind: 'boolean' }
         case 'object':
+            if (s['format'] === NODE_CONFIG_FORMAT)
+                return { ...base, kind: 'nodeConfig' }
             if (isObject(s['properties']))
                 return { ...base, kind: 'object', properties: properties(s) }
             if (isObject(s['additionalProperties']))
@@ -126,6 +137,7 @@ export function fits(spec: FieldSpec, value: JsonValue): boolean {
     switch (spec.kind) {
         case 'text':
         case 'credential':
+        case 'nodeType':
             return typeof value === 'string'
         case 'number':
             return typeof value === 'number'
@@ -133,6 +145,7 @@ export function fits(spec: FieldSpec, value: JsonValue): boolean {
             return typeof value === 'boolean'
         case 'object':
         case 'map':
+        case 'nodeConfig':
             return isObject(value)
         case 'list':
             return Array.isArray(value)
@@ -148,6 +161,7 @@ export function emptyValue(spec: FieldSpec): JsonValue {
     switch (spec.kind) {
         case 'object':
         case 'map':
+        case 'nodeConfig':
             return {}
         case 'list':
             return []

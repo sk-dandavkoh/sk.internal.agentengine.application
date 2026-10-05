@@ -252,6 +252,9 @@ Implementation (frontend Phase 09):
   what the node does when the key is absent; validation never inserts it,
   and a schema whose default it would reject fails as a `NodeContractError`.
   `format: "template"` marks prompt templates (shown as a prompt editor).
+  `format: "node-type"` marks a string naming a registered node (shown as a
+  picker over the node catalog), and `format: "node-config"` an object in
+  the same schema object holding that node's config (shown as its form).
 - `NodeConfigSchema.issues` returns every violation as a `ConfigIssue`
   (key/index path + message, never the value); `validate_config` raises the
   first. `NodeDefinition.config_issues` adds plaintext-secret locations, i.e.

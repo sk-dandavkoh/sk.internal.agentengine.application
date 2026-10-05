@@ -1,5 +1,4 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
 import { useApiClient } from '../../api/context'
 import { errorMessage } from '../../api/errors'
 import type { NodeDefinition } from '../../api/nodes'
@@ -8,24 +7,9 @@ import { nodeQueries } from '../../api/queries'
 import type { JsonObject } from '../../api/schemas'
 import { Alert, Badge } from '../../components/ui'
 import { PropertyFields } from './ConfigForm'
+import { useDebounced, VALIDATION_DELAY_MS } from './useDebounced'
 import { describePath, issuesByPath, properties } from './configSchema'
 import { nodeTitle } from './graphView'
-
-/** Typing pauses this long before the backend checks the config. */
-export const VALIDATION_DELAY_MS = 400
-
-function useDebounced<T>(value: T, ms: number): T {
-    const [settled, setSettled] = useState(value)
-    useEffect(() => {
-        const timer = setTimeout(() => {
-            setSettled(value)
-        }, ms)
-        return () => {
-            clearTimeout(timer)
-        }
-    }, [value, ms])
-    return settled
-}
 
 /**
  * Settings of one node, generated from its config schema. Edits go into
