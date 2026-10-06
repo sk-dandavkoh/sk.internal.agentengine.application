@@ -1,4 +1,5 @@
 import type { Page } from '@playwright/test'
+import type { WorkflowSharing } from '../../src/api/sharing'
 import { expect, test } from './fixtures'
 import { stubSession } from './session'
 
@@ -100,6 +101,19 @@ async function fakeBackend(p: Page, initial: FakeWorkflow[] = []) {
         }
         if (!workflow)
             return reply(fail(404, 'WORKFLOW_NOT_FOUND', 'Workflow not found.'))
+        // The stubbed session user is an admin: manage access, no members.
+        if (action === 'members' && method === 'GET')
+            return reply({
+                json: {
+                    access: 'manage',
+                    owner: {
+                        user_id: workflow.owner_id,
+                        username: 'owner',
+                        display_name: null,
+                    },
+                    members: [],
+                } satisfies WorkflowSharing,
+            })
         if (method === 'GET') return reply({ json: workflow })
         if (method === 'PUT') {
             if (body.expected_revision !== workflow.revision)
