@@ -22,6 +22,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 
 from akasha.application.executions import ExecutionNotFoundError, load_execution
+from akasha.application.persistence import UnitOfWork
 from akasha.application.projects import (
     Page,
     ProjectNotFoundError,
@@ -32,16 +33,18 @@ from akasha.application.projects import (
 )
 from akasha.domain.identity import (
     PAT_MARKER,
+    Access,
     AccessToken,
     Identity,
     Role,
     User,
     UserSession,
-    may_access_project,
+    project_access,
     validate_password,
     validate_token_name,
 )
 from akasha.domain.primitives import Timestamps, new_id, utcnow
+from akasha.domain.trigger import EVENT_SOURCE_FIELD, Trigger, TriggerType
 from akasha.errors import AkashaError
 from akasha.security.passwords import PasswordHasher
 
@@ -72,6 +75,13 @@ class LoginThrottledError(AkashaError):
 class PermissionDeniedError(AkashaError):
     code = "PERMISSION_DENIED"
     http_status = 403
+
+
+class TriggerSourceNotFoundError(AkashaError):
+    """An event trigger names a source project the caller cannot see."""
+
+    code = "TRIGGER_SOURCE_NOT_FOUND"
+    http_status = 422
 
 
 class SetupCompletedError(AkashaError):
@@ -553,28 +563,98 @@ class AuthorizationService:
     def __init__(self, uow: UowFactory) -> None:
         self._uow = uow
 
-    async def require_project(self, identity: Identity, project_id: str) -> None:
+    async def require_project(
+        self, identity: Identity, project_id: str, need: Access = Access.VIEW
+    ) -> Access:
+        """The caller's access to the project, if at least ``need``. No
+        access at all answers not found; too little answers forbidden (the
+        caller already knows the project exists)."""
         async with self._uow() as uow:
             project = await load_project(uow, project_id)
-        if not may_access_project(identity.user, project.owner_id):
+            access = await _access(uow, identity.user, project.id, project.owner_id)
+        if access is None:
             raise _project_not_found(project_id)
+        _require(identity, access, need, project_id=project_id)
+        return access
 
-    async def require_execution(self, identity: Identity, execution_id: str) -> None:
-        """An execution is visible exactly when its project is."""
+    async def require_execution(
+        self, identity: Identity, execution_id: str, need: Access = Access.VIEW
+    ) -> Access:
+        """An execution is reachable exactly as its project is."""
         async with self._uow() as uow:
             execution = await load_execution(uow, execution_id)
             project = await uow.projects.get(execution.project_id)
-        owner = None if project is None else project.owner_id
-        if not may_access_project(identity.user, owner):
+            access = (
+                None
+                if project is None
+                else await _access(uow, identity.user, project.id, project.owner_id)
+            )
+        if access is None:
             # The same answer as an unknown id.
             raise ExecutionNotFoundError(
                 "Execution not found.", details={"execution_id": execution_id}
             )
+        _require(identity, access, need, execution_id=execution_id)
+        return access
+
+    async def require_trigger_sources(
+        self,
+        identity: Identity,
+        before: Sequence[Trigger],
+        after: Sequence[Trigger],
+    ) -> None:
+        """Every event-trigger source the caller adds must be a project they
+        can see. Without this, an editor of a shared project could point a
+        trigger at a project only its owner sees and read that project's
+        outputs through the runs it starts. Sources already in the draft
+        (set by someone allowed to) stay as they are."""
+        existing = {s for t in before if (s := _event_source(t)) is not None}
+        added = {s for t in after if (s := _event_source(t)) is not None} - existing
+        for source in sorted(added):
+            try:
+                await self.require_project(identity, source)
+            except ProjectNotFoundError:
+                raise TriggerSourceNotFoundError(
+                    "An event trigger's source project does not exist or is not"
+                    " visible to you.",
+                    details={"source_project_id": source},
+                ) from None
 
     @staticmethod
-    def owner_filter(identity: Identity) -> str | None:
-        """The owner a project listing is limited to; None = all projects."""
+    def visible_to(identity: Identity) -> str | None:
+        """Whose visible projects a listing is limited to (owned or shared);
+        None = all projects (admins)."""
         return None if identity.user.is_admin else identity.user.id
+
+
+async def _access(
+    uow: UnitOfWork, user: User, project_id: str, owner_id: str | None
+) -> Access | None:
+    owns = user.is_admin or owner_id == user.id
+    role = None if owns else await uow.members.role(project_id, user.id)
+    return project_access(user, owner_id, role)
+
+
+def _require(identity: Identity, access: Access, need: Access, **ids: str) -> None:
+    if access < need:
+        _audit(
+            "project_access_denied",
+            user_id=identity.user.id,
+            access=access.name.lower(),
+            need=need.name.lower(),
+            **ids,
+        )
+        raise PermissionDeniedError(
+            "Your access to this project does not allow this operation.",
+            details={"access": access.name.lower(), "required": need.name.lower()},
+        )
+
+
+def _event_source(trigger: Trigger) -> str | None:
+    if trigger.trigger_type is not TriggerType.EVENT:
+        return None
+    source = trigger.config.get(EVENT_SOURCE_FIELD)
+    return source if isinstance(source, str) else None
 
 
 def require_admin(identity: Identity) -> None:

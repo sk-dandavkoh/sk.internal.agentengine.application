@@ -23,6 +23,7 @@ from akasha.application.persistence import (
     ExecutionSummary,
     NodeLogRepository,
     NodeSample,
+    ProjectMemberRepository,
     ProjectRepository,
     ProjectVersionRepository,
     SessionRepository,
@@ -89,7 +90,7 @@ class FakeExecutions(ExecutionRepository):
         *,
         project_id: str | None = None,
         project_version: int | None = None,
-        owner_id: str | None = None,
+        visible_to: str | None = None,
         statuses: Collection[ExecutionStatus] = (),
         offset: int = 0,
         limit: int = 100,
@@ -97,7 +98,7 @@ class FakeExecutions(ExecutionRepository):
         return []
 
     async def count_by_status(
-        self, *, owner_id: str | None = None
+        self, *, visible_to: str | None = None
     ) -> Mapping[ExecutionStatus, int]:
         return {}
 
@@ -204,6 +205,7 @@ class FakeUow(UnitOfWork):
         self.users = cast(UserRepository, None)
         self.sessions = cast(SessionRepository, None)
         self.access_tokens = cast(AccessTokenRepository, None)
+        self.members = cast(ProjectMemberRepository, None)
 
     async def __aenter__(self) -> "FakeUow":
         return self

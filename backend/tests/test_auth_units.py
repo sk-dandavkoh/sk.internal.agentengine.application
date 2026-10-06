@@ -9,9 +9,11 @@ from akasha.application.auth import LoginThrottle, LoginThrottledError, token_ha
 from akasha.domain.identity import (
     MAX_PASSWORD_LENGTH,
     MIN_PASSWORD_LENGTH,
+    Access,
+    ProjectRole,
     Role,
     User,
-    may_access_project,
+    project_access,
     validate_display_name,
     validate_password,
     validate_username,
@@ -97,15 +99,41 @@ def test_invalid_display_names(name: str) -> None:
         validate_display_name(name)
 
 
-def test_project_access_rules() -> None:
-    admin = User.create("root", role=Role.ADMIN)
-    alice, bob = User.create("alice"), User.create("bob")
-    assert may_access_project(alice, alice.id)
-    assert not may_access_project(bob, alice.id)
-    assert may_access_project(admin, alice.id)
-    # Ownerless (pre-accounts) projects are admin-only.
-    assert not may_access_project(alice, None)
-    assert may_access_project(admin, None)
+V, E = ProjectRole.VIEWER, ProjectRole.EDITOR
+
+
+@pytest.mark.parametrize(
+    ("who", "owner", "role", "expected"),
+    [
+        # The owner and admins manage, whatever a stray member row says.
+        ("alice", "alice", None, Access.MANAGE),
+        ("alice", "alice", V, Access.MANAGE),
+        ("root", "alice", None, Access.MANAGE),
+        ("root", None, None, Access.MANAGE),
+        # Members get exactly their role.
+        ("bob", "alice", V, Access.VIEW),
+        ("bob", "alice", E, Access.EDIT),
+        # Everyone else: nothing, also for ownerless (pre-accounts) projects.
+        ("bob", "alice", None, None),
+        ("alice", None, None, None),
+        # A shared ownerless project is reachable by its members only.
+        ("alice", None, V, Access.VIEW),
+    ],
+)
+def test_project_access_rules(
+    who: str, owner: str | None, role: ProjectRole | None, expected: Access | None
+) -> None:
+    users = {
+        "root": User.create("root", role=Role.ADMIN),
+        "alice": User.create("alice"),
+        "bob": User.create("bob"),
+    }
+    owner_id = None if owner is None else users[owner].id
+    assert project_access(users[who], owner_id, role) == expected
+
+
+def test_access_levels_are_ordered() -> None:
+    assert Access.VIEW < Access.EDIT < Access.MANAGE
 
 
 def test_token_hash_is_stable_and_not_the_token() -> None:

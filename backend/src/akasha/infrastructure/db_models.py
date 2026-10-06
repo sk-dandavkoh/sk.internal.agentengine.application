@@ -110,6 +110,25 @@ projects = Table(
     ),
 )
 
+# Project sharing (migration 0017). The owner is not a row here.
+project_members = Table(
+    "project_members",
+    metadata,
+    Column(
+        "project_id",
+        String,
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column(
+        "user_id", String, ForeignKey("users.id", ondelete="RESTRICT"), primary_key=True
+    ),
+    Column("role", String, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Index("ix_project_members_user_id", "user_id"),
+    CheckConstraint("role IN ('viewer','editor')", name="ck_project_members_role"),
+)
+
 project_versions = Table(
     "project_versions",
     metadata,

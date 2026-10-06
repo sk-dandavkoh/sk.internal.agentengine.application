@@ -130,7 +130,7 @@ Exactly the REST rules, from the same `AuthorizationService` and
 
 | Scope | Rule |
 |---|---|
-| Projects, drafts, graph, triggers, versions, export, validate, publish, run | The project's owner, or an admin. A hidden project answers `PROJECT_NOT_FOUND`, not "forbidden". |
+| Projects, drafts, graph, triggers, versions, export, validate, publish, run | The project's owner, an admin, or a member it is shared with (ADR 0008): viewers read, export and validate; editors also change, publish and run; only the owner or an admin deletes. A hidden project answers `PROJECT_NOT_FOUND`; too little access answers `PERMISSION_DENIED`. |
 | Executions, events, logs, reports | Visible exactly when their project is (`EXECUTION_NOT_FOUND` otherwise). |
 | Listings (projects, executions) | Filtered to the caller's projects; admins see all. |
 | Node catalog, system_info, import | Any authenticated user. Imports are owned by the caller. |

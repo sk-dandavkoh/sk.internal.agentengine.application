@@ -13,6 +13,7 @@ from types import TracebackType
 from typing import Any, cast
 
 from sqlalchemy import (
+    ColumnElement,
     Insert,
     Select,
     Update,
@@ -40,6 +41,7 @@ from akasha.application.persistence import (
     ExecutionSummary,
     NodeLogRepository,
     NodeSample,
+    ProjectMemberRepository,
     ProjectRepository,
     ProjectSort,
     ProjectVersionRepository,
@@ -63,7 +65,14 @@ from akasha.domain.execution import (
     RetryPolicy,
     TimeoutPolicy,
 )
-from akasha.domain.identity import AccessToken, Role, User, UserSession
+from akasha.domain.identity import (
+    AccessToken,
+    ProjectMember,
+    ProjectRole,
+    Role,
+    User,
+    UserSession,
+)
 from akasha.domain.node import NodeErrorKind
 from akasha.domain.primitives import Timestamps, is_storable
 from akasha.domain.project import (
@@ -189,15 +198,15 @@ class SqlAlchemyProjectRepository(ProjectRepository):
         *,
         offset: int = 0,
         limit: int = 100,
-        owner_id: str | None = None,
+        visible_to: str | None = None,
         search: str | None = None,
         statuses: Collection[ProjectStatus] = (),
         sort: ProjectSort = ProjectSort.CREATED,
     ) -> Sequence[Project]:
         c = m.projects.c
         query = select(m.projects)
-        if owner_id is not None:
-            query = query.where(c.owner_id == owner_id)
+        if visible_to is not None:
+            query = query.where(_visible(visible_to))
         if search:
             # ponytail: unindexed substring scan; add a pg_trgm index if
             # project counts make it slow.
@@ -224,6 +233,20 @@ class SqlAlchemyProjectRepository(ProjectRepository):
             .all()
         )
         return [self._to_domain(row) for row in rows]
+
+    async def lock_owner(self, project_id: str) -> str | None:
+        p = m.projects.c
+        owner: str | None = await self._session.scalar(
+            select(p.owner_id).where(p.id == project_id).with_for_update()
+        )
+        return owner
+
+    async def set_owner(self, project_id: str, owner_id: str) -> None:
+        await self._session.execute(
+            m.projects.update()
+            .where(m.projects.c.id == project_id)
+            .values(owner_id=owner_id)
+        )
 
     async def using_plugin(
         self, plugin_id: str, node_types: Sequence[str]
@@ -366,12 +389,22 @@ class SqlAlchemyProjectVersionRepository(ProjectVersionRepository):
         )
 
 
-def _owned[S: Select[Any]](query: S, owner_id: str | None) -> S:
-    """Limit an executions query to the projects of ``owner_id`` (None: all)."""
-    if owner_id is None:
+def _visible(user_id: str) -> ColumnElement[bool]:
+    """Projects ``user_id`` owns or is a member of (``project_access``)."""
+    pm = m.project_members.c
+    return or_(
+        m.projects.c.owner_id == user_id,
+        m.projects.c.id.in_(select(pm.project_id).where(pm.user_id == user_id)),
+    )
+
+
+def _owned[S: Select[Any]](query: S, visible_to: str | None) -> S:
+    """Limit an executions query to the projects ``visible_to`` that user
+    (None: all)."""
+    if visible_to is None:
         return query
     return query.join(m.projects, m.projects.c.id == m.executions.c.project_id).where(
-        m.projects.c.owner_id == owner_id
+        _visible(visible_to)
     )
 
 
@@ -449,7 +482,7 @@ class SqlAlchemyExecutionRepository(ExecutionRepository):
         *,
         project_id: str | None = None,
         project_version: int | None = None,
-        owner_id: str | None = None,
+        visible_to: str | None = None,
         statuses: Collection[ExecutionStatus] = (),
         offset: int = 0,
         limit: int = 100,
@@ -469,8 +502,8 @@ class SqlAlchemyExecutionRepository(ExecutionRepository):
             e.started_at,
             e.finished_at,
         ).select_from(m.executions.join(m.projects, p.id == e.project_id))
-        if owner_id is not None:
-            query = query.where(p.owner_id == owner_id)
+        if visible_to is not None:
+            query = query.where(_visible(visible_to))
         if project_id is not None:
             query = query.where(e.project_id == project_id)
         if project_version is not None:
@@ -500,15 +533,15 @@ class SqlAlchemyExecutionRepository(ExecutionRepository):
         ]
 
     async def count_by_status(
-        self, *, owner_id: str | None = None
+        self, *, visible_to: str | None = None
     ) -> Mapping[ExecutionStatus, int]:
         e = m.executions.c
-        query = _owned(select(e.status, func.count()), owner_id).group_by(e.status)
+        query = _owned(select(e.status, func.count()), visible_to).group_by(e.status)
         rows = (await self._session.execute(query)).all()
         return {ExecutionStatus(row[0]): int(row[1]) for row in rows}
 
     async def sample_executions(
-        self, *, since: datetime, until: datetime, owner_id: str | None = None
+        self, *, since: datetime, until: datetime, visible_to: str | None = None
     ) -> Sequence[ExecutionSample]:
         e = m.executions.c
         query = _owned(
@@ -520,7 +553,7 @@ class SqlAlchemyExecutionRepository(ExecutionRepository):
                 e.error["code"].as_string(),
                 e.error["kind"].as_string(),
             ),
-            owner_id,
+            visible_to,
         ).where(e.created_at >= since, e.created_at < until)
         rows = await self._session.execute(query.order_by(e.created_at, e.id))
         return [
@@ -536,7 +569,7 @@ class SqlAlchemyExecutionRepository(ExecutionRepository):
         ]
 
     async def sample_node_executions(
-        self, *, since: datetime, until: datetime, owner_id: str | None = None
+        self, *, since: datetime, until: datetime, visible_to: str | None = None
     ) -> Sequence[NodeSample]:
         e, ne, v = m.executions.c, m.node_executions.c, m.project_versions.c
         # The node type lives in the pinned version's graph, not on the row.
@@ -561,7 +594,7 @@ class SqlAlchemyExecutionRepository(ExecutionRepository):
                 m.project_versions,
                 (v.project_id == e.project_id) & (v.version == e.project_version),
             ),
-            owner_id,
+            visible_to,
         ).where(e.created_at >= since, e.created_at < until)
         rows = await self._session.execute(query.order_by(e.id, ne.node_id))
         return [
@@ -1132,6 +1165,18 @@ class SqlAlchemyUserRepository(UserRepository):
         )
         return None if row is None else _user(row)
 
+    async def get_by_username(self, username: str) -> User | None:
+        row = (
+            (
+                await self._session.execute(
+                    select(*self._PUBLIC).where(m.users.c.username == username)
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        return None if row is None else _user(row)
+
     async def get_with_password(self, username: str) -> tuple[User, str] | None:
         row = (
             (
@@ -1417,6 +1462,76 @@ def _access_token(row: Mapping[Any, Any], created: str) -> AccessToken:
     )
 
 
+class SqlAlchemyProjectMemberRepository(ProjectMemberRepository):
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def role(self, project_id: str, user_id: str) -> ProjectRole | None:
+        pm = m.project_members.c
+        value = await self._session.scalar(
+            select(pm.role).where(pm.project_id == project_id, pm.user_id == user_id)
+        )
+        return None if value is None else ProjectRole(value)
+
+    async def list(self, project_id: str) -> Sequence[ProjectMember]:
+        pm, u = m.project_members.c, m.users.c
+        rows = (
+            await self._session.execute(
+                select(pm.user_id, u.username, u.display_name, pm.role, pm.created_at)
+                .join(m.users, u.id == pm.user_id)
+                .where(pm.project_id == project_id)
+                .order_by(u.username)
+            )
+        ).mappings()
+        return [
+            ProjectMember(
+                user_id=r["user_id"],
+                username=r["username"],
+                display_name=r["display_name"],
+                role=ProjectRole(r["role"]),
+                created_at=_ensure_utc(r["created_at"]),
+            )
+            for r in rows
+        ]
+
+    async def count(self, project_id: str) -> int:
+        pm = m.project_members.c
+        return int(
+            await self._session.scalar(
+                select(func.count()).where(pm.project_id == project_id)
+            )
+            or 0
+        )
+
+    async def put(
+        self, project_id: str, user_id: str, role: ProjectRole, at: datetime
+    ) -> None:
+        stmt = pg_insert(m.project_members).values(
+            project_id=project_id, user_id=user_id, role=role.value, created_at=at
+        )
+        await self._session.execute(
+            stmt.on_conflict_do_update(
+                index_elements=[
+                    m.project_members.c.project_id,
+                    m.project_members.c.user_id,
+                ],
+                set_={"role": stmt.excluded.role},
+            )
+        )
+
+    async def delete(self, project_id: str, user_id: str) -> bool:
+        pm = m.project_members.c
+        result = cast(
+            "CursorResult[Any]",
+            await self._session.execute(
+                delete(m.project_members).where(
+                    pm.project_id == project_id, pm.user_id == user_id
+                )
+            ),
+        )
+        return result.rowcount == 1
+
+
 class SqlAlchemyUnitOfWork(UnitOfWork):
     """One session = one transaction; commit is explicit, exit rolls back."""
 
@@ -1437,6 +1552,9 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
         self.users: UserRepository = SqlAlchemyUserRepository(self._session)
         self.sessions: SessionRepository = SqlAlchemySessionRepository(self._session)
         self.access_tokens: AccessTokenRepository = SqlAlchemyAccessTokenRepository(
+            self._session
+        )
+        self.members: ProjectMemberRepository = SqlAlchemyProjectMemberRepository(
             self._session
         )
 

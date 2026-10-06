@@ -1,10 +1,13 @@
 import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
+import { z } from 'zod'
 import {
     apiError,
     ok,
     renderRoute,
     stubBackend,
+    testSession,
+    testUser,
     type Reply,
 } from '../../test/app'
 
@@ -59,6 +62,22 @@ const page = (items: unknown[], has_more = false) => ({
 })
 
 const created = (body: unknown): Reply => ({ status: 201, body })
+
+/** The members endpoint for the caller's access to project `id`. */
+function sharing(id: string, access = 'manage', members: unknown[] = []) {
+    return {
+        [`GET /projects/${id}/members`]: () =>
+            ok({
+                access,
+                owner: {
+                    user_id: 'u_admin',
+                    username: 'ada',
+                    display_name: null,
+                },
+                members,
+            }),
+    }
+}
 const noContent: Reply = { status: 204 }
 
 function deferred() {
@@ -397,6 +416,7 @@ describe('Edit project details', () => {
         const save = deferred()
         let body: unknown
         stubBackend({
+            ...sharing('proj_a'),
             'GET /projects/proj_a': () => ok(detail('proj_a', 'Alpha')),
             'PUT /projects/proj_a': (_url, init) => {
                 body = jsonBody(init)
@@ -440,6 +460,7 @@ describe('Edit project details', () => {
     it('keeps the server state on a conflict and reloads the project', async () => {
         let reads = 0
         stubBackend({
+            ...sharing('proj_a'),
             'GET /projects/proj_a': () => {
                 reads += 1
                 return ok(
@@ -517,6 +538,7 @@ describe('Duplicate and delete', () => {
 
     it('deletes after confirmation and returns to the list', async () => {
         const requests = stubBackend({
+            ...sharing('proj_a'),
             'GET /projects/proj_a': () => ok(detail('proj_a', 'Alpha')),
             'DELETE /projects/proj_a': () => noContent,
             'GET /projects': () => ok(page([])),
@@ -542,6 +564,7 @@ describe('Duplicate and delete', () => {
 
     it('shows the backend’s refusal to delete a published project', async () => {
         stubBackend({
+            ...sharing('proj_a'),
             'GET /projects/proj_a': () =>
                 ok(
                     detail('proj_a', 'Alpha', {
@@ -573,5 +596,263 @@ describe('Duplicate and delete', () => {
         expect(
             screen.getByRole('heading', { level: 1, name: 'Alpha' }),
         ).toBeInTheDocument()
+    })
+})
+
+describe('Sharing', () => {
+    it('lets a viewer read but offers no edit or delete', async () => {
+        stubBackend({
+            'GET /projects/proj_a': () => ok(detail('proj_a', 'Alpha')),
+            ...sharing('proj_a', 'view'),
+        })
+        renderRoute('/projects/proj_a')
+        expect(
+            await screen.findByText('You can view this project'),
+        ).toBeVisible()
+        expect(
+            screen.queryByRole('button', { name: 'Edit details' }),
+        ).toBeNull()
+        expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull()
+        expect(screen.queryByRole('form', { name: 'Share project' })).toBeNull()
+        expect(screen.getByRole('button', { name: 'Duplicate' })).toBeVisible()
+    })
+
+    it('shares by username, changes a role and stops sharing', async () => {
+        const bodies: { method: string; path: string; body: unknown }[] = []
+        let members: unknown[] = []
+        const member = (role: string) => ({
+            user_id: 'u_bob',
+            username: 'bob',
+            display_name: 'Bob B',
+            role,
+            created_at: AT,
+        })
+        const record = (method: string) => (url: URL, init: RequestInit) => {
+            bodies.push({
+                method,
+                path: url.pathname,
+                body: init.body ? jsonBody(init) : undefined,
+            })
+        }
+        stubBackend({
+            'GET /projects/proj_a': () => ok(detail('proj_a', 'Alpha')),
+            'GET /projects/proj_a/members': () =>
+                ok({ access: 'manage', owner: null, members }),
+            'PUT /projects/proj_a/members/bob': (url, init) => {
+                record('PUT')(url, init)
+                const { role } = z
+                    .object({ role: z.string() })
+                    .parse(jsonBody(init))
+                members = [member(role)]
+                return ok(members[0])
+            },
+            'DELETE /projects/proj_a/members/bob': (url, init) => {
+                record('DELETE')(url, init)
+                members = []
+                return noContent
+            },
+        })
+        renderRoute('/projects/proj_a')
+        const form = await screen.findByRole('form', { name: 'Share project' })
+        fireEvent.change(within(form).getByLabelText(/^Username/), {
+            target: { value: ' Bob ' },
+        })
+        fireEvent.click(within(form).getByRole('button', { name: 'Share' }))
+        expect(
+            await screen.findByText('Shared with “Bob B” as viewer'),
+        ).toBeVisible()
+        const table = await screen.findByRole('table', { name: 'Shared with' })
+        fireEvent.change(within(table).getByLabelText('Role of Bob B'), {
+            target: { value: 'editor' },
+        })
+        expect(await screen.findByText('“Bob B” is now editor')).toBeVisible()
+        fireEvent.click(
+            screen.getByRole('button', { name: 'Stop sharing with Bob B' }),
+        )
+        const dialog = await screen.findByRole('dialog')
+        fireEvent.click(
+            within(dialog).getByRole('button', { name: 'Stop sharing' }),
+        )
+        expect(await screen.findByText('Not shared with anyone.')).toBeVisible()
+        expect(bodies).toEqual([
+            {
+                method: 'PUT',
+                path: '/api/v1/projects/proj_a/members/bob',
+                body: { role: 'viewer' },
+            },
+            {
+                method: 'PUT',
+                path: '/api/v1/projects/proj_a/members/bob',
+                body: { role: 'editor' },
+            },
+            {
+                method: 'DELETE',
+                path: '/api/v1/projects/proj_a/members/bob',
+                body: undefined,
+            },
+        ])
+    })
+
+    it('shows an unknown username at the field', async () => {
+        stubBackend({
+            'GET /projects/proj_a': () => ok(detail('proj_a', 'Alpha')),
+            ...sharing('proj_a'),
+            'PUT /projects/proj_a/members/ghost': () =>
+                apiError(404, 'USER_NOT_FOUND', 'User not found.'),
+        })
+        renderRoute('/projects/proj_a')
+        const form = await screen.findByRole('form', { name: 'Share project' })
+        fireEvent.change(within(form).getByLabelText(/^Username/), {
+            target: { value: 'ghost' },
+        })
+        fireEvent.click(within(form).getByRole('button', { name: 'Share' }))
+        expect(await within(form).findByText('User not found.')).toBeVisible()
+        expect(within(form).getByLabelText(/^Username/)).toHaveAttribute(
+            'aria-invalid',
+            'true',
+        )
+    })
+
+    it('marks projects shared with the caller in the list', async () => {
+        stubBackend({
+            'GET /projects': () =>
+                ok(
+                    page([
+                        summary('proj_a', 'Mine', { owner_id: 'u_admin' }),
+                        summary('proj_b', 'Theirs', { owner_id: 'u_other' }),
+                    ]),
+                ),
+            'GET /auth/session': () =>
+                ok({ ...testSession, user: { ...testUser, role: 'member' } }),
+        })
+        renderRoute('/projects')
+        const table = await screen.findByRole('table')
+        const theirs = within(table).getByText('Theirs').closest('tr')
+        const mine = within(table).getByText('Mine').closest('tr')
+        if (!theirs || !mine) throw new Error('expected rows')
+        expect(within(theirs).getByText('Shared with you')).toBeVisible()
+        expect(within(mine).queryByText('Shared with you')).toBeNull()
+    })
+
+    it('transfers ownership by username', async () => {
+        let body: unknown
+        stubBackend({
+            'GET /projects/proj_a': () => ok(detail('proj_a', 'Alpha')),
+            ...sharing('proj_a'),
+            'PUT /projects/proj_a/owner': (_url, init) => {
+                body = jsonBody(init)
+                return ok({
+                    access: 'manage',
+                    owner: {
+                        user_id: 'u_bob',
+                        username: 'bob',
+                        display_name: 'Bob B',
+                    },
+                    members: [],
+                })
+            },
+        })
+        renderRoute('/projects/proj_a')
+        fireEvent.click(
+            await screen.findByRole('button', { name: 'Transfer ownership' }),
+        )
+        const dialog = await screen.findByRole('dialog')
+        expect(dialog).toHaveTextContent('stays on as an editor')
+        fireEvent.change(within(dialog).getByLabelText(/^Username/), {
+            target: { value: ' Bob ' },
+        })
+        fireEvent.click(
+            within(dialog).getByRole('button', { name: 'Transfer ownership' }),
+        )
+        expect(
+            await screen.findByText('“Bob B” now owns the project'),
+        ).toBeVisible()
+        expect(body).toEqual({ username: 'bob' })
+    })
+
+    it('shows a disabled new owner at the field', async () => {
+        stubBackend({
+            'GET /projects/proj_a': () => ok(detail('proj_a', 'Alpha')),
+            ...sharing('proj_a'),
+            'PUT /projects/proj_a/owner': () =>
+                apiError(
+                    409,
+                    'USER_DISABLED',
+                    'A disabled user cannot own a project.',
+                ),
+        })
+        renderRoute('/projects/proj_a')
+        fireEvent.click(
+            await screen.findByRole('button', { name: 'Transfer ownership' }),
+        )
+        const dialog = await screen.findByRole('dialog')
+        fireEvent.change(within(dialog).getByLabelText(/^Username/), {
+            target: { value: 'carol' },
+        })
+        fireEvent.click(
+            within(dialog).getByRole('button', { name: 'Transfer ownership' }),
+        )
+        expect(
+            await within(dialog).findByText(
+                'A disabled user cannot own a project.',
+            ),
+        ).toBeVisible()
+        expect(within(dialog).getByLabelText(/^Username/)).toHaveAttribute(
+            'aria-invalid',
+            'true',
+        )
+    })
+
+    it('lets a member leave and returns to the list', async () => {
+        const requests = stubBackend({
+            'GET /auth/session': () =>
+                ok({ ...testSession, user: { ...testUser, role: 'member' } }),
+            'GET /projects/proj_a': () => ok(detail('proj_a', 'Alpha')),
+            ...sharing('proj_a', 'edit', [
+                {
+                    user_id: testUser.id,
+                    username: testUser.username,
+                    display_name: null,
+                    role: 'editor',
+                    created_at: AT,
+                },
+            ]),
+            'DELETE /projects/proj_a/membership': () => noContent,
+            'GET /projects': () => ok(page([])),
+        })
+        const { router } = renderRoute('/projects/proj_a')
+        expect(
+            screen.queryByRole('button', { name: 'Transfer ownership' }),
+        ).toBeNull()
+        fireEvent.click(
+            await screen.findByRole('button', { name: 'Leave project' }),
+        )
+        const dialog = await screen.findByRole('dialog')
+        fireEvent.click(
+            within(dialog).getByRole('button', { name: 'Leave project' }),
+        )
+        expect(await screen.findByText('You left the project')).toBeVisible()
+        await waitFor(() => {
+            expect(router.state.location.pathname).toBe('/projects')
+        })
+        expect(
+            requests.some(
+                (u) => u.pathname === '/api/v1/projects/proj_a/membership',
+            ),
+        ).toBe(true)
+    })
+
+    it('offers the owner no way to leave', async () => {
+        stubBackend({
+            'GET /projects/proj_a': () => ok(detail('proj_a', 'Alpha')),
+            ...sharing('proj_a'),
+        })
+        renderRoute('/projects/proj_a')
+        expect(
+            await screen.findByRole('button', { name: 'Transfer ownership' }),
+        ).toBeVisible()
+        expect(
+            screen.queryByRole('button', { name: 'Leave project' }),
+        ).toBeNull()
     })
 })

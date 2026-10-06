@@ -12,7 +12,10 @@ route is protected by default:
 
 - ``current_identity``: a valid session, else 401.
 - ``authorize_path``: a route whose path names a ``project_id`` or an
-  ``execution_id`` needs access to that resource, else 404.
+  ``execution_id`` needs access to that resource (else 404), at the level
+  the route declares with ``requires`` (else 403). Undeclared: reads
+  (GET) need view access, everything else edit access, so a new write
+  route never opens to viewers by accident.
 - ``require_admin``: admin-only routers (credentials, users), else 403.
 """
 
@@ -39,6 +42,7 @@ from akasha.domain.identity import (
     MAX_DISPLAY_NAME_LENGTH,
     MAX_PASSWORD_LENGTH,
     MAX_TOKEN_NAME_LENGTH,
+    Access,
     AccessToken,
     Identity,
     Role,
@@ -117,15 +121,36 @@ async def current_identity(request: Request, auth: Auth) -> Identity:
 
 
 CurrentIdentity = Annotated[Identity, Depends(current_identity)]
+Authorization = Annotated[AuthorizationService, Depends(_authorization)]
+
+
+# The project access a route needs, in its OpenAPI operation (documented).
+ACCESS_EXTENSION = "x-akasha-access"
+
+
+def requires(access: Access) -> dict[str, Any]:
+    """Route options declaring the project access the route needs:
+    ``@router.post(..., **requires(Access.VIEW))``."""
+    return {"openapi_extra": {ACCESS_EXTENSION: access.name.lower()}}
+
+
+def _needed(request: Request) -> Access:
+    extra = getattr(request.scope.get("route"), "openapi_extra", None) or {}
+    declared = extra.get(ACCESS_EXTENSION)
+    if declared is not None:
+        return Access[declared.upper()]
+    return Access.VIEW if request.method in ("GET", "HEAD") else Access.EDIT
 
 
 async def authorize_path(request: Request, identity: CurrentIdentity) -> None:
     params = request.path_params
     if "project_id" in params:
-        await _authorization(request).require_project(identity, params["project_id"])
+        await _authorization(request).require_project(
+            identity, params["project_id"], _needed(request)
+        )
     if "execution_id" in params:
         await _authorization(request).require_execution(
-            identity, params["execution_id"]
+            identity, params["execution_id"], _needed(request)
         )
 
 

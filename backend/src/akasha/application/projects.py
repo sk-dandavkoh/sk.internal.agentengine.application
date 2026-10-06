@@ -168,19 +168,19 @@ class ProjectService:
         *,
         offset: int = 0,
         limit: int = 50,
-        owner_id: str | None = None,
+        visible_to: str | None = None,
         search: str | None = None,
         statuses: Collection[ProjectStatus] = (),
         sort: ProjectSort = ProjectSort.CREATED,
     ) -> Page[Project]:
-        """All projects, or only those of ``owner_id``; ``search`` matches
+        """All projects, or only those ``visible_to`` that user; ``search`` matches
         a case-insensitive substring of the name."""
         check_page(offset, limit)
         async with self._uow() as uow:
             rows = await uow.projects.list(
                 offset=offset,
                 limit=limit + 1,
-                owner_id=owner_id,
+                visible_to=visible_to,
                 search=search,
                 statuses=statuses,
                 sort=sort,

@@ -21,7 +21,7 @@ from fastapi import (
     status,
 )
 
-from akasha.api.auth import CurrentIdentity
+from akasha.api.auth import Authorization, CurrentIdentity, requires
 from akasha.api.project_schemas import (
     CreateProjectRequest,
     DuplicateProjectRequest,
@@ -47,6 +47,7 @@ from akasha.application.project_package import (
     ProjectPackageTooLargeError,
 )
 from akasha.application.projects import MAX_PAGE_SIZE, ProjectService
+from akasha.domain.identity import Access
 from akasha.domain.project import ProjectStatus
 from akasha.errors import ConfigurationError
 
@@ -137,11 +138,11 @@ def create_projects_router() -> APIRouter:
         status: Annotated[list[ProjectStatus] | None, Query()] = None,
         sort: ProjectSort = ProjectSort.CREATED,
     ) -> ProjectPage:
-        owner = AuthorizationService.owner_filter(identity)
+        visible = AuthorizationService.visible_to(identity)
         page = await svc.list_projects(
             offset=offset,
             limit=limit,
-            owner_id=owner,
+            visible_to=visible,
             search=q,
             statuses=status or (),
             sort=sort,
@@ -154,22 +155,40 @@ def create_projects_router() -> APIRouter:
 
     @router.put("/{project_id}")
     async def update_project(
-        project_id: str, body: UpdateProjectRequest, svc: Service
+        project_id: str,
+        body: UpdateProjectRequest,
+        svc: Service,
+        identity: CurrentIdentity,
+        authz: Authorization,
     ) -> ProjectDetail:
+        draft = body.draft.to_domain(body.description)
+        current = await svc.get_project(project_id)
+        await authz.require_trigger_sources(
+            identity, current.draft.triggers, draft.triggers
+        )
         project = await svc.update_draft(
             project_id,
             expected_revision=body.expected_revision,
             name=body.name,
-            draft=body.draft.to_domain(body.description),
+            draft=draft,
         )
         return ProjectDetail.from_domain(project)
 
-    @router.delete("/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
+    @router.delete(
+        "/{project_id}",
+        status_code=status.HTTP_204_NO_CONTENT,
+        **requires(Access.MANAGE),
+    )
     async def delete_project(project_id: str, svc: Service) -> Response:
         await svc.delete_project(project_id)
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
-    @router.post("/{project_id}/duplicate", status_code=status.HTTP_201_CREATED)
+    # Reading is enough: the copy belongs to the caller.
+    @router.post(
+        "/{project_id}/duplicate",
+        status_code=status.HTTP_201_CREATED,
+        **requires(Access.VIEW),
+    )
     async def duplicate_project(
         project_id: str,
         body: DuplicateProjectRequest,
@@ -186,7 +205,8 @@ def create_projects_router() -> APIRouter:
         )
         return ProjectDetail.from_domain(project)
 
-    @router.post("/{project_id}/validate")
+    # A check without side effects.
+    @router.post("/{project_id}/validate", **requires(Access.VIEW))
     async def validate_project(
         project_id: str, svc: Service, body: ValidateProjectRequest | None = None
     ) -> ValidationResponse:

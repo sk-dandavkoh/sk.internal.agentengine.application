@@ -15,7 +15,7 @@ overwrite.
 import base64
 import binascii
 import hashlib
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Annotated
 
 from pydantic import BaseModel, Field, JsonValue
@@ -64,6 +64,7 @@ from akasha.application.reports import (
 from akasha.domain.execution import ExecutionStatus, LogLevel
 from akasha.domain.graph import Edge, NodeInstance, Position
 from akasha.domain.graph_validation import port_compatibility
+from akasha.domain.identity import Access
 from akasha.domain.project import Project, ProjectDraft, ProjectStatus
 from akasha.domain.trigger import Trigger, TriggerType
 from akasha.errors import AkashaError, ConfigurationError, DomainValidationError
@@ -286,11 +287,18 @@ def register(kit: Kit) -> None:
     def reports() -> ReportService:
         return _need(c.reports, "Execution persistence")
 
-    async def project(project_id: str) -> None:
-        await authz().require_project(current_identity(), project_id)
+    # Access levels as on the REST routes (api.auth.requires): reading needs
+    # view access, changing edit access, deleting manage access.
+    async def project(project_id: str, need: Access = Access.VIEW) -> None:
+        await authz().require_project(current_identity(), project_id, need)
 
-    async def execution(execution_id: str) -> None:
-        await authz().require_execution(current_identity(), execution_id)
+    async def execution(execution_id: str, need: Access = Access.VIEW) -> None:
+        await authz().require_execution(current_identity(), execution_id, need)
+
+    async def sources(project_id: str, after: Sequence[Trigger]) -> None:
+        """Event-trigger sources the caller adds must be visible to them."""
+        before = (await projects().get_project(project_id)).draft.triggers
+        await authz().require_trigger_sources(current_identity(), before, after)
 
     async def edit(
         project_id: str,
@@ -298,7 +306,7 @@ def register(kit: Kit) -> None:
         change: Callable[[ProjectDraft], None],
         name: str | None = None,
     ) -> Project:
-        await project(project_id)
+        await project(project_id, Access.EDIT)
         return await projects().edit_draft(
             project_id, expected_revision=revision, edit=change, name=name
         )
@@ -427,7 +435,7 @@ def register(kit: Kit) -> None:
         page = await projects().list_projects(
             offset=offset,
             limit=limit,
-            owner_id=AuthorizationService.owner_filter(current_identity()),
+            visible_to=AuthorizationService.visible_to(current_identity()),
             search=query,
             statuses=status or (),
             sort=ProjectSort.CREATED,
@@ -472,8 +480,9 @@ def register(kit: Kit) -> None:
     @kit.tool(title="Delete project", destructive=True)
     async def project_delete(project_id: ProjectId) -> DraftChange:
         """Delete a never-published project permanently. Projects with
-        published versions cannot be deleted (PROJECT_HAS_VERSIONS)."""
-        await project(project_id)
+        published versions cannot be deleted (PROJECT_HAS_VERSIONS). Needs
+        the owner or an admin."""
+        await project(project_id, Access.MANAGE)
         await projects().delete_project(project_id)
         return DraftChange(project_id=project_id, revision=0)
 
@@ -505,7 +514,9 @@ def register(kit: Kit) -> None:
         write, like the editor's save. Prefer the graph_* tools for small
         changes. Drafts may be invalid; project_validate reports issues.
         Node ids must look like node_<32 hex chars>."""
-        await project(project_id)
+        await project(project_id, Access.EDIT)
+        new_draft = draft.to_domain("")
+        await sources(project_id, new_draft.triggers)
         current = await projects().get_project(project_id)
         updated = await projects().update_draft(
             project_id,
@@ -651,7 +662,7 @@ def register(kit: Kit) -> None:
         PROJECT_VALIDATION_FAILED lists the issues). Pass the revision you
         validated so a newer draft is not published by mistake. The version
         pins the plugin versions it uses (plugin_versions)."""
-        await project(project_id)
+        await project(project_id, Access.EDIT)
         identity = current_identity()
         version = await projects().publish_project(
             project_id,
@@ -703,7 +714,7 @@ def register(kit: Kit) -> None:
         with the execution id in status QUEUED; poll execution_get until a
         terminal status (completed, failed, cancelled, timeout). Each call
         starts a new run."""
-        await project(project_id)
+        await project(project_id, Access.EDIT)
         if version is None:
             version = (await projects().get_project(project_id)).current_version
             if version == 0:
@@ -742,7 +753,7 @@ def register(kit: Kit) -> None:
             )
         else:
             page = await svc.list_recent(
-                owner_id=AuthorizationService.owner_filter(current_identity()),
+                visible_to=AuthorizationService.visible_to(current_identity()),
                 statuses=status or (),
                 offset=offset,
                 limit=limit,
@@ -798,7 +809,7 @@ def register(kit: Kit) -> None:
     ) -> ExecutionDetail:
         """Request cooperative cancellation. The run stops at its next
         heartbeat; a finished execution answers INVALID_STATE_TRANSITION."""
-        await execution(execution_id)
+        await execution(execution_id, Access.EDIT)
         runtime: ExecutionRuntime = _need(c.runtime, "Execution persistence")
         await runtime.cancel(execution_id, reason=reason)
         return ExecutionDetail.from_domain(
@@ -897,6 +908,8 @@ def register(kit: Kit) -> None:
         """Add a trigger to the draft. Publish to activate it."""
         trigger = Trigger.create(trigger_type, dict(config or {}))
         trigger.enabled = enabled
+        await project(project_id, Access.EDIT)
+        await sources(project_id, [trigger])
         p = await edit(
             project_id, expected_revision, lambda d: d.triggers.append(trigger)
         )
@@ -914,6 +927,12 @@ def register(kit: Kit) -> None:
     ) -> DraftChange:
         """Replace a draft trigger's config and/or enable or disable it.
         Publish to apply the change."""
+        if config is not None:
+            await project(project_id, Access.EDIT)
+            current = (await projects().get_project(project_id)).draft
+            old = _trigger(current, trigger_id)
+            new = Trigger(id=old.id, trigger_type=old.trigger_type, config=dict(config))
+            await sources(project_id, [new])
 
         def change(draft: ProjectDraft) -> None:
             old = _trigger(draft, trigger_id)

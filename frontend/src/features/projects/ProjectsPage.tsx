@@ -12,6 +12,7 @@ import {
 import { projectQueries } from '../../api/queries'
 import { QuerySection } from '../../components/QuerySection'
 import {
+    Badge,
     Button,
     EmptyState,
     Input,
@@ -23,6 +24,7 @@ import {
     type TableColumn,
 } from '../../components/ui'
 import { formText } from '../../lib/form'
+import { useSession } from '../auth/session'
 import { formatDateTime } from '../../lib/format'
 import { ImportProjectDialog } from './ImportProjectDialog'
 import { ProjectFormDialog } from './ProjectFormDialog'
@@ -73,15 +75,27 @@ function useListParams() {
     }
 }
 
+/** Marks projects someone else owns that are shared with the caller. */
+function SharedBadge({ project }: { project: ProjectSummary }) {
+    const { data } = useSession()
+    const me = data?.status === 'active' ? data.session.user : undefined
+    // Admins see every project; "shared" would mislabel the rest.
+    if (!me || me.role === 'admin' || project.owner_id === me.id) return null
+    return <Badge tone="info">Shared with you</Badge>
+}
+
 const columns: TableColumn<ProjectSummary>[] = [
     {
         key: 'name',
         header: 'Name',
         cell: (p) => (
             <div className="flex flex-col">
-                <TextLink to={`/projects/${encodeURIComponent(p.id)}`}>
-                    {p.name}
-                </TextLink>
+                <span className="flex flex-wrap items-center gap-2">
+                    <TextLink to={`/projects/${encodeURIComponent(p.id)}`}>
+                        {p.name}
+                    </TextLink>
+                    <SharedBadge project={p} />
+                </span>
                 {p.description && (
                     <span className="line-clamp-1 text-muted">
                         {p.description}

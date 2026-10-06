@@ -28,6 +28,7 @@ import {
 } from '../../components/ui'
 import { executionPath } from '../executions/format'
 import { diffVersions } from '../versions/compare'
+import { allows } from '../projects/access'
 import { VersionLink } from '../versions/shared'
 import { TriggerFormDialog } from './TriggerFormDialog'
 import { triggerSummary, triggerTypeLabels } from './triggerTypes'
@@ -160,6 +161,12 @@ function TriggersView({
     latest: ProjectVersion | undefined
 }) {
     const client = useApiClient()
+    // Running and changing triggers needs edit access; the backend refuses
+    // it regardless, this only stops offering it.
+    const canEdit = allows(
+        useQuery(projectQueries.sharing(client, project.id)).data?.access,
+        'edit',
+    )
     const [action, setAction] = useState<Action>(null)
     const save = useUpdateProject()
     const invoke = useInvokeTrigger()
@@ -289,57 +296,58 @@ function TriggersView({
             key: 'actions',
             header: <span className="sr-only">Actions</span>,
             align: 'end',
-            cell: (t) => (
-                <div className="flex justify-end gap-2">
-                    {t.trigger_type === 'manual' &&
-                        live.get(t.id)?.enabled === true && (
-                            <Button
-                                size="sm"
-                                variant="primary"
-                                loading={
-                                    invoke.isPending &&
-                                    invoke.variables.triggerId === t.id
-                                }
-                                disabled={invoke.isPending}
-                                aria-label={`Run trigger ${t.id}`}
-                                onClick={() => {
-                                    run(t)
-                                }}
-                            >
-                                Run
-                            </Button>
-                        )}
-                    <Button
-                        size="sm"
-                        disabled={save.isPending}
-                        aria-label={`${t.enabled ? 'Disable' : 'Enable'} trigger ${t.id}`}
-                        onClick={() => {
-                            toggle(t)
-                        }}
-                    >
-                        {t.enabled ? 'Disable' : 'Enable'}
-                    </Button>
-                    <Button
-                        size="sm"
-                        aria-label={`Edit trigger ${t.id}`}
-                        onClick={() => {
-                            setAction({ kind: 'edit', trigger: t })
-                        }}
-                    >
-                        Edit
-                    </Button>
-                    <Button
-                        size="sm"
-                        variant="danger"
-                        aria-label={`Delete trigger ${t.id}`}
-                        onClick={() => {
-                            setAction({ kind: 'delete', trigger: t })
-                        }}
-                    >
-                        Delete
-                    </Button>
-                </div>
-            ),
+            cell: (t) =>
+                canEdit && (
+                    <div className="flex justify-end gap-2">
+                        {t.trigger_type === 'manual' &&
+                            live.get(t.id)?.enabled === true && (
+                                <Button
+                                    size="sm"
+                                    variant="primary"
+                                    loading={
+                                        invoke.isPending &&
+                                        invoke.variables.triggerId === t.id
+                                    }
+                                    disabled={invoke.isPending}
+                                    aria-label={`Run trigger ${t.id}`}
+                                    onClick={() => {
+                                        run(t)
+                                    }}
+                                >
+                                    Run
+                                </Button>
+                            )}
+                        <Button
+                            size="sm"
+                            disabled={save.isPending}
+                            aria-label={`${t.enabled ? 'Disable' : 'Enable'} trigger ${t.id}`}
+                            onClick={() => {
+                                toggle(t)
+                            }}
+                        >
+                            {t.enabled ? 'Disable' : 'Enable'}
+                        </Button>
+                        <Button
+                            size="sm"
+                            aria-label={`Edit trigger ${t.id}`}
+                            onClick={() => {
+                                setAction({ kind: 'edit', trigger: t })
+                            }}
+                        >
+                            Edit
+                        </Button>
+                        <Button
+                            size="sm"
+                            variant="danger"
+                            aria-label={`Delete trigger ${t.id}`}
+                            onClick={() => {
+                                setAction({ kind: 'delete', trigger: t })
+                            }}
+                        >
+                            Delete
+                        </Button>
+                    </div>
+                ),
         },
     ]
 
@@ -356,17 +364,25 @@ function TriggersView({
                     </TextLink>
                 }
                 actions={
-                    <Button
-                        variant="primary"
-                        onClick={() => {
-                            setAction({ kind: 'create' })
-                        }}
-                    >
-                        New trigger
-                    </Button>
+                    canEdit && (
+                        <Button
+                            variant="primary"
+                            onClick={() => {
+                                setAction({ kind: 'create' })
+                            }}
+                        >
+                            New trigger
+                        </Button>
+                    )
                 }
             />
             <div className="flex flex-col gap-4">
+                {!canEdit && (
+                    <Alert tone="info" title="View-only access">
+                        You can see this project's triggers, but only its owner,
+                        editors and administrators can change or run them.
+                    </Alert>
+                )}
                 <Alert tone="info">
                     Triggers are saved to the draft (revision{' '}
                     {String(project.revision)}) and fire only from the latest

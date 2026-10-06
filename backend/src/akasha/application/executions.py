@@ -238,26 +238,30 @@ class ExecutionService:
     async def list_recent(
         self,
         *,
-        owner_id: str | None = None,
+        visible_to: str | None = None,
         statuses: Collection[ExecutionStatus] = (),
         offset: int = 0,
         limit: int = 50,
     ) -> Page[ExecutionSummary]:
         """Executions across projects, newest first: every project's, or
-        only those of ``owner_id``'s projects; optionally only ``statuses``."""
+        only those of the projects ``visible_to`` that user; optionally only
+        ``statuses``."""
         check_page(offset, limit)
         async with self._uow() as uow:
             rows = await uow.executions.list_summaries(
-                owner_id=owner_id, statuses=statuses, offset=offset, limit=limit + 1
+                visible_to=visible_to,
+                statuses=statuses,
+                offset=offset,
+                limit=limit + 1,
             )
         return to_page(rows, offset, limit)
 
     async def count_by_status(
-        self, *, owner_id: str | None = None
+        self, *, visible_to: str | None = None
     ) -> dict[ExecutionStatus, int]:
         """Executions per status, every status present (zero when none)."""
         async with self._uow() as uow:
-            counts = await uow.executions.count_by_status(owner_id=owner_id)
+            counts = await uow.executions.count_by_status(visible_to=visible_to)
         return {status: counts.get(status, 0) for status in ExecutionStatus}
 
     async def list_events(

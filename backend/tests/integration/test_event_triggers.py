@@ -204,19 +204,50 @@ async def publish_as(
     return pid
 
 
-async def test_a_member_cannot_react_to_another_users_project(
+async def test_a_member_cannot_point_a_trigger_at_another_users_project(
     api: httpx.AsyncClient, database: Database
 ) -> None:
     source, _, _ = await publish_with(api, [])  # owned by the admin
     kit = make_auth_kit(database)
     member = await kit.member_headers(await kit.login("admin"), "mallory")
+    created = await api.post("/api/v1/projects", json={"name": "o"}, headers=member)
+    pid = created.json()["id"]
+    put = await api.put(
+        f"/api/v1/projects/{pid}",
+        headers=member,
+        json={
+            "expected_revision": 1,
+            "name": "o",
+            "draft": draft_with([on_event(source_project_id=source)]),
+        },
+    )
+    assert put.status_code == 422, put.text
+    assert put.json()["code"] == "TRIGGER_SOURCE_NOT_FOUND"
+
+
+async def test_a_trigger_stops_when_its_owner_loses_the_source(
+    api: httpx.AsyncClient, database: Database
+) -> None:
+    """Shared as viewer, a member may react to the source; once the share
+    is removed, the published trigger no longer fires (checked at fire
+    time, not only at save)."""
+    source, _, _ = await publish_with(api, [])  # owned by the admin
+    kit = make_auth_kit(database)
+    member = await kit.member_headers(await kit.login("admin"), "mallory")
+    share = f"/api/v1/projects/{source}/members/mallory"
+    assert (await api.put(share, json={"role": "viewer"})).status_code == 200
     await publish_as(api, member, [on_event(source_project_id=source)])
     events = dispatcher(database, FakeClock(START))
     await events.tick()
 
     await run_manual(api, database, source)
+    assert await events.tick() == 1
+    assert len(await event_runs(database)) == 1
+
+    assert (await api.delete(share)).status_code == 204
+    await run_manual(api, database, source)
     assert await events.tick() == 0
-    assert await event_runs(database) == []
+    assert len(await event_runs(database)) == 1
 
 
 async def test_an_admin_reacts_to_any_project_until_disabled(
@@ -307,6 +338,23 @@ async def test_validation_rejects_events_that_never_fire(
     pid = created.json()["id"]
     bad_event = on_event("node.completed")
     bad_source = on_event(source_project_id="not-a-project")
+    # An unknown source is refused at save, like one the caller cannot see
+    # (no existence probing); validation still catches a source deleted
+    # after the trigger was saved.
+    refused = await api.put(
+        f"/api/v1/projects/{pid}",
+        json={
+            "expected_revision": 1,
+            "name": "v",
+            "draft": {
+                "graph": {"nodes": [], "edges": []},
+                "triggers": [bad_source],
+                "dependencies": [],
+            },
+        },
+    )
+    assert refused.status_code == 422
+    assert refused.json()["code"] == "TRIGGER_SOURCE_NOT_FOUND"
     put = await api.put(
         f"/api/v1/projects/{pid}",
         json={
@@ -314,7 +362,7 @@ async def test_validation_rejects_events_that_never_fire(
             "name": "v",
             "draft": {
                 "graph": {"nodes": [], "edges": []},
-                "triggers": [bad_event, bad_source, on_event()],
+                "triggers": [bad_event, on_event()],
                 "dependencies": [],
             },
         },
@@ -326,6 +374,5 @@ async def test_validation_rejects_events_that_never_fire(
         for i in result["issues"]
         if i["code"] == "invalid_trigger_event"
     }
-    assert set(issues) == {bad_event["id"], bad_source["id"]}
+    assert set(issues) == {bad_event["id"]}
     assert "node.completed" not in issues[bad_event["id"]]["message"]
-    assert "not-a-project" not in issues[bad_source["id"]]["message"]

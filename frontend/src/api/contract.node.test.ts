@@ -14,6 +14,7 @@ import * as nodes from './nodes'
 import * as plugins from './plugins'
 import * as projects from './projects'
 import * as reports from './reports'
+import * as sharing from './sharing'
 import * as system from './system'
 import * as users from './users'
 import {
@@ -306,6 +307,11 @@ void plugins.enablePlugin(recorder, 'acme')
 void plugins.disablePlugin(recorder, 'acme')
 void plugins.removePlugin(recorder, 'acme', { force: true })
 void system.getSystemStatus(recorder)
+void sharing.getProjectSharing(recorder, 'p')
+void sharing.putProjectMember(recorder, 'p', 'u', 'editor')
+void sharing.removeProjectMember(recorder, 'p', 'u')
+void sharing.transferProjectOwnership(recorder, 'p', 'u')
+void sharing.leaveProject(recorder, 'p')
 void users.listUsers(recorder, { q: 'a', role: 'admin', status: 'active' })
 void users.getUser(recorder, 'u')
 void users.createUser(recorder, {
@@ -331,6 +337,7 @@ const modules: Record<string, unknown>[] = [
     plugins,
     system,
     users,
+    sharing,
 ]
 const serviceFunctions = modules.flatMap((module) =>
     Object.values(module).filter((v) => typeof v === 'function'),

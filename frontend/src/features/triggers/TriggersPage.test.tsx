@@ -121,6 +121,9 @@ function backend({
     })
     const requests = stubBackend({
         [`GET /projects/${PID}`]: () => ok(project()),
+        // The caller's access (api/sharing); tests override it as a viewer.
+        [`GET /projects/${PID}/members`]: () =>
+            ok({ access: 'manage', owner: null, members: [] }),
         [`GET /projects/${PID}/versions/1`]: () =>
             ok({
                 id: 'pver_1',
@@ -785,5 +788,27 @@ describe('TriggersPage', () => {
         expect(
             within(await rowOf(tid(1))).getByText('Not checked'),
         ).toBeVisible()
+    })
+
+    it('offers a viewer no way to change or run triggers', async () => {
+        backend({
+            triggers: [trigger(1, 'manual')],
+            published: [trigger(1, 'manual')],
+            overrides: {
+                [`GET /projects/${PID}/members`]: () =>
+                    ok({ access: 'view', owner: null, members: [] }),
+            },
+        })
+        renderRoute(PATH)
+        expect(await screen.findByText('View-only access')).toBeVisible()
+        expect(await screen.findByRole('table')).toBeVisible()
+        for (const name of [
+            'New trigger',
+            `Run trigger ${tid(1)}`,
+            `Edit trigger ${tid(1)}`,
+            `Delete trigger ${tid(1)}`,
+            `Disable trigger ${tid(1)}`,
+        ])
+            expect(screen.queryByRole('button', { name })).toBeNull()
     })
 })

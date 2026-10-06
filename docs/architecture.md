@@ -3012,9 +3012,10 @@ Avoid hard-coding assumptions that every installation has exactly one unrestrict
 Implementation (Phase 20):
 
 - Two roles. `admin` manages the installation: users, credentials, every
-  project, `/metrics`. `member` works on the projects they own.
-- `projects.owner_id` is set at creation and at import, to the caller, and
-  never changes. Executions, versions, triggers, exports and reports are
+  project, `/metrics`. `member` works on the projects they own and on
+  those shared with them (see "Project sharing" below).
+- `projects.owner_id` is set at creation and at import, to the caller. It
+  changes only through an ownership transfer (ADR 0008). Executions, versions, triggers, exports and reports are
   reachable exactly when their project is. Projects without an owner
   (created before 0008, or later by operator tooling) are admin-only, so
   the upgrade never widens access.
@@ -3025,9 +3026,30 @@ Implementation (Phase 20):
   covered automatically. The credentials and users routers additionally
   require an admin. A test walks the OpenAPI document and asserts every
   non-public route answers 401 without a session.
-- A resource the caller may not reach answers 404 (`PROJECT_NOT_FOUND` /
-  `EXECUTION_NOT_FOUND`), never 403, so ids cannot be probed for existence.
-  403 is reserved for role checks.
+- Project sharing (ADR 0008, migration 0017, `application/sharing.py`):
+  - The owner or an admin can share a project with other users as
+    `viewer` (read, export, duplicate, validate) or `editor` (also
+    change the draft and triggers, restore, publish, run, cancel).
+  - Only the owner and admins share or delete it.
+  - `project_access()` maps a user to `MANAGE` (admin, owner), `EDIT`,
+    `VIEW` or none. Routes declare the level they need with `requires()`
+    (OpenAPI `x-akasha-access`); undeclared routes need view for `GET`
+    and edit otherwise.
+  - Listings include shared projects (`visible_to`).
+  - API: `GET /projects/{id}/members` (owner, members, the caller's
+    `access`), plus `PUT` and `DELETE /projects/{id}/members/{username}`.
+  - Ownership transfer: `PUT /projects/{id}/owner` (manage). The new
+    owner must be an enabled user; the previous owner stays on as an
+    editor.
+  - Leaving: `DELETE /projects/{id}/membership` (any access). The owner
+    cannot leave; they transfer ownership first.
+  - Event-trigger sources a caller adds must be visible to the caller
+    (`TRIGGER_SOURCE_NOT_FOUND`).
+  - Membership changes apply from the member's next request.
+- A resource the caller cannot reach at all answers 404
+  (`PROJECT_NOT_FOUND` / `EXECUTION_NOT_FOUND`), never 403, so ids cannot
+  be probed for existence. 403 is for role checks and for too little
+  project access (a member who can view but not edit).
 - Credentials are installation-scoped and admin-managed. Any member's
   project may reference any credential by name (`credential:<name>`),
   because the runtime resolves by name. A member can therefore *use* a

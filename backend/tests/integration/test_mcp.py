@@ -27,7 +27,7 @@ from mcp.client.streamable_http import streamable_http_client
 from akasha.api.app import create_app
 from akasha.bootstrap import Container, create_container
 from akasha.config import Settings
-from akasha.domain.identity import Role
+from akasha.domain.identity import ProjectRole, Role
 from tests.support import capture_json_logs
 
 pytestmark = pytest.mark.usefixtures("clean_db")
@@ -765,6 +765,46 @@ async def test_members_see_only_their_projects_and_no_admin_tools(
         response = await rest.get(f"/api/v1/projects/{theirs['project_id']}")
         assert response.status_code == 404
         assert response.json()["code"] == "PROJECT_NOT_FOUND"
+
+
+async def test_shared_projects_follow_the_member_role_over_mcp(engine: Engine) -> None:
+    """The REST access levels hold over MCP: a viewer reads, an editor also
+    changes and runs, neither deletes."""
+    viewer, editor = await engine.token("vic"), await engine.token("eddie")
+    async with mcp(engine, engine.admin_token) as admin:
+        shared = await echo_project(admin, "shared")
+        pid = shared["project_id"]
+        await call(admin, "project_publish", project_id=pid)
+    sharing = engine.container.sharing
+    auth = engine.container.auth
+    assert sharing is not None and auth is not None
+    admin_identity = await auth.authenticate(engine.admin_token)
+    await sharing.put_member(admin_identity, pid, "vic", ProjectRole.VIEWER)
+    await sharing.put_member(admin_identity, pid, "eddie", ProjectRole.EDITOR)
+
+    async with mcp(engine, viewer) as client:
+        listed = await call(client, "project_list")
+        assert [p["id"] for p in listed["items"]] == [pid]
+        await call(client, "graph_get", project_id=pid)
+        for tool, args in (
+            ("project_publish", {"project_id": pid}),
+            ("execution_start", {"project_id": pid}),
+            ("project_delete", {"project_id": pid}),
+            (
+                "graph_node_add",
+                {
+                    "project_id": pid,
+                    "expected_revision": shared["revision"] + 1,
+                    "node_type": "core.input",
+                },
+            ),
+        ):
+            assert (await fails(client, tool, **args))["code"] == "PERMISSION_DENIED"
+    async with mcp(engine, editor) as client:
+        started = await call(client, "execution_start", project_id=pid)
+        assert started["status"] == "queued"
+        error = await fails(client, "project_delete", project_id=pid)
+        assert error["code"] == "PERMISSION_DENIED"
 
 
 async def test_plaintext_secrets_are_rejected_and_never_echoed(engine: Engine) -> None:

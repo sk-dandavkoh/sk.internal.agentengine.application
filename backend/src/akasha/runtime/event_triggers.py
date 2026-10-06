@@ -24,12 +24,15 @@ would exceed ``max_depth`` is refused and logged, so a project that triggers
 itself on its own completion stops after ``max_depth`` runs.
 
 Authorization: a trigger reacts to events of another project only when the
-trigger project's owner may access that project, by the same rule as the
-API (``may_access_project``): admins every project, members their own.
+trigger project's owner may at least view that project, by the same rule
+as the API (``project_access``): admins every project, members their own
+and those shared with them. (Editors cannot add a source they cannot see
+themselves: ``AuthorizationService.require_trigger_sources`` at save.)
 Events must not let one user observe or chain onto another user's projects
 (§49). Projects without an owner (operator CLI) may chain among themselves:
 both are admin-only, so no access widens. The check runs at fire time, so a
-demoted or disabled owner, or a deleted source, takes effect immediately.
+demoted or disabled owner, a removed membership or a deleted source takes
+effect immediately.
 """
 
 import asyncio
@@ -41,7 +44,7 @@ from akasha.application.persistence import UnitOfWork
 from akasha.application.projects import UowFactory
 from akasha.application.triggers import ResolvedTrigger, TriggerRegistry, TriggerService
 from akasha.domain.event import Event
-from akasha.domain.identity import may_access_project
+from akasha.domain.identity import project_access
 from akasha.domain.project import Project
 from akasha.domain.trigger import (
     EVENT_SOURCE_FIELD,
@@ -261,8 +264,7 @@ async def _may_observe(
     if project.owner_id is None:  # an ownerless operator project
         return source.owner_id is None
     owner = await uow.users.get(project.owner_id)
-    return (
-        owner is not None
-        and not owner.disabled
-        and may_access_project(owner, source.owner_id)
-    )
+    if owner is None or owner.disabled:
+        return False
+    role = await uow.members.role(source.id, owner.id)
+    return project_access(owner, source.owner_id, role) is not None

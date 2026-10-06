@@ -26,6 +26,7 @@ from akasha.application.packages import ProjectPackageService
 from akasha.application.plugins import PluginService
 from akasha.application.projects import ProjectService
 from akasha.application.reports import ReportService
+from akasha.application.sharing import SharingService
 from akasha.application.triggers import TriggerRegistry, TriggerService
 from akasha.config import Settings
 from akasha.domain.ai import LLMClient
@@ -95,6 +96,7 @@ class Container:
     auth: AuthenticationService | None = None
     authorization: AuthorizationService | None = None
     users: UserService | None = None
+    sharing: SharingService | None = None
     ready_checks: dict[str, ReadyCheck] = field(default_factory=dict)
     # The scheduler and event-trigger loop tasks; the container owns their
     # lifecycle (§44/§122).
@@ -239,6 +241,7 @@ def create_container(settings: Settings) -> Container:
     auth = AuthenticationService(
         uow, session_ttl=timedelta(seconds=settings.session_ttl_seconds)
     )
+    authorization = AuthorizationService(uow)
     triggers = TriggerService(executions)
     trigger_registry = TriggerRegistry(uow)
     scheduler = (
@@ -281,8 +284,9 @@ def create_container(settings: Settings) -> Container:
         scheduler=scheduler,
         event_triggers=event_triggers,
         auth=auth,
-        authorization=AuthorizationService(uow),
+        authorization=authorization,
         users=UserService(uow, auth),
+        sharing=SharingService(uow, authorization),
         ready_checks=ready_checks,
     )
 

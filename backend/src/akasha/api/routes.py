@@ -41,6 +41,7 @@ from akasha.api.nodes import create_nodes_router
 from akasha.api.plugins import create_plugins_router
 from akasha.api.projects import create_projects_router
 from akasha.api.reports import create_reports_router
+from akasha.api.sharing import create_sharing_router
 from akasha.api.triggers import create_triggers_router, create_webhooks_router
 from akasha.application.auth import AuthenticationRequiredError
 from akasha.application.auth import require_admin as require_admin_identity
@@ -132,6 +133,7 @@ def create_api_v1_router() -> APIRouter:
         dependencies=[Depends(current_identity), Depends(authorize_path)]
     )
     protected.include_router(create_projects_router())
+    protected.include_router(create_sharing_router())
     protected.include_router(create_triggers_router())
     protected.include_router(create_executions_router())
     protected.include_router(create_nodes_router())

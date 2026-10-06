@@ -12,7 +12,7 @@ without re-modelling the data.
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
-from enum import StrEnum
+from enum import IntEnum, StrEnum
 
 from akasha.domain.primitives import Entity, Timestamps, new_id, validate_id
 from akasha.errors import DomainValidationError
@@ -172,8 +172,47 @@ class Identity:
         return None if self.access_token is None else self.access_token.expires_at
 
 
-def may_access_project(user: User, owner_id: str | None) -> bool:
-    """Admins see every project; members only their own. A project without
-    an owner (created before accounts existed, or by the operator CLI) is
-    admin-only, so a missing owner never widens access."""
-    return user.is_admin or (owner_id is not None and owner_id == user.id)
+class ProjectRole(StrEnum):
+    """What a project's owner grants another user (project sharing)."""
+
+    VIEWER = "viewer"  # read: draft, versions, runs, reports, export
+    EDITOR = "editor"  # also: edit the draft, publish, run, cancel
+
+
+class Access(IntEnum):
+    """What a user may do with one project; ordered, so a check is ``>=``."""
+
+    VIEW = 1
+    EDIT = 2
+    MANAGE = 3  # also: delete the project, share it
+
+
+# Bounds the rows one project can hold: sharing is for a team, not a crowd.
+MAX_PROJECT_MEMBERS = 100
+
+
+def project_access(
+    user: User, owner_id: str | None, role: ProjectRole | None
+) -> Access | None:
+    """Admins and the owner manage a project; members get their role's
+    access; anyone else none. A project without an owner (created before
+    accounts existed, or by the operator CLI) is admin-only unless shared,
+    so a missing owner never widens access."""
+    if user.is_admin or (owner_id is not None and owner_id == user.id):
+        return Access.MANAGE
+    if role is ProjectRole.EDITOR:
+        return Access.EDIT
+    if role is ProjectRole.VIEWER:
+        return Access.VIEW
+    return None
+
+
+@dataclass(frozen=True)
+class ProjectMember:
+    """A user a project is shared with, as listed to its collaborators."""
+
+    user_id: str
+    username: str
+    display_name: str | None
+    role: ProjectRole
+    created_at: datetime

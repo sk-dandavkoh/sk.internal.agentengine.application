@@ -43,6 +43,13 @@ import {
 import { queryKeys } from './queries'
 import type { JsonObject } from './schemas'
 import {
+    leaveProject,
+    putProjectMember,
+    removeProjectMember,
+    transferProjectOwnership,
+    type ProjectRole,
+} from './sharing'
+import {
     createUser,
     updateUser,
     type CreateUserInput,
@@ -274,6 +281,59 @@ export function useDeleteCredential() {
         (qc, _result, name) => {
             qc.removeQueries({ queryKey: queryKeys.credentials.detail(name) })
             return invalidate(qc, queryKeys.credentials.lists())
+        },
+    )
+}
+
+// -- sharing -------------------------------------------------------------------
+
+export function usePutProjectMember() {
+    return useApiMutation(
+        (
+            client,
+            v: { projectId: string; username: string; role: ProjectRole },
+        ) => putProjectMember(client, v.projectId, v.username, v.role),
+        (qc, _member, v) =>
+            invalidate(qc, queryKeys.projects.sharing(v.projectId)),
+    )
+}
+
+export function useRemoveProjectMember() {
+    return useApiMutation(
+        (client, v: { projectId: string; username: string }) =>
+            removeProjectMember(client, v.projectId, v.username),
+        (qc, _result, v) =>
+            invalidate(qc, queryKeys.projects.sharing(v.projectId)),
+    )
+}
+
+/** The project's owner changes (and with it the caller's access): the
+ * project and everything below it is refetched, and so are the lists. */
+export function useTransferProjectOwnership() {
+    return useApiMutation(
+        (client, v: { projectId: string; username: string }) =>
+            transferProjectOwnership(client, v.projectId, v.username),
+        (qc, _sharing, v) =>
+            invalidate(
+                qc,
+                queryKeys.projects.detail(v.projectId),
+                queryKeys.projects.lists(),
+            ),
+    )
+}
+
+/** After leaving, the project is unreachable: its cached state goes and
+ * the lists are refetched without it. */
+export function useLeaveProject() {
+    return useApiMutation(
+        (client, projectId: string) => leaveProject(client, projectId),
+        (qc, _result, projectId) => {
+            qc.removeQueries({ queryKey: queryKeys.projects.detail(projectId) })
+            return invalidate(
+                qc,
+                queryKeys.projects.lists(),
+                queryKeys.executions.overview(),
+            )
         },
     )
 }

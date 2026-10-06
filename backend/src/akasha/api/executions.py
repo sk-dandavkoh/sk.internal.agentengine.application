@@ -173,7 +173,7 @@ def create_executions_router() -> APIRouter:
         limit: Limit = 50,
     ) -> ExecutionPage:
         page = await svc.list_recent(
-            owner_id=AuthorizationService.owner_filter(identity),
+            visible_to=AuthorizationService.visible_to(identity),
             statuses=status or (),
             offset=offset,
             limit=limit,
@@ -185,8 +185,8 @@ def create_executions_router() -> APIRouter:
     async def count_executions(
         svc: Executions, identity: CurrentIdentity
     ) -> StatusCounts:
-        owner = AuthorizationService.owner_filter(identity)
-        return StatusCounts(counts=await svc.count_by_status(owner_id=owner))
+        visible = AuthorizationService.visible_to(identity)
+        return StatusCounts(counts=await svc.count_by_status(visible_to=visible))
 
     @router.get("/projects/{project_id}/executions")
     async def list_executions(

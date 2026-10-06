@@ -477,8 +477,9 @@ class Project(Entity):
     (0 = never persisted). Persistence advances it on every successful save;
     domain logic only reads it.
 
-    ``owner_id`` is the user who created the project; it is fixed for the
-    project's life. None means admin-only (see ``may_access_project``).
+    ``owner_id`` is the user who manages the project: its creator, until an
+    ownership transfer (``application.sharing``). None means admin-only
+    unless shared (see ``domain.identity.project_access``).
     """
 
     name: str

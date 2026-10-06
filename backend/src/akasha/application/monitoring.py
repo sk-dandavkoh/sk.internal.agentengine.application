@@ -100,10 +100,10 @@ class MonitoringService:
         self._uow = uow
 
     async def summary(
-        self, *, since: datetime, until: datetime, owner_id: str | None = None
+        self, *, since: datetime, until: datetime, visible_to: str | None = None
     ) -> MonitoringSummary:
         """Over the executions created in ``[since, until)``, limited to the
-        projects of ``owner_id`` when given. Both reads share one
+        projects ``visible_to`` that user when given. Both reads share one
         transaction, so node counts belong to the executions counted."""
         check_window(since, until)
         # ponytail: aggregates in Python over every row of the window (at
@@ -111,10 +111,10 @@ class MonitoringService:
         # more rows than one request should load.
         async with self._uow() as uow:
             runs = await uow.executions.sample_executions(
-                since=since, until=until, owner_id=owner_id
+                since=since, until=until, visible_to=visible_to
             )
             nodes = await uow.executions.sample_node_executions(
-                since=since, until=until, owner_id=owner_id
+                since=since, until=until, visible_to=visible_to
             )
         return summarize(since, until, runs, nodes)
 

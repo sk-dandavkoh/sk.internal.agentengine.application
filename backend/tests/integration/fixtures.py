@@ -24,6 +24,7 @@ from akasha.application.auth import (
     UserService,
 )
 from akasha.application.projects import ProjectService
+from akasha.application.sharing import SharingService
 from akasha.domain.identity import Role
 from akasha.domain.node import (
     NodeConfigSchema,
@@ -169,12 +170,14 @@ class AuthKit:
     auth: AuthenticationService
     authorization: AuthorizationService
     users: UserService
+    sharing: SharingService
 
     def container_fields(self) -> dict[str, Any]:
         return {
             "auth": self.auth,
             "authorization": self.authorization,
             "users": self.users,
+            "sharing": self.sharing,
         }
 
     async def admin_headers(self, username: str = "admin") -> dict[str, str]:
@@ -204,7 +207,13 @@ def make_auth_kit(database: Database, **auth_options: Any) -> AuthKit:
         **auth_options,
     }
     auth = AuthenticationService(uow, **options)
-    return AuthKit(auth, AuthorizationService(uow), UserService(uow, auth))
+    authorization = AuthorizationService(uow)
+    return AuthKit(
+        auth,
+        authorization,
+        UserService(uow, auth),
+        SharingService(uow, authorization),
+    )
 
 
 @pytest.fixture

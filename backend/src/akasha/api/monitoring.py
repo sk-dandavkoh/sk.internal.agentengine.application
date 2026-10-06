@@ -52,7 +52,7 @@ def create_monitoring_router() -> APIRouter:
         return await monitoring.summary(
             since=since,
             until=until or utcnow(),
-            owner_id=AuthorizationService.owner_filter(identity),
+            visible_to=AuthorizationService.visible_to(identity),
         )
 
     return router

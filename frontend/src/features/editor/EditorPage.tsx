@@ -597,6 +597,10 @@ export function EditorPage() {
         refetchOnReconnect: false,
     })
     const nodes = useQuery(nodeQueries.catalog(client))
+    // A viewer could edit locally but never save: show why instead.
+    const viewOnly =
+        useQuery(projectQueries.sharing(client, projectId)).data?.access ===
+        'view'
     const [session, setSession] = useState(0)
     const [published, setPublished] = useState<ProjectVersion | null>(null)
     const { notify } = useToast()
@@ -637,6 +641,23 @@ export function EditorPage() {
                 {(project) => (
                     <>
                         <EditorHeader project={project} />
+                        {viewOnly && (
+                            <Alert
+                                tone="info"
+                                title="View-only access"
+                                className="mb-3"
+                            >
+                                This project is shared with you as a viewer: you
+                                can look at it, but not change its draft. Ask
+                                its owner for editor access, or{' '}
+                                <TextLink
+                                    to={`${projectPath(project.id)}/versions`}
+                                >
+                                    browse its published versions
+                                </TextLink>
+                                .
+                            </Alert>
+                        )}
                         {nodes.isError && nodes.data === undefined && (
                             <Alert tone="warning" className="mb-3">
                                 The node catalog could not be loaded, so ports
@@ -663,24 +684,26 @@ export function EditorPage() {
                                 </TextLink>
                             </Alert>
                         )}
-                        <ReactFlowProvider key={session}>
-                            <DraftEditor
-                                project={project}
-                                rules={rules}
-                                catalogQuery={nodes}
-                                onReload={() => void reload()}
-                                onPublished={(version) => {
-                                    setPublished(version)
-                                    notify({
-                                        tone: 'success',
-                                        title: `Version ${String(version.version)} published`,
-                                    })
-                                    // Publishing advances the draft revision:
-                                    // continue from the server's draft.
-                                    void reload()
-                                }}
-                            />
-                        </ReactFlowProvider>
+                        {!viewOnly && (
+                            <ReactFlowProvider key={session}>
+                                <DraftEditor
+                                    project={project}
+                                    rules={rules}
+                                    catalogQuery={nodes}
+                                    onReload={() => void reload()}
+                                    onPublished={(version) => {
+                                        setPublished(version)
+                                        notify({
+                                            tone: 'success',
+                                            title: `Version ${String(version.version)} published`,
+                                        })
+                                        // Publishing advances the draft revision:
+                                        // continue from the server's draft.
+                                        void reload()
+                                    }}
+                                />
+                            </ReactFlowProvider>
+                        )}
                     </>
                 )}
             </QuerySection>

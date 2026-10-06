@@ -27,6 +27,8 @@ import { versionsPath } from '../versions/paths'
 import { VersionLink } from '../versions/shared'
 import { ProjectFormDialog } from './ProjectFormDialog'
 import { ProjectStatusBadge } from './ProjectStatusBadge'
+import { SharingCard } from './SharingCard'
+import { allows } from './access'
 
 type Action = 'edit' | 'duplicate' | 'delete' | null
 
@@ -134,6 +136,10 @@ function ExportProject({ project }: { project: Project }) {
 }
 
 function ProjectView({ project }: { project: Project }) {
+    // Hides what the backend would refuse; until it is known, nothing
+    // beyond reading is offered.
+    const access = useQuery(projectQueries.sharing(useApiClient(), project.id))
+        .data?.access
     const [action, setAction] = useState<Action>(null)
     const update = useUpdateProject()
     const duplicate = useDuplicateProject()
@@ -184,13 +190,15 @@ function ProjectView({ project }: { project: Project }) {
                         >
                             Triggers
                         </TextLink>
-                        <Button
-                            onClick={() => {
-                                setAction('edit')
-                            }}
-                        >
-                            Edit details
-                        </Button>
+                        {allows(access, 'edit') && (
+                            <Button
+                                onClick={() => {
+                                    setAction('edit')
+                                }}
+                            >
+                                Edit details
+                            </Button>
+                        )}
                         <ExportProject project={project} />
                         <Button
                             onClick={() => {
@@ -199,18 +207,23 @@ function ProjectView({ project }: { project: Project }) {
                         >
                             Duplicate
                         </Button>
-                        <Button
-                            variant="danger"
-                            onClick={() => {
-                                setAction('delete')
-                            }}
-                        >
-                            Delete
-                        </Button>
+                        {allows(access, 'manage') && (
+                            <Button
+                                variant="danger"
+                                onClick={() => {
+                                    setAction('delete')
+                                }}
+                            >
+                                Delete
+                            </Button>
+                        )}
                     </>
                 }
             />
             <Metadata project={project} />
+            <div className="mt-6">
+                <SharingCard projectId={project.id} />
+            </div>
 
             <ProjectFormDialog
                 open={action === 'edit'}

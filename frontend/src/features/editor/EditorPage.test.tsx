@@ -513,6 +513,20 @@ describe('EditorPage', () => {
         ).toBeInTheDocument()
     })
 
+    it('explains view-only access instead of offering edits a viewer cannot save', async () => {
+        const { puts } = backend({
+            'GET /projects/p1/members': () =>
+                ok({ access: 'view', owner: null, members: [] }),
+        })
+        await openEditor()
+        expect(await screen.findByText('View-only access')).toBeVisible()
+        expect(
+            screen.queryByRole('region', { name: /^Nodes/ }),
+        ).not.toBeInTheDocument()
+        expect(screen.queryByRole('button', { name: 'Save' })).toBeNull()
+        expect(puts).toEqual([])
+    })
+
     it('shows not found for an unknown project', async () => {
         backend({
             'GET /projects/p1': () =>

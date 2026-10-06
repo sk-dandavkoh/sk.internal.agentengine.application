@@ -31,6 +31,7 @@ import {
 import { getMonitoringSummary, type MonitoringWindow } from './monitoring'
 import { getExecutionReport } from './reports'
 import type { JsonObject, PageParams } from './schemas'
+import { getProjectSharing } from './sharing'
 import { getSystemStatus } from './system'
 import { getUser, listUsers, type UserListParams } from './users'
 
@@ -53,6 +54,10 @@ export const queryKeys = {
             ['projects', projectId, 'versions', version] as const,
         executions: (projectId: string) =>
             ['projects', projectId, 'executions'] as const,
+        /** Owner, members and the caller's access (below the project, so
+         * a project refresh refreshes it too). */
+        sharing: (projectId: string) =>
+            ['projects', projectId, 'members'] as const,
         /** The backend's verdict on one draft revision. */
         validation: (projectId: string, revision: number) =>
             ['projects', projectId, 'validation', revision] as const,
@@ -147,6 +152,12 @@ export const projectQueries = {
             // One revision's verdict changes only with the installed node
             // code, like a config verdict; not re-POSTed on every focus.
             staleTime: INSTALLATION_STALE_TIME_MS,
+        }),
+    sharing: (client: ApiClient, projectId: string) =>
+        queryOptions({
+            queryKey: queryKeys.projects.sharing(projectId),
+            queryFn: ({ signal }) =>
+                getProjectSharing(client, projectId, signal),
         }),
     executions: (
         client: ApiClient,

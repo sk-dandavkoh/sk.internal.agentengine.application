@@ -29,7 +29,14 @@ from akasha.domain.execution import (
     NodeExecutionStatus,
     NodeLogEntry,
 )
-from akasha.domain.identity import AccessToken, Role, User, UserSession
+from akasha.domain.identity import (
+    AccessToken,
+    ProjectMember,
+    ProjectRole,
+    Role,
+    User,
+    UserSession,
+)
 from akasha.domain.project import Project, ProjectStatus, ProjectVersion
 from akasha.errors import AkashaError
 
@@ -78,14 +85,24 @@ class ProjectRepository(Protocol):
         *,
         offset: int = 0,
         limit: int = 100,
-        owner_id: str | None = None,
+        visible_to: str | None = None,
         search: str | None = None,
         statuses: Collection[ProjectStatus] = (),
         sort: ProjectSort = ProjectSort.CREATED,
     ) -> Sequence[Project]:
-        """All projects, or only those owned by ``owner_id``; optionally
+        """All projects, or only those ``visible_to`` that user (owned or
+        shared with them); optionally
         only names containing ``search`` (case-insensitive, literal) and
         only ``statuses``."""
+        ...
+
+    async def lock_owner(self, project_id: str) -> str | None:
+        """The owner of an existing project, with its row locked until the
+        transaction ends."""
+        ...
+
+    async def set_owner(self, project_id: str, owner_id: str) -> None:
+        """Change the owner; not a draft change, so the revision stays."""
         ...
 
     async def using_plugin(
@@ -184,31 +201,31 @@ class ExecutionRepository(Protocol):
         *,
         project_id: str | None = None,
         project_version: int | None = None,
-        owner_id: str | None = None,
+        visible_to: str | None = None,
         statuses: Collection[ExecutionStatus] = (),
         offset: int = 0,
         limit: int = 100,
     ) -> Sequence[ExecutionSummary]:
         """Executions newest first: of one project or all, limited to the
-        projects of ``owner_id``, to one ``project_version`` (meaningful
+        projects ``visible_to`` that user, to one ``project_version`` (meaningful
         with ``project_id``) and to ``statuses`` when given."""
         ...
 
     async def count_by_status(
-        self, *, owner_id: str | None = None
+        self, *, visible_to: str | None = None
     ) -> Mapping[ExecutionStatus, int]:
         """Executions per status (absent statuses: none), limited to the
-        projects of ``owner_id`` when given."""
+        projects ``visible_to`` that user when given."""
         ...
 
     # Monitoring read models (Phase 16): executions created in
-    # [since, until), limited to the projects of ``owner_id`` when given.
+    # [since, until), limited to the projects ``visible_to`` that user.
     async def sample_executions(
-        self, *, since: datetime, until: datetime, owner_id: str | None = None
+        self, *, since: datetime, until: datetime, visible_to: str | None = None
     ) -> Sequence[ExecutionSample]: ...
 
     async def sample_node_executions(
-        self, *, since: datetime, until: datetime, owner_id: str | None = None
+        self, *, since: datetime, until: datetime, visible_to: str | None = None
     ) -> Sequence[NodeSample]:
         """Node executions of those executions, by execution id and node id
         (a stable order for float sums)."""
@@ -333,6 +350,8 @@ class UserRepository(Protocol):
 
     async def get(self, user_id: str) -> User | None: ...
 
+    async def get_by_username(self, username: str) -> User | None: ...
+
     async def get_with_password(self, username: str) -> tuple[User, str] | None:
         """The user and their stored password hash, for login only."""
         ...
@@ -421,6 +440,28 @@ class AccessTokenRepository(Protocol):
         ...
 
 
+class ProjectMemberRepository(Protocol):
+    """Who a project is shared with (the owner is not a member row)."""
+
+    async def role(self, project_id: str, user_id: str) -> ProjectRole | None: ...
+
+    async def list(self, project_id: str) -> Sequence[ProjectMember]:
+        """By username."""
+        ...
+
+    async def count(self, project_id: str) -> int: ...
+
+    async def put(
+        self, project_id: str, user_id: str, role: ProjectRole, at: datetime
+    ) -> None:
+        """Add the member, or change their role (keeping ``created_at``)."""
+        ...
+
+    async def delete(self, project_id: str, user_id: str) -> bool:
+        """False when the user was not a member."""
+        ...
+
+
 class UnitOfWork(Protocol):
     """Explicit transaction boundary (backend/AGENTS.md §16).
 
@@ -437,6 +478,7 @@ class UnitOfWork(Protocol):
     users: UserRepository
     sessions: SessionRepository
     access_tokens: AccessTokenRepository
+    members: ProjectMemberRepository
 
     async def __aenter__(self) -> "UnitOfWork": ...
     async def __aexit__(
