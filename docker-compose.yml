@@ -1,6 +1,7 @@
 # Self-hosted Akasha: UI, API (with the trigger scheduler), a dedicated
-# worker, PostgreSQL and Redis. `docker compose up -d --build`, then open
-# http://localhost:8080 and create the first admin. No .env is needed:
+# worker, PostgreSQL, Redis and SearXNG (for core.web_search).
+# `docker compose up -d --build`, then open http://localhost:8080 and
+# create the first admin. No .env is needed:
 # secrets are generated on first start. Operator guide: docs/deployment.md.
 
 name: akasha
@@ -18,6 +19,8 @@ x-backend: &backend
     AKASHA_REDIS_URL: redis://redis:6379/0
     # Executions run in the worker service, not in the API process.
     AKASHA_WORKER_ENABLED: "false"
+    # The bundled SearXNG; set it in .env to use another instance.
+    AKASHA_WEB_SEARCH_URL: ${AKASHA_WEB_SEARCH_URL:-http://searxng:8080}
   volumes:
     - plugins:/var/lib/akasha/plugins
     # Per-project files of the file nodes and core.command (ADR 0005).
@@ -54,6 +57,9 @@ services:
           put AKASHA_CREDENTIAL_ENCRYPTION_KEY "$$AKASHA_CREDENTIAL_ENCRYPTION_KEY"
         elif [ ! -s AKASHA_CREDENTIAL_ENCRYPTION_KEY ]; then
           put AKASHA_CREDENTIAL_ENCRYPTION_KEY "$$(head -c 32 /dev/urandom | base64 | tr '+/' '-_')"
+        fi
+        if [ ! -s searxng_secret ]; then
+          put searxng_secret "$$(od -An -tx1 -N24 /dev/urandom | tr -d ' \n')"
         fi
         put AKASHA_DATABASE_URL "postgresql://akasha:$$(cat postgres_password)@postgres:5432/akasha"
     environment:
@@ -96,6 +102,34 @@ services:
       timeout: 5s
       retries: 10
     restart: unless-stopped
+
+  # Internal only (not published): reachable by the worker as
+  # http://searxng:8080. Queries leave the host to the public search
+  # engines SearXNG aggregates.
+  searxng:
+    image: searxng/searxng:2026.10.4-d48c4b555
+    entrypoint: ["sh", "-ceu"]
+    # Its secret_key is only used for cookies/image proxy signing; it is
+    # generated with the other secrets instead of being committed.
+    command:
+      - |
+        SEARXNG_SECRET="$$(cat /run/akasha-secrets/searxng_secret)"
+        export SEARXNG_SECRET
+        exec /usr/local/searxng/entrypoint.sh
+    configs:
+      - source: searxng_settings
+        target: /etc/searxng/settings.yml
+    volumes:
+      - secrets:/run/akasha-secrets:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    depends_on:
+      secrets:
+        condition: service_completed_successfully
 
   migrate:
     <<: *backend
@@ -143,6 +177,17 @@ services:
     depends_on:
       api:
         condition: service_healthy
+
+configs:
+  searxng_settings:
+    # core.web_search calls /search?format=json, which SearXNG disables
+    # by default.
+    content: |
+      use_default_settings: true
+      search:
+        formats: [html, json]
+      server:
+        limiter: false
 
 volumes:
   pgdata:

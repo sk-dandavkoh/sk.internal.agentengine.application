@@ -387,6 +387,53 @@ def test_zero_config_install_serves_ui_and_keeps_generated_secrets(
     assert names == ["generated-key"]
     pid, version = publish(api, "echo", delay_seconds=0)
     wait_for(d, api, start(api, pid, version, "zero config"), "completed")
+    web_search_through_bundled_searxng(d, api)
+
+
+def web_search_through_bundled_searxng(d: Deployment, api: httpx.Client) -> None:
+    """core.web_search works out of the box: the bundled SearXNG starts with
+    its generated secret and serves format=json (else 403 → node fails).
+    The result count depends on the public engines, so only the shape is
+    asserted."""
+    project = api.post("/api/v1/projects", json={"name": "search"})
+    assert project.status_code == 201, project.text
+    pid = project.json()["id"]
+    query, search, sink = new_id("node"), new_id("node"), new_id("node")
+    nodes = [
+        {"id": query, "node_type": "core.input", "config": {"field": "query"}},
+        {"id": search, "node_type": "core.web_search", "config": {"max_results": 3}},
+        {"id": sink, "node_type": "core.output", "config": {}},
+    ]
+    edges = [
+        {
+            "source_node_id": query,
+            "source_port": "value",
+            "target_node_id": search,
+            "target_port": "query",
+        },
+        {
+            "source_node_id": search,
+            "source_port": "results",
+            "target_node_id": sink,
+            "target_port": "value",
+        },
+    ]
+    draft = {"graph": {"nodes": nodes, "edges": edges}, "triggers": []}
+    body = {"expected_revision": 1, "name": "search", "draft": draft}
+    assert api.put(f"/api/v1/projects/{pid}", json=body).status_code == 200
+    published = api.post(
+        f"/api/v1/projects/{pid}/publish", json={"expected_revision": 2}
+    )
+    assert published.status_code == 201, published.text
+    started = api.post(
+        f"/api/v1/projects/{pid}/versions/1/execute", json={"query": "searxng"}
+    )
+    assert started.status_code == 201, started.text
+    execution_id = started.json()["id"]
+    wait_for(d, api, execution_id, "completed")
+    report = api.get(f"/api/v1/reports/executions/{execution_id}").json()
+    (searched,) = [n for n in report["nodes"] if n["node_type"] == "core.web_search"]
+    assert isinstance(searched["outputs"]["results"], list)
 
 
 async def test_mcp_through_the_reverse_proxy_with_dedicated_workers(

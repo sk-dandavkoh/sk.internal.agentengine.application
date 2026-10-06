@@ -14,6 +14,7 @@ to end by `backend/tests/deployment/test_compose_lifecycle.py` (see
 | `secrets` | `postgres:17.2` | generates the secrets on first start, then exits 0 | volume `secrets` |
 | `postgres` | `postgres:17.2` | system of record | volume `pgdata` |
 | `redis` | `redis:8.2.1-alpine` | execution queue (AOF on) | volume `redisdata` |
+| `searxng` | `searxng/searxng:2026.10.4-d48c4b555` | metasearch for `core.web_search` (JSON format on, limiter off) | — |
 | `migrate` | `akasha-backend:0.1.0` | `akasha migrate`, then exits 0 | — |
 | `api` | `akasha-backend:0.1.0` | HTTP API + trigger scheduler | volumes `plugins`, `workspace` |
 | `worker` | `akasha-backend:0.1.0` | runs executions (`akasha worker`) | volumes `plugins`, `workspace` |
@@ -149,6 +150,9 @@ values stop the container with a `CONFIGURATION_ERROR` naming the setting.
   `backend/README.md` and `backend/src/akasha/config.py`.
 - `AKASHA_HTTP_PORT` / `AKASHA_BIND_ADDRESS` choose the published host port
   and address (default `127.0.0.1:8080`).
+- `AKASHA_WEB_SEARCH_URL` defaults to the bundled `http://searxng:8080`;
+  set it in `.env` to use another SearXNG instance. Searches leave the host:
+  SearXNG forwards queries to the public engines it aggregates.
 - Set by Compose, do not override: `AKASHA_REDIS_URL` and
   `AKASHA_WORKER_ENABLED=false` (executions run in the `worker` service).
 - Read from the `secrets` volume (`/run/akasha-secrets`, one file per
