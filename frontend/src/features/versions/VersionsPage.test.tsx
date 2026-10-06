@@ -64,6 +64,7 @@ function version(n: number, nodes = [node('a')]) {
         ],
         dependencies: [],
         files: [{ path: 'docs/readme.md', size: 12 }],
+        plugin_versions: {},
     }
 }
 

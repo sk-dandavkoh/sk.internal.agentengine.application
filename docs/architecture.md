@@ -1968,6 +1968,12 @@ Implementation (Phase 17, `backend/src/akasha/plugins/`, guide in
   Their validate/publish/run fail with structured `UNKNOWN_NODE_TYPE` /
   `MISSING_DEPENDENCY` until it is back. The operator path, `akasha
   plugin remove`, blocks removal while projects need the plugin (§58).
+- Update (ADR 0006): `PluginRegistry.update` replaces an installed
+  package with a new version of the same id, atomically (the old package
+  is restored and re-activated on any failure). `PluginService` (shared by
+  REST and MCP, one lifecycle lock per process) blocks update and removal
+  while projects use the plugin, unless forced. Published versions stay
+  pinned to the plugin version they were published with (§144).
 - Changes apply to the current process. Other processes see them after a
   restart (workers, Phase 22). The CLI (Phase 21) and the admin API
   (ADR 0001) drive the lifecycle. HTTP upload install is off unless
@@ -2874,6 +2880,28 @@ Implementation (Phase 21, `backend/src/akasha/cli.py`, stdlib `argparse`):
   HTTP removal uses the same `remove_plugin` (ADR 0001).
   `node test` has no credentials: secrets never go on a command line.
 
+## 58.1 MCP Control Plane
+
+A third interface next to the REST API and the CLI, for AI agents
+(`backend/src/akasha/mcp/`, `docs/mcp.md`, ADR 0006):
+
+```text
+MCP client ─> /mcp (bearer session → Identity) ─> MCP SDK ─> tool
+   ─> AuthorizationService check ─> application services ─> domain
+```
+
+- Optional and off by default (`AKASHA_MCP_ENABLED`). When off, no route,
+  server or session manager exists.
+- Official MCP SDK, Streamable HTTP, stateless, JSON responses, served by
+  the API process at `/mcp`. Not part of the OpenAPI document.
+- Same sessions, same authorization, same application services and error
+  codes as REST. Tools hold no business rules: graph edits are domain
+  `Graph`/draft methods applied through `ProjectService.edit_draft`, guarded
+  by the project revision.
+- Plugin tools use the shared `application.plugins.PluginService`. Running
+  or installing plugin code needs an admin and `AKASHA_MCP_PLUGIN_CODE`.
+- `tests/test_architecture.py` keeps SQLAlchemy out of it, like the CLI.
+
 ----------
 
 # 59. Authentication
@@ -2908,6 +2936,17 @@ Implementation (Phase 20, `domain/identity.py`, `application/auth.py`,
   `AKASHA_SESSION_TTL_SECONDS` after login (absolute, no sliding renewal).
   Logout, a password change (other sessions), an admin password reset and
   disabling a user revoke them.
+- Personal access tokens (ADR 0007, `access_tokens`, migration 0015):
+  long-lived, named credentials for scripts and AI agents, sent as the same
+  `Authorization: Bearer`. Values start with `akasha_pat_` (which table to
+  check; redacted in logs) and only their SHA-256 is stored. A token acts
+  as its user with exactly the user's role. Issuing one
+  (`POST /auth/tokens`) requires the account password; expiry is 1-3650
+  days or none. The owner lists (`GET /auth/tokens`, metadata only) and
+  revokes (`DELETE /auth/tokens/{id}`) them. Logout with a token revokes
+  that token; an admin password reset or disabling the user revokes all
+  of them; one's own password change keeps them. At most 50 per user;
+  `last_used_at` is recorded at most hourly.
 - Browser sessions (frontend Phase 21, ADR 0002): `POST /auth/login` with
   `"cookie": true` puts the token in an `HttpOnly`, `SameSite=Strict`,
   `Secure` (`AKASHA_SESSION_COOKIE_SECURE`) cookie on `Path=/api/v1` and
@@ -2915,7 +2954,8 @@ Implementation (Phase 20, `domain/identity.py`, `application/auth.py`,
   header (forms cannot send it; cross-origin scripts would need a CORS
   preflight the API never grants), so CSRF stays closed. A cookie login
   without it is 403 `CSRF_HEADER_REQUIRED` (login CSRF). Logout also
-  expires the cookie. `GET /auth/session` returns `{expires_at, user}`.
+  expires the cookie. `GET /auth/session` returns `{expires_at, user}`
+  (`expires_at` null for a non-expiring access token).
 - First run: `POST /auth/setup` creates the first admin only while the user
   table is empty (serialized by a table lock). Afterwards admins create
   accounts (`/users`). The last active admin cannot be disabled (row locks
@@ -5037,6 +5077,15 @@ required provider configuration exists
 ```
 
 Missing dependencies produce structured errors.
+
+Plugin versions are pinned at publish (ADR 0006): a `ProjectVersion`
+records `plugin_versions`, the exact version of every enabled plugin the
+draft uses (owner of a used node type, or a declared plugin dependency).
+`runtime.plan.load_plan` re-checks them before every run, against the
+runtime's enabled plugins. Any other version or a missing plugin fails the
+execution with `EXECUTION_GRAPH_INVALID` before a node runs, so a plugin
+upgrade never silently changes a published version. Versions published
+before migration 0014 have no pins.
 
 ----------
 

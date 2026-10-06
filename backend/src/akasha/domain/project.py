@@ -145,6 +145,54 @@ def validate_dependencies(
     return tuple(issues)
 
 
+def pinned_plugin_issues(
+    pinned: Mapping[str, str], plugins: Mapping[str, str]
+) -> tuple[ValidationIssue, ...]:
+    """Pinned plugin versions (id → version) the enabled ``plugins`` do not
+    provide exactly. Another version is an incompatibility, never a silent
+    upgrade."""
+    issues: list[ValidationIssue] = []
+    for plugin_id, version in sorted(pinned.items()):
+        available = plugins.get(plugin_id)
+        if available is None:
+            issues.append(
+                ValidationIssue(
+                    ValidationCode.MISSING_DEPENDENCY,
+                    f"pinned plugin {plugin_id!r} {version} is not enabled",
+                )
+            )
+        elif available != version:
+            issues.append(
+                ValidationIssue(
+                    ValidationCode.INCOMPATIBLE_DEPENDENCY,
+                    f"published with plugin {plugin_id!r} {version},"
+                    f" but {available} is enabled",
+                )
+            )
+    return tuple(issues)
+
+
+def plugins_in_use(
+    graph: Graph,
+    dependencies: Iterable[Dependency],
+    plugin_nodes: Mapping[str, str],
+    plugins: Mapping[str, str],
+) -> dict[str, str]:
+    """The enabled plugins (id → version) a draft uses: the owners of its
+    node types (``plugin_nodes``: node type → plugin id) and its declared
+    plugin dependencies.
+
+    ponytail: direct use only, a plugin's own plugin dependencies are not
+    pinned. Pin transitively once plugins commonly depend on each other."""
+    used = {
+        plugin_nodes[n.node_type]
+        for n in graph.nodes.values()
+        if n.node_type in plugin_nodes
+    }
+    used |= {d.name for d in dependencies if d.kind == "plugin"}
+    return {p: plugins[p] for p in sorted(used) if p in plugins}
+
+
 def is_project_file_path(path: str) -> bool:
     return _FILE_PATH_RE.match(path) is not None
 
@@ -335,8 +383,10 @@ class ProjectDraft:
         version: int,
         published_at: datetime | None = None,
         published_by: str | None = None,
+        plugin_versions: Mapping[str, str] | None = None,
     ) -> "ProjectVersion":
-        """Freeze the current draft state into an immutable version snapshot."""
+        """Freeze the current draft state into an immutable version snapshot,
+        pinned to ``plugin_versions`` (``ProjectVersion.plugin_versions``)."""
         if version < 1:
             raise DomainValidationError("version number must be >= 1")
         return ProjectVersion(
@@ -350,6 +400,7 @@ class ProjectDraft:
             files=dict(self.files),  # bytes are immutable; the dict is not
             published_at=published_at or utcnow(),
             published_by=published_by,
+            plugin_versions=dict(sorted((plugin_versions or {}).items())),
         )
 
 
@@ -369,6 +420,12 @@ class ProjectVersion:
     # The publishing user's id; None when published without one (CLI, or
     # before authorship was recorded).
     published_by: str | None = None
+    # Plugin id → the exact version this snapshot was published against.
+    # The runtime refuses to run it on any other version of those plugins,
+    # so installing a new plugin version never silently changes what a
+    # published version does. Empty without plugin use, and for versions
+    # published before pinning existed (migration 0014).
+    plugin_versions: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         validate_id(self.id)
@@ -377,12 +434,23 @@ class ProjectVersion:
         if self.schema_version < 1:
             raise DomainValidationError("schema_version must be >= 1")
 
-    def validate(self, definitions: Mapping[str, NodeDefinition]) -> ValidationResult:
+    def validate(
+        self,
+        definitions: Mapping[str, NodeDefinition],
+        plugins: Mapping[str, str] | None = None,
+    ) -> ValidationResult:
         """The draft's graph and dependency rules: the node catalog may have
         changed since publish, so the runtime re-checks the snapshot before
         every run. Trigger rules are left out on purpose: they gate
-        publishing, and a run never depends on how it was triggered."""
-        return _validate(self.graph, self.dependencies, definitions)
+        publishing, and a run never depends on how it was triggered.
+
+        With ``plugins`` (enabled id → version), ``plugin_versions`` must
+        be enabled in exactly those versions."""
+        result = _validate(self.graph, self.dependencies, definitions)
+        if plugins is None:
+            return result
+        pins = pinned_plugin_issues(self.plugin_versions, plugins)
+        return ValidationResult(result.issues + pins)
 
     def to_draft(self) -> ProjectDraft:
         """An independent, editable copy of this snapshot (restore/clone)."""
@@ -473,6 +541,7 @@ class Project(Entity):
         *,
         published_at: datetime | None = None,
         published_by: str | None = None,
+        plugin_versions: Mapping[str, str] | None = None,
     ) -> ProjectVersion:
         """Freeze the draft as the next version and return the snapshot.
 
@@ -483,6 +552,7 @@ class Project(Entity):
             version=self.current_version + 1,
             published_at=published_at,
             published_by=published_by,
+            plugin_versions=plugin_versions,
         )
         self.current_version = snapshot.version
         if self.status is ProjectStatus.DRAFT:

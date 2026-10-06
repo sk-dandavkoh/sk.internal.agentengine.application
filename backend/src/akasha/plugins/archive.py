@@ -14,6 +14,7 @@ Nothing here imports plugin code.
 import stat
 import zipfile
 import zlib
+from collections.abc import Mapping
 from io import BytesIO
 from pathlib import Path, PurePosixPath
 from typing import Final
@@ -25,6 +26,27 @@ MEDIA_TYPE: Final = "application/zip"
 MAX_ARCHIVE_BYTES: Final = 16 * 1024 * 1024
 MAX_UNPACKED_BYTES: Final = 64 * 1024 * 1024
 MAX_ENTRIES: Final = 2000
+
+
+# Fixed timestamp: packing the same files twice yields the same bytes (§72).
+_EPOCH: Final = (1980, 1, 1, 0, 0, 0)
+
+
+def pack_files(files: Mapping[str, str]) -> bytes:
+    """A plugin package ZIP of text files (package-relative path → UTF-8
+    content), entries sorted. Paths are not checked here: ``unpack_package``
+    is the one place that decides what a safe entry is, so callers unpack
+    the result before trusting it."""
+    if len(files) > MAX_ENTRIES:
+        raise PluginPackageError("The plugin package has too many files.")
+    buffer = BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for path in sorted(files):
+            info = zipfile.ZipInfo(path, date_time=_EPOCH)
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.external_attr = (stat.S_IFREG | 0o644) << 16
+            archive.writestr(info, files[path].encode("utf-8"))
+    return buffer.getvalue()
 
 
 def unpack_package(data: bytes, target: Path) -> Path:

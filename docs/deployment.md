@@ -314,6 +314,18 @@ Uploading a package there is off by default. Setting
 can run code on the host (ADR 0001). Changes made in the UI reach dedicated
 workers only after `docker compose restart worker`.
 
+## 10a. MCP (AI agents)
+
+The MCP control plane is off by default. `AKASHA_MCP_ENABLED=true` in `.env`
+serves it at `http://<host>:8080/mcp`: the UI's nginx proxies `/mcp` to the
+API, like `/api/`. Agents authenticate with a session token from
+`POST /api/v1/auth/login` (`Authorization: Bearer`). Use HTTPS in front for
+anything but loopback. Installing plugin code over MCP additionally needs
+`AKASHA_MCP_PLUGIN_CODE=true`, the same trade-off as
+`AKASHA_PLUGINS_HTTP_INSTALL`. As with the UI, plugin changes made over MCP
+reach the `worker` service only after `docker compose restart worker`.
+Settings, tools, security model and client setup: `docs/mcp.md`.
+
 ## 11. Verifying a deployment
 
 The deployment tests run against the real images and `docker-compose.yml`,
@@ -326,8 +338,11 @@ the stack only through its one published port:
   (login, history, credentials, a new run) → worker killed mid-execution
   and resumed → PostgreSQL restarted under a running API;
 - the zero-config install: no secrets given, the UI is served (headers,
-  404 for missing assets), setup is offered and then closed, and the
-  generated secrets survive a recreation.
+  404 for missing assets), MCP is off (`/mcp` 404), setup is offered and
+  then closed, and the generated secrets survive a recreation;
+- MCP enabled: `/mcp` refuses anonymous requests, then a real MCP client
+  goes through nginx to build, publish and start a project, which the
+  dedicated worker runs to completion; the API stops gracefully.
 
 ```bash
 cd backend

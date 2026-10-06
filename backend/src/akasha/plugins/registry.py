@@ -127,9 +127,13 @@ class PluginRegistry:
         self._records: dict[str, PluginRecord] = {}
         self._enabled: dict[str, PluginMetadata] = {}
         self._versions: dict[str, str] = {}
+        self._node_plugins: dict[str, str] = {}
         # Enabled plugin id → version; ``ProjectService`` checks project
-        # plugin dependencies against this live view.
+        # plugin dependencies against this live view, the runtime the
+        # plugin versions a published version is pinned to.
         self.versions = MappingProxyType(self._versions)
+        # Node type → id of the enabled plugin providing it (live view).
+        self.node_plugins = MappingProxyType(self._node_plugins)
 
     # -- queries ----------------------------------------------------------
 
@@ -235,6 +239,86 @@ class PluginRegistry:
         _log("plugin_installed", metadata)
         return self._records[metadata.plugin_id]
 
+    def update(self, source: Path) -> PluginRecord:
+        """Replace the installed package of the plugin at ``source`` (same
+        id, any version) and activate it if the old one was enabled.
+
+        Atomic like ``install``: when the new package cannot be validated,
+        copied or activated, the old package is restored (and re-enabled)
+        and the error is raised. Published project versions pinned to the
+        old version stop running (``ProjectVersion.plugin_versions``) until
+        it is reinstalled: an update never silently changes them.
+
+        ponytail: libraries are installed on the calling thread (``prepare``
+        only covers fresh installs); move them off the event loop if
+        plugins with large ``python_requirements`` get updated often.
+        """
+        metadata = read_manifest(source)
+        old = self.get(metadata.plugin_id)
+        if old.metadata is None:
+            raise InvalidStateTransitionError(
+                "A plugin whose manifest cannot be read must be removed, not updated.",
+                details={"plugin_id": metadata.plugin_id, "state": old.state},
+            )
+        was_enabled = old.state is PluginState.ENABLED
+        target = self._dir / metadata.plugin_id
+        backup = self._dir / f".update-{uuid.uuid4().hex}"
+        staging = self._dir / f".install-{uuid.uuid4().hex}"
+        if was_enabled:
+            self._deactivate(metadata.plugin_id)  # PLUGIN_IN_USE: nothing changed
+        try:
+            try:
+                if was_enabled:
+                    self._check_compatible(metadata)
+                _copy_package(source, staging)
+                if read_manifest(staging) != metadata:
+                    raise PluginPackageError(
+                        "The plugin package changed during update."
+                    )
+                target.rename(backup)
+                staging.rename(target)
+            finally:
+                shutil.rmtree(staging, ignore_errors=True)
+            if was_enabled:
+                self._activate(target, metadata)
+            else:
+                self._records[metadata.plugin_id] = PluginRecord(
+                    metadata.plugin_id, PluginState.DISABLED, metadata
+                )
+        except BaseException:
+            if backup.exists():
+                shutil.rmtree(target, ignore_errors=True)
+                backup.rename(target)
+            self._records[metadata.plugin_id] = old
+            if was_enabled:
+                self._activate(target, old.metadata)
+            raise
+        shutil.rmtree(backup, ignore_errors=True)
+        _log("plugin_updated", metadata)
+        return self._records[metadata.plugin_id]
+
+    def load_unregistered(self, package: Path) -> list[type[Node]]:
+        """Import the node classes of the (not installed) package at
+        ``package`` without registering them anywhere: for testing a
+        package before it is installed. Under its own module name, so it
+        never replaces the modules of an installed plugin with the same id.
+
+        Runs plugin code in this process: callers gate it like ``install``.
+        Libraries are not installed; a package with ``python_requirements``
+        is refused.
+        """
+        metadata = read_manifest(package)
+        if metadata.python_requirements:
+            raise PluginPackageError(
+                "Plugins with python_requirements can only be tested once installed.",
+                details={"plugin_id": metadata.plugin_id},
+            )
+        name = f"akasha_plugin_test_{uuid.uuid4().hex}"
+        try:
+            return _load(package, metadata, package_name=name)
+        finally:
+            _unimport_package(name)
+
     def prepare(self, package: Path) -> None:
         """Install the Python libraries of the package at ``package`` (a
         source to ``install``, or an installed plugin to ``enable``) ahead
@@ -290,7 +374,9 @@ class PluginRegistry:
 
     # -- internals --------------------------------------------------------
 
-    def _check_compatible(self, metadata: PluginMetadata) -> None:
+    def compatibility_issues(self, metadata: PluginMetadata) -> list[str]:
+        """Why ``metadata`` could not be activated here now; empty when it
+        could. No code runs."""
         issues = compatibility_issues(
             metadata,
             engine_version=self._engine_version,
@@ -298,13 +384,13 @@ class PluginRegistry:
             definitions=self._nodes.definitions,
             plugins=self._versions,
         )
-        if issues:
+        return [i.message for i in issues]
+
+    def _check_compatible(self, metadata: PluginMetadata) -> None:
+        if issues := self.compatibility_issues(metadata):
             raise PluginIncompatibleError(
                 "The plugin is not compatible with this engine.",
-                details={
-                    "plugin_id": metadata.plugin_id,
-                    "issues": [i.message for i in issues],
-                },
+                details={"plugin_id": metadata.plugin_id, "issues": issues},
             )
 
     def _activate(self, path: Path, metadata: PluginMetadata) -> None:
@@ -332,6 +418,8 @@ class PluginRegistry:
         )
         self._enabled[metadata.plugin_id] = metadata
         self._versions[metadata.plugin_id] = metadata.version
+        for node in metadata.nodes:
+            self._node_plugins[node.node_id] = metadata.plugin_id
 
     def _deactivate(self, plugin_id: str) -> PluginMetadata:
         dependents = sorted(
@@ -347,6 +435,7 @@ class PluginRegistry:
         metadata = self._enabled.pop(plugin_id)
         for node in metadata.nodes:
             self._nodes.unregister(node.node_id)
+            self._node_plugins.pop(node.node_id, None)
         del self._versions[plugin_id]
         _unimport(plugin_id)
         self._deps.deactivate(plugin_id)
@@ -401,15 +490,21 @@ def _module_name(plugin_id: str) -> str:
 
 def _unimport(plugin_id: str) -> None:
     """Forget a plugin's modules so a reinstall imports the new code."""
-    package = _module_name(plugin_id)
+    _unimport_package(_module_name(plugin_id))
+
+
+def _unimport_package(package: str) -> None:
     for name in [n for n in sys.modules if n == package or n.startswith(f"{package}.")]:
         del sys.modules[name]
 
 
-def _load(path: Path, metadata: PluginMetadata) -> list[type[Node]]:
-    """Import the package at ``path`` and return its declared node classes."""
-    package = _module_name(metadata.plugin_id)
-    _unimport(metadata.plugin_id)
+def _load(
+    path: Path, metadata: PluginMetadata, *, package_name: str | None = None
+) -> list[type[Node]]:
+    """Import the package at ``path`` and return its declared node classes,
+    as module ``package_name`` (default: the installed plugin's name)."""
+    package = package_name or _module_name(metadata.plugin_id)
+    _unimport_package(package)
     classes: list[type[Node]] = []
     try:
         spec = importlib.util.spec_from_file_location(
@@ -437,7 +532,7 @@ def _load(path: Path, metadata: PluginMetadata) -> list[type[Node]]:
     # a failed load of that plugin, never a crash of the engine. The
     # traceback stays in the server log.
     except Exception as exc:
-        _unimport(metadata.plugin_id)
+        _unimport_package(package)
         raise _load_error(metadata, exc) from exc
     return classes
 

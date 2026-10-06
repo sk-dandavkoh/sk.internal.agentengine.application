@@ -3,6 +3,7 @@ import {
     queryOptions,
     type InfiniteData,
 } from '@tanstack/react-query'
+import { listAccessTokens } from './auth'
 import type { ApiClient } from './client'
 import { getCredential, listCredentials } from './credentials'
 import {
@@ -86,6 +87,9 @@ export const queryKeys = {
     monitoring: (window: MonitoringWindow) =>
         ['monitoring', 'summary', window] as const,
     plugins: () => ['plugins'] as const,
+    // Not under 'auth': these belong to one user and must be dropped on a
+    // user switch like other server state (features/auth/session.ts).
+    accessTokens: () => ['access-tokens'] as const,
     credentials: {
         lists: () => ['credentials', 'list'] as const,
         list: (page: PageParams) => ['credentials', 'list', page] as const,
@@ -261,6 +265,14 @@ export const credentialQueries = {
         queryOptions({
             queryKey: queryKeys.credentials.detail(name),
             queryFn: ({ signal }) => getCredential(client, name, signal),
+        }),
+}
+
+export const accessTokenQueries = {
+    list: (client: ApiClient) =>
+        queryOptions({
+            queryKey: queryKeys.accessTokens(),
+            queryFn: ({ signal }) => listAccessTokens(client, signal),
         }),
 }
 

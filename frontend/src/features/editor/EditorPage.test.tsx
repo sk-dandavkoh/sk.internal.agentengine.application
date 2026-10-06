@@ -1119,6 +1119,7 @@ const VERSION = {
     triggers: [],
     dependencies: [],
     files: [],
+    plugin_versions: {},
 }
 
 /** A backend whose validate/publish enforce the pinned revision like the

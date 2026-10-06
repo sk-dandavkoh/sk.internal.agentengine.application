@@ -14,6 +14,7 @@ const version = (overrides: object) =>
         triggers: [],
         dependencies: [],
         files: [],
+        plugin_versions: {},
         ...overrides,
     })
 

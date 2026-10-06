@@ -15,7 +15,9 @@ export const userSchema = z.object({
 export type User = z.infer<typeof userSchema>
 
 export const sessionSchema = z.object({
-    expires_at: z.iso.datetime({ offset: true }),
+    // Null only for a personal access token without expiry; a browser
+    // session always expires.
+    expires_at: z.iso.datetime({ offset: true }).nullable(),
     user: userSchema,
 })
 export type Session = z.infer<typeof sessionSchema>
@@ -70,6 +72,70 @@ export function logout(client: ApiClient, signal?: AbortSignal) {
 
 export function fetchSession(client: ApiClient, signal?: AbortSignal) {
     return client.request('GET', '/auth/session', sessionSchema, { signal })
+}
+
+export const accessTokenSchema = z.object({
+    id: z.string(),
+    name: z.string(),
+    hint: z.string(),
+    created_at: z.iso.datetime({ offset: true }),
+    expires_at: z.iso.datetime({ offset: true }).nullable(),
+    last_used_at: z.iso.datetime({ offset: true }).nullable(),
+})
+export type AccessToken = z.infer<typeof accessTokenSchema>
+
+const accessTokenListSchema = z.object({ items: z.array(accessTokenSchema) })
+
+/** The value is in this response only: it is never shown again. */
+export const createdAccessTokenSchema = accessTokenSchema.extend({
+    token: z.string(),
+})
+export type CreatedAccessToken = z.infer<typeof createdAccessTokenSchema>
+
+export interface CreateAccessTokenInput {
+    name: string
+    /** The account password (the backend requires it). */
+    password: string
+    /** Null: valid until revoked. */
+    expires_in_days: number | null
+}
+
+/** The signed-in user's personal access tokens (metadata only). */
+export async function listAccessTokens(
+    client: ApiClient,
+    signal?: AbortSignal,
+): Promise<AccessToken[]> {
+    const { items } = await client.request(
+        'GET',
+        '/auth/tokens',
+        accessTokenListSchema,
+        { signal },
+    )
+    return items
+}
+
+export function createAccessToken(
+    client: ApiClient,
+    body: CreateAccessTokenInput,
+    signal?: AbortSignal,
+) {
+    return client.request('POST', '/auth/tokens', createdAccessTokenSchema, {
+        body,
+        signal,
+    })
+}
+
+export function revokeAccessToken(
+    client: ApiClient,
+    id: string,
+    signal?: AbortSignal,
+) {
+    return client.request(
+        'DELETE',
+        `/auth/tokens/${encodeURIComponent(id)}`,
+        z.undefined(),
+        { signal },
+    )
 }
 
 export function changePassword(

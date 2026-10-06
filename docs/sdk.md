@@ -317,9 +317,13 @@ Lifecycle (`akasha.plugins.registry.PluginRegistry`, directory
 | install | validate manifest → check compatibility → copy (regular files only, no symlinks) → install `python_requirements` → import → register nodes. On any failure nothing is left behind. |
 | startup | discovers installed plugins, loads enabled ones after their dependencies, and reinstalls missing or stale libraries; one that fails is marked `FAILED`, the Engine still starts. |
 | disable / enable | unregisters / re-registers the nodes; the state survives restarts. Blocked (`PLUGIN_IN_USE`) while an enabled plugin depends on it. |
-| remove | disables, then deletes the installed copy and its libraries. Upgrade = remove + install. |
+| update | replaces the installed package with a new version of the same id, atomically (on failure the old one is restored); refused while projects use the plugin unless forced. Published project versions stay pinned to the plugin version they were published with and refuse to run on another one (ADR 0006). Over MCP: `plugin_update`. |
+| remove | disables, then deletes the installed copy and its libraries. |
 
-Admins drive the same lifecycle over `/api/v1/plugins` and the Plugins page.
+Admins drive the same lifecycle over `/api/v1/plugins` and the Plugins page,
+and AI agents over MCP (`docs/mcp.md` §6: authoring, static validation,
+test runs, packaging, install and update; code-running steps need
+`AKASHA_MCP_PLUGIN_CODE=true`).
 Upload install is opt-in (`AKASHA_PLUGINS_HTTP_INSTALL`, ADR 0001). The
 upload is a ZIP of the package, with the package at the root or in one
 top-level directory.

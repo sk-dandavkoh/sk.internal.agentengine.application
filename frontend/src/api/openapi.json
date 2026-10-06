@@ -1,6 +1,78 @@
 {
   "components": {
     "schemas": {
+      "AccessTokenDetail": {
+        "description": "A personal access token's metadata; the value is never returned\nagain after creation.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "hint": {
+            "title": "Hint",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "hint",
+          "created_at",
+          "expires_at",
+          "last_used_at"
+        ],
+        "title": "AccessTokenDetail",
+        "type": "object"
+      },
+      "AccessTokenList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AccessTokenDetail"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "AccessTokenList",
+        "type": "object"
+      },
       "AuthorOut": {
         "description": "Who published a version. ``username`` is null only if the account\ncannot be found (users are disabled, never deleted).",
         "properties": {
@@ -170,6 +242,44 @@
         "title": "CostReport",
         "type": "object"
       },
+      "CreateAccessTokenRequest": {
+        "properties": {
+          "expires_in_days": {
+            "anyOf": [
+              {
+                "maximum": 3650.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": 90,
+            "title": "Expires In Days"
+          },
+          "name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "password": {
+            "format": "password",
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Password",
+            "type": "string",
+            "writeOnly": true
+          }
+        },
+        "required": [
+          "name",
+          "password"
+        ],
+        "title": "CreateAccessTokenRequest",
+        "type": "object"
+      },
       "CreateCredentialRequest": {
         "properties": {
           "description": {
@@ -250,6 +360,66 @@
           "password"
         ],
         "title": "CreateUserRequest",
+        "type": "object"
+      },
+      "CreatedAccessToken": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "hint": {
+            "title": "Hint",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "token": {
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "hint",
+          "created_at",
+          "expires_at",
+          "last_used_at",
+          "token"
+        ],
+        "title": "CreatedAccessToken",
         "type": "object"
       },
       "CredentialDetail": {
@@ -1381,9 +1551,16 @@
       "LoginResponse": {
         "properties": {
           "expires_at": {
-            "format": "date-time",
-            "title": "Expires At",
-            "type": "string"
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
           },
           "token": {
             "anyOf": [
@@ -2342,6 +2519,13 @@
             "title": "Id",
             "type": "string"
           },
+          "plugin_versions": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Plugin Versions",
+            "type": "object"
+          },
           "published_at": {
             "format": "date-time",
             "title": "Published At",
@@ -2383,7 +2567,8 @@
           "graph",
           "triggers",
           "dependencies",
-          "files"
+          "files",
+          "plugin_versions"
         ],
         "title": "ProjectVersionDetail",
         "type": "object"
@@ -2522,9 +2707,16 @@
       "SessionDetail": {
         "properties": {
           "expires_at": {
-            "format": "date-time",
-            "title": "Expires At",
-            "type": "string"
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
           },
           "user": {
             "$ref": "#/components/schemas/UserDetail"
@@ -3302,6 +3494,164 @@
           }
         },
         "summary": "Setup",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/tokens": {
+      "get": {
+        "description": "The caller's personal access tokens (metadata only).",
+        "operationId": "list_access_tokens_api_v1_auth_tokens_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccessTokenList"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          }
+        },
+        "summary": "List Access Tokens",
+        "tags": [
+          "auth"
+        ]
+      },
+      "post": {
+        "description": "Issue a personal access token for scripts and AI agents (bearer\ntoken; acts with the caller's role). Needs the account password.\nThe token value is in this response only.",
+        "operationId": "create_access_token_api_v1_auth_tokens_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateAccessTokenRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatedAccessToken"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          }
+        },
+        "summary": "Create Access Token",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/tokens/{token_id}": {
+      "delete": {
+        "description": "Revoke one of the caller's tokens; it stops working at once.",
+        "operationId": "revoke_access_token_api_v1_auth_tokens__token_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "token_id",
+            "required": true,
+            "schema": {
+              "title": "Token Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          }
+        },
+        "summary": "Revoke Access Token",
         "tags": [
           "auth"
         ]

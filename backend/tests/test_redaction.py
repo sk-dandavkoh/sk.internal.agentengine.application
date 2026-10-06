@@ -24,6 +24,10 @@ CASES = [
         "eyJzdWIiOiIxMjM0NTY3ODkwIn0",
     ),
     ("smtp login failed: user=bob password=hunter2", "hunter2"),
+    (
+        "configured akasha_pat_Q2xhdWRlLWxhcHRvcC10b2tlbi12YWx1ZQ in a script",
+        "akasha_pat_Q2xhdWRlLWxhcHRvcC10b2tlbi12YWx1ZQ",
+    ),
 ]
 
 

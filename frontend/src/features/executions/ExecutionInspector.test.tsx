@@ -166,6 +166,7 @@ const versionBody = {
     triggers: [],
     dependencies: [],
     files: [],
+    plugin_versions: {},
 }
 
 const routes = {

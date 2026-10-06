@@ -107,6 +107,7 @@ function versionJson(version = 1) {
         triggers: [],
         dependencies: [],
         files: [],
+        plugin_versions: {},
     }
 }
 

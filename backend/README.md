@@ -49,6 +49,15 @@ Authentication settings:
 | `AKASHA_METRICS_TOKEN` | unset | bearer token Prometheus uses for `/metrics` (≥ 32 chars); unset → admin session only |
 | `AKASHA_LIVE_POLL_SECONDS` | `0.5` | how often a live execution WebSocket reads new events and re-checks its session (latency vs. database load) |
 
+MCP control plane (`docs/mcp.md`, ADR 0006; startup-only):
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `AKASHA_MCP_ENABLED` | `false` | serve MCP (Streamable HTTP) at `/mcp`; off → no route exists |
+| `AKASHA_MCP_MAX_REQUEST_BYTES` | `4194304` | cap on one MCP request body |
+| `AKASHA_MCP_MAX_RESPONSE_BYTES` | `262144` | cap on one tool result (≥ 1024); larger → `RESPONSE_TOO_LARGE` |
+| `AKASHA_MCP_PLUGIN_CODE` | `false` | let admins install, update and test plugin code over MCP (as powerful as shell access) |
+
 Workers and queue (Phase 22):
 
 | Variable | Default | Meaning |
@@ -86,6 +95,9 @@ the initial admin (the UI offers it as "Set up Akasha"; `GET
 account exists, so complete it before exposing the engine to a network.
 Then `POST /api/v1/auth/login` and send `Authorization: Bearer <token>` on
 every request.
+For scripts and AI agents, issue a long-lived personal access token instead
+(Settings → Access tokens, or `POST /api/v1/auth/tokens` with a name, your
+password and `expires_in_days`; ADR 0007) and send it the same way.
 
 Settings can also come from files: in the Docker Compose stack, the backend
 reads `AKASHA_DATABASE_URL` and `AKASHA_CREDENTIAL_ENCRYPTION_KEY` from
@@ -208,6 +220,7 @@ src/akasha/
 ├── nodes/              built-in nodes (Phase 09)
 ├── providers/          LLM provider adapters (Phase 14)
 ├── plugins/            plugin system (Phase 17)
+├── mcp/                MCP control plane for AI agents (docs/mcp.md)
 ├── security/           credentials/redaction/guards (Phase 13+)
 ├── observability/      structured JSON logging, metrics (Phase 12)
 ├── workers.py          Worker + WorkerManager (Phase 22)

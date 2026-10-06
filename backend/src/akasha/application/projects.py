@@ -30,6 +30,7 @@ from akasha.domain.project import (
     ProjectDraft,
     ProjectStatus,
     ProjectVersion,
+    plugins_in_use,
 )
 from akasha.errors import AkashaError, DomainValidationError
 
@@ -130,6 +131,8 @@ class ProjectService:
     against: ``NodeRegistry.definitions`` in production (a live view), any
     mapping in tests. ``plugins`` (enabled plugin id → version) is
     ``PluginRegistry.versions`` in production; empty means none installed.
+    ``plugin_nodes`` (node type → plugin id) is ``PluginRegistry.node_plugins``:
+    publishing pins the versions of the plugins a draft uses.
     """
 
     def __init__(
@@ -138,10 +141,12 @@ class ProjectService:
         node_definitions: Mapping[str, NodeDefinition],
         events: EventPublisher | None = None,
         plugins: Mapping[str, str] = MappingProxyType({}),
+        plugin_nodes: Mapping[str, str] = MappingProxyType({}),
     ) -> None:
         self._uow = uow
         self._definitions = node_definitions
         self._plugins = plugins
+        self._plugin_nodes = plugin_nodes
         self._events = events or EventPublisher()
 
     async def create_project(
@@ -270,6 +275,33 @@ class ProjectService:
         _log("project_draft_updated", project)
         return project
 
+    async def edit_draft(
+        self,
+        project_id: str,
+        *,
+        expected_revision: int,
+        edit: Callable[[ProjectDraft], None],
+        name: str | None = None,
+    ) -> Project:
+        """Apply ``edit`` (e.g. one ``Graph.add_node``) to a copy of the
+        stored draft and save it, in one transaction.
+
+        The same rules as ``update_draft``: ``expected_revision`` guards
+        against overwriting newer work, and the edited draft passes
+        ``Project.replace_draft``. ``edit`` raises to reject the change;
+        nothing is stored then. ``name`` renames the project as well.
+        """
+        async with self._uow() as uow:
+            project = await load_project(uow, project_id)
+            _check_revision(project, expected_revision)
+            draft = deepcopy(project.draft)
+            edit(draft)
+            project.replace_draft(draft, name=project.name if name is None else name)
+            await uow.projects.save(project)
+            await uow.commit()
+        _log("project_draft_updated", project)
+        return project
+
     async def delete_project(self, project_id: str) -> None:
         async with self._uow() as uow:
             project = await load_project(uow, project_id)
@@ -325,7 +357,13 @@ class ProjectService:
             result = project.draft.validate(self._definitions, self._plugins)
             if not result.ok:
                 raise ProjectValidationFailedError(result)
-            version = project.publish_draft(published_by=published_by)
+            draft = project.draft
+            pins = plugins_in_use(
+                draft.graph, draft.dependencies, self._plugin_nodes, self._plugins
+            )
+            version = project.publish_draft(
+                published_by=published_by, plugin_versions=pins
+            )
             published = Event(
                 event_type=EventType.PROJECT_PUBLISHED,
                 occurred_at=version.published_at,

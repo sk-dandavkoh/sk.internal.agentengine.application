@@ -125,6 +125,8 @@ export const projectVersionSchema = projectVersionSummarySchema.extend({
     triggers: z.array(triggerSchema),
     dependencies: z.array(dependencySchema),
     files: z.array(projectFileSchema),
+    // Plugin id -> exact version the version was published against (pinned).
+    plugin_versions: z.record(z.string(), z.string()),
 })
 export type ProjectVersion = z.infer<typeof projectVersionSchema>
 

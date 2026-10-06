@@ -16,7 +16,7 @@ route is protected by default:
 - ``require_admin``: admin-only routers (credentials, users), else 403.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query, Request, Response, status
@@ -34,7 +34,14 @@ from akasha.application.auth import (
     require_admin as require_admin_identity,
 )
 from akasha.application.projects import MAX_PAGE_SIZE, Page
-from akasha.domain.identity import MAX_PASSWORD_LENGTH, Identity, Role, User
+from akasha.domain.identity import (
+    MAX_PASSWORD_LENGTH,
+    MAX_TOKEN_NAME_LENGTH,
+    AccessToken,
+    Identity,
+    Role,
+    User,
+)
 from akasha.errors import AkashaError, ConfigurationError
 
 _MAX_TOKEN_LENGTH = 256
@@ -159,13 +166,15 @@ class UserDetail(BaseModel):
 
 
 class SessionDetail(BaseModel):
-    expires_at: datetime
+    # When the caller's credential stops working. Always set for a login
+    # session; null for a personal access token without expiry.
+    expires_at: datetime | None
     user: UserDetail
 
     @classmethod
     def from_domain(cls, identity: Identity) -> "SessionDetail":
         return cls(
-            expires_at=identity.session.expires_at,
+            expires_at=identity.expires_at,
             user=UserDetail.from_domain(identity.user),
         )
 
@@ -173,6 +182,49 @@ class SessionDetail(BaseModel):
 class LoginResponse(SessionDetail):
     # Null for a cookie login: the token never reaches page scripts.
     token: str | None
+
+
+class AccessTokenDetail(BaseModel):
+    """A personal access token's metadata; the value is never returned
+    again after creation."""
+
+    id: str
+    name: str
+    # The token's first characters, to tell tokens apart.
+    hint: str
+    created_at: datetime
+    expires_at: datetime | None  # null: valid until revoked
+    last_used_at: datetime | None  # recorded at most hourly
+
+    @classmethod
+    def from_domain(cls, token: AccessToken) -> "AccessTokenDetail":
+        return cls(
+            id=token.id,
+            name=token.name,
+            hint=token.hint,
+            created_at=token.created_at,
+            expires_at=token.expires_at,
+            last_used_at=token.last_used_at,
+        )
+
+
+class AccessTokenList(BaseModel):
+    # Unpaginated: at most MAX_ACCESS_TOKENS per user.
+    items: list[AccessTokenDetail]
+
+
+class CreateAccessTokenRequest(BaseModel):
+    name: Annotated[str, Field(min_length=1, max_length=MAX_TOKEN_NAME_LENGTH)]
+    # The caller's account password: a stolen session alone must not mint
+    # long-lived credentials.
+    password: Password
+    # Days until it expires; null: valid until revoked.
+    expires_in_days: Annotated[int | None, Field(ge=1, le=3650)] = 90
+
+
+class CreatedAccessToken(AccessTokenDetail):
+    # Shown once: store it now, it cannot be retrieved later.
+    token: str
 
 
 class SetupStatus(BaseModel):
@@ -287,6 +339,47 @@ def create_auth_router() -> APIRouter:
     async def session(identity: CurrentIdentity) -> SessionDetail:
         """The caller's session: who, and until when (absolute expiry)."""
         return SessionDetail.from_domain(identity)
+
+    @router.get("/tokens", responses=_errors(401))
+    async def list_access_tokens(
+        identity: CurrentIdentity, auth: Auth
+    ) -> AccessTokenList:
+        """The caller's personal access tokens (metadata only)."""
+        tokens = await auth.list_access_tokens(identity)
+        return AccessTokenList(items=[AccessTokenDetail.from_domain(t) for t in tokens])
+
+    @router.post(
+        "/tokens",
+        status_code=status.HTTP_201_CREATED,
+        responses=_errors(401, 409, 422, 429),
+    )
+    async def create_access_token(
+        body: CreateAccessTokenRequest, identity: CurrentIdentity, auth: Auth
+    ) -> CreatedAccessToken:
+        """Issue a personal access token for scripts and AI agents (bearer
+        token; acts with the caller's role). Needs the account password.
+        The token value is in this response only."""
+        days = body.expires_in_days
+        value, token = await auth.create_access_token(
+            identity,
+            name=body.name,
+            password=body.password.get_secret_value(),
+            expires_in=None if days is None else timedelta(days=days),
+        )
+        detail = AccessTokenDetail.from_domain(token)
+        return CreatedAccessToken(**detail.model_dump(), token=value)
+
+    @router.delete(
+        "/tokens/{token_id}",
+        status_code=status.HTTP_204_NO_CONTENT,
+        responses=_errors(401, 404, 422),
+    )
+    async def revoke_access_token(
+        token_id: str, identity: CurrentIdentity, auth: Auth
+    ) -> Response:
+        """Revoke one of the caller's tokens; it stops working at once."""
+        await auth.revoke_access_token(identity, token_id)
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @router.post(
         "/password",

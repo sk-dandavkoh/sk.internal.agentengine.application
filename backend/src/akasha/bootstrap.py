@@ -23,6 +23,7 @@ from akasha.application.events import EventPublisher
 from akasha.application.executions import ExecutionService
 from akasha.application.monitoring import MonitoringService
 from akasha.application.packages import ProjectPackageService
+from akasha.application.plugins import PluginService
 from akasha.application.projects import ProjectService
 from akasha.application.reports import ReportService
 from akasha.application.triggers import TriggerRegistry, TriggerService
@@ -63,6 +64,9 @@ class Container:
     metrics: EngineMetrics = field(default_factory=EngineMetrics)
     # Installed plugins; their nodes live in ``nodes`` like any other.
     plugins: PluginRegistry | None = None
+    # The plugin lifecycle REST and MCP share (one lock per process);
+    # derived from ``plugins`` and ``projects`` unless given.
+    plugin_service: PluginService | None = None
     database: Database | None = None
     projects: ProjectService | None = None
     packages: ProjectPackageService | None = None
@@ -97,6 +101,10 @@ class Container:
     _tasks: list[asyncio.Task[None]] = field(
         default_factory=list, init=False, repr=False
     )
+
+    def __post_init__(self) -> None:
+        if self.plugin_service is None and self.plugins is not None:
+            self.plugin_service = PluginService(self.plugins, self.projects)
 
     async def start(self) -> None:
         """Start owned background work: the in-process trigger scheduler and,
@@ -170,7 +178,14 @@ def create_container(settings: Settings) -> Container:
     events = EventPublisher()
     metrics = EngineMetrics()
     plugin_versions = MappingProxyType({}) if plugins is None else plugins.versions
-    projects = ProjectService(uow, nodes.definitions, events, plugins=plugin_versions)
+    plugin_nodes = MappingProxyType({}) if plugins is None else plugins.node_plugins
+    projects = ProjectService(
+        uow,
+        nodes.definitions,
+        events,
+        plugins=plugin_versions,
+        plugin_nodes=plugin_nodes,
+    )
     packages = ProjectPackageService(
         uow, nodes.definitions, events, plugins=plugin_versions
     )
@@ -194,6 +209,7 @@ def create_container(settings: Settings) -> Container:
         heartbeat_seconds=settings.worker_heartbeat_seconds,
         max_concurrency=settings.limit_execution_concurrency,
         limits=limits,
+        plugins=plugin_versions,
     )
     workers = (
         None

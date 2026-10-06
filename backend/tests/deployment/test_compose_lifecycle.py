@@ -23,9 +23,13 @@ import subprocess
 import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import Any
 
 import httpx
+import httpx2
 import pytest
+from mcp.client import Client
+from mcp.client.streamable_http import streamable_http_client
 
 from akasha.domain.primitives import new_id
 from tests.support import docker_available
@@ -41,7 +45,13 @@ pytestmark = pytest.mark.skipif(
 
 
 class Deployment:
-    def __init__(self, tmp_path: Path, *, given_secrets: bool = True) -> None:
+    def __init__(
+        self,
+        tmp_path: Path,
+        *,
+        given_secrets: bool = True,
+        extra: dict[str, str] | None = None,
+    ) -> None:
         self.project = f"akasha-e2e-{secrets.token_hex(4)}"
         self.env_file = tmp_path / "deployment.env"
         # Without them, the stack generates its own (the zero-config path).
@@ -63,6 +73,7 @@ class Deployment:
             "AKASHA_WORKER_HEARTBEAT_SECONDS": "1",
             "AKASHA_EXECUTION_STALE_SECONDS": "3",
             "AKASHA_QUEUE_RECOVERY_SECONDS": "2",
+            **(extra or {}),
         }
         self.env_file.write_text("".join(f"{k}={v}\n" for k, v in settings.items()))
         # Shell variables would override the env file in interpolation.
@@ -136,10 +147,12 @@ class Deployment:
         return client
 
 
-def _deployment(tmp_path: Path, *, given_secrets: bool) -> Iterator[Deployment]:
+def _deployment(
+    tmp_path: Path, *, given_secrets: bool, extra: dict[str, str] | None = None
+) -> Iterator[Deployment]:
     if not docker_available():
         pytest.skip("Docker daemon not available")
-    d = Deployment(tmp_path, given_secrets=given_secrets)
+    d = Deployment(tmp_path, given_secrets=given_secrets, extra=extra)
     try:
         yield d
     finally:
@@ -154,6 +167,13 @@ def deployment(tmp_path: Path) -> Iterator[Deployment]:
 @pytest.fixture
 def zero_config(tmp_path: Path) -> Iterator[Deployment]:
     yield from _deployment(tmp_path, given_secrets=False)
+
+
+@pytest.fixture
+def with_mcp(tmp_path: Path) -> Iterator[Deployment]:
+    yield from _deployment(
+        tmp_path, given_secrets=True, extra={"AKASHA_MCP_ENABLED": "true"}
+    )
 
 
 def login(api: httpx.Client) -> dict[str, str]:
@@ -336,6 +356,8 @@ def test_zero_config_install_serves_ui_and_keeps_generated_secrets(
     assert page.headers["x-content-type-options"] == "nosniff"
     assert api.get("/assets/missing.js").status_code == 404
     assert api.get("/api/v1/auth/setup").json() == {"required": True}
+    # MCP is off unless the operator turns it on.
+    assert api.post("/mcp", json={}).status_code == 404
 
     setup = api.post(
         "/api/v1/auth/setup", json={"username": "admin", "password": PASSWORD}
@@ -365,3 +387,68 @@ def test_zero_config_install_serves_ui_and_keeps_generated_secrets(
     assert names == ["generated-key"]
     pid, version = publish(api, "echo", delay_seconds=0)
     wait_for(d, api, start(api, pid, version, "zero config"), "completed")
+
+
+async def test_mcp_through_the_reverse_proxy_with_dedicated_workers(
+    with_mcp: Deployment,
+) -> None:
+    """MCP enabled in the shipped stack: a real MCP client reaches it
+    through the UI's nginx, builds and publishes a project, and the
+    dedicated worker container runs it. Stopping the API is graceful."""
+    d = with_mcp
+    d.compose("up", "-d", "--build")
+    api = d.api()
+    assert api.post("/mcp", json={}).status_code == 401  # on, but closed
+    setup = api.post(
+        "/api/v1/auth/setup", json={"username": "admin", "password": PASSWORD}
+    )
+    assert setup.status_code == 201, setup.text
+    headers = login(api)
+
+    http = httpx2.AsyncClient(headers=headers, timeout=30)
+    endpoint = str(api.base_url).rstrip("/") + "/mcp"
+    transport = streamable_http_client(endpoint, http_client=http)
+    async with http, Client(transport) as client:
+
+        async def call(tool: str, **arguments: object) -> dict[str, Any]:
+            result = await client.call_tool(tool, arguments)
+            assert not result.is_error, result.content
+            assert result.structured_content is not None
+            return dict(result.structured_content)
+
+        info = await call("system_info")
+        assert info["executions_run_automatically"] is True
+        project = await call("project_create", name="over mcp")
+        pid = project["id"]
+        source = await call(
+            "graph_node_add",
+            project_id=pid,
+            expected_revision=project["revision"],
+            node_type="core.input",
+            config={"field": "title"},
+        )
+        sink = await call(
+            "graph_node_add",
+            project_id=pid,
+            expected_revision=source["revision"],
+            node_type="core.output",
+        )
+        edge = await call(
+            "graph_edge_add",
+            project_id=pid,
+            expected_revision=sink["revision"],
+            source_node_id=source["node_id"],
+            source_port="value",
+            target_node_id=sink["node_id"],
+            target_port="value",
+        )
+        await call(
+            "project_publish", project_id=pid, expected_revision=edge["revision"]
+        )
+        started = await call("execution_start", project_id=pid, input={"title": "x"})
+    # The worker container runs it; observed over REST like any run.
+    api.headers.update(headers)
+    wait_for(d, api, started["id"], "completed")
+
+    d.compose("stop", "api")
+    assert d.exit_codes()["api"] == 0

@@ -15,6 +15,7 @@ import pytest
 
 from akasha.application.executions import ExecutionService
 from akasha.application.persistence import (
+    AccessTokenRepository,
     CredentialRepository,
     EventRepository,
     ExecutionRepository,
@@ -202,6 +203,7 @@ class FakeUow(UnitOfWork):
         self.credentials = cast(CredentialRepository, None)
         self.users = cast(UserRepository, None)
         self.sessions = cast(SessionRepository, None)
+        self.access_tokens = cast(AccessTokenRepository, None)
 
     async def __aenter__(self) -> "FakeUow":
         return self

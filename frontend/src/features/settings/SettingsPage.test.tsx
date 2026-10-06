@@ -1,6 +1,12 @@
 import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
-import { apiError, ok, renderRoute, stubBackend } from '../../test/app'
+import {
+    apiError,
+    ok,
+    renderRoute,
+    stubBackend,
+    type Handler,
+} from '../../test/app'
 
 const status = { version: '0.27.0', ready: true, failures: {} }
 
@@ -9,10 +15,11 @@ afterEach(() => {
     delete document.documentElement.dataset['theme']
 })
 
-async function renderSettings(handlers = {}) {
+async function renderSettings(handlers: Record<string, Handler> = {}) {
     const bodies: unknown[] = []
     const requests = stubBackend({
         'GET /system/status': () => ok(status),
+        'GET /auth/tokens': () => ok({ items: [] }),
         'POST /auth/password': (_url, init) => {
             bodies.push(JSON.parse(init.body as string))
             return { status: 204 }
@@ -112,6 +119,117 @@ describe('Settings', () => {
             screen.getByLabelText(/^Confirm new password/),
         ).toHaveAccessibleDescription('The passwords do not match.')
         expect(bodies).toEqual([])
+    })
+
+    it('creates an access token and shows its value only once', async () => {
+        const sent: unknown[] = []
+        let items: object[] = []
+        await renderSettings({
+            'GET /auth/tokens': () => ok({ items }),
+            'POST /auth/tokens': (_url, init) => {
+                sent.push(JSON.parse(init.body as string))
+                const meta = {
+                    id: 'pat_1',
+                    name: 'claude-laptop',
+                    hint: 'akasha_pat_AbCd',
+                    created_at: '2026-10-06T08:00:00Z',
+                    expires_at: null,
+                    last_used_at: null,
+                }
+                items = [meta]
+                return {
+                    status: 201,
+                    body: { ...meta, token: 'akasha_pat_AbCdSecretValue' },
+                }
+            },
+        })
+        expect(await screen.findByText('No access tokens.')).toBeInTheDocument()
+
+        fireEvent.click(screen.getByRole('button', { name: 'New token' }))
+        fireEvent.change(await screen.findByLabelText(/^Name/), {
+            target: { value: 'claude-laptop' },
+        })
+        fireEvent.change(screen.getByLabelText(/^Expires/), {
+            target: { value: '' },
+        })
+        fireEvent.change(screen.getByLabelText(/^Your password/), {
+            target: { value: 'my passphrase!' },
+        })
+        fireEvent.click(screen.getByRole('button', { name: 'Create token' }))
+
+        expect(
+            await screen.findByRole('textbox', { name: 'Token' }),
+        ).toHaveValue('akasha_pat_AbCdSecretValue')
+        expect(sent).toEqual([
+            {
+                name: 'claude-laptop',
+                password: 'my passphrase!',
+                expires_in_days: null,
+            },
+        ])
+        fireEvent.click(screen.getByRole('button', { name: 'Done' }))
+        // Listed by name and hint; the value is gone for good.
+        expect(await screen.findByText('claude-laptop')).toBeInTheDocument()
+        expect(screen.getByText('akasha_pat_AbCd…')).toBeInTheDocument()
+        expect(
+            screen.queryByDisplayValue('akasha_pat_AbCdSecretValue'),
+        ).not.toBeInTheDocument()
+    })
+
+    it('marks a wrong password when creating a token', async () => {
+        await renderSettings({
+            'POST /auth/tokens': () =>
+                apiError(
+                    401,
+                    'INVALID_CREDENTIALS',
+                    'The current password is wrong.',
+                ),
+        })
+        fireEvent.click(
+            await screen.findByRole('button', { name: 'New token' }),
+        )
+        fireEvent.change(await screen.findByLabelText(/^Name/), {
+            target: { value: 'agent' },
+        })
+        fireEvent.change(screen.getByLabelText(/^Your password/), {
+            target: { value: 'wrong' },
+        })
+        fireEvent.click(screen.getByRole('button', { name: 'Create token' }))
+        await waitFor(() => {
+            expect(
+                screen.getByLabelText(/^Your password/),
+            ).toHaveAccessibleDescription(/The current password is wrong\./)
+        })
+    })
+
+    it('revokes an access token after confirmation', async () => {
+        let items = [
+            {
+                id: 'pat_1',
+                name: 'old-agent',
+                hint: 'akasha_pat_WxYz',
+                created_at: '2026-10-01T08:00:00Z',
+                expires_at: '2026-12-30T08:00:00Z',
+                last_used_at: '2026-10-05T08:00:00Z',
+            },
+        ]
+        const revoked: string[] = []
+        await renderSettings({
+            'GET /auth/tokens': () => ok({ items }),
+            'DELETE /auth/tokens/pat_1': (url) => {
+                revoked.push(url.pathname)
+                items = []
+                return { status: 204 }
+            },
+        })
+        fireEvent.click(
+            await screen.findByRole('button', { name: 'Revoke old-agent' }),
+        )
+        fireEvent.click(
+            await screen.findByRole('button', { name: 'Revoke token' }),
+        )
+        expect(await screen.findByText('No access tokens.')).toBeInTheDocument()
+        expect(revoked).toEqual(['/api/v1/auth/tokens/pat_1'])
     })
 
     it('pins the theme on the document and remembers it', async () => {

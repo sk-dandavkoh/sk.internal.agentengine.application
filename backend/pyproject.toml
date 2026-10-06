@@ -20,6 +20,7 @@ dependencies = [
     "redis~=8.1",
     "sqlalchemy[asyncio]>=2.0",
     "uvicorn[standard]>=0.54.0",
+    "mcp~=2.3",
 ]
 
 [project.scripts]
@@ -66,6 +67,9 @@ select = ["E", "F", "I", "UP", "B", "ASYNC", "S", "T20", "RUF"]
 "src/akasha/plugins/dependencies.py" = ["S603"]
 # The CLI's output is its interface: print is the point, not debug residue.
 "src/akasha/cli.py" = ["T201"]
+# Reuses test_auth_api's ``env`` fixture by importing it, which pyflakes
+# reads as an unused import shadowed by each test's parameter.
+"tests/integration/test_access_tokens.py" = ["F401", "F811"]
 
 [tool.mypy]
 mypy_path = "src"

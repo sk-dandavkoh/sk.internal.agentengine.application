@@ -133,6 +133,7 @@ function backend({
                 triggers: published ?? [],
                 dependencies: [],
                 files: [],
+                plugin_versions: {},
             }),
         [`PUT /projects/${PID}`]: (_url, init) => {
             const body = putSchema.parse(jsonBody(init))

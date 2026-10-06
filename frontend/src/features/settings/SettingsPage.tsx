@@ -16,6 +16,7 @@ import { formText } from '../../lib/form'
 import { formatDateTime } from '../../lib/format'
 import { SystemStatusCard } from '../dashboard/sections'
 import { useSession } from '../auth/session'
+import { AccessTokensCard } from './AccessTokensCard'
 import { readTheme, saveTheme, THEMES, type Theme } from './theme'
 
 export function SettingsPage() {
@@ -30,6 +31,7 @@ export function SettingsPage() {
                 <PasswordCard />
                 <AppearanceCard />
                 <SystemStatusCard />
+                <AccessTokensCard />
             </div>
         </>
     )
@@ -50,7 +52,7 @@ function AccountCard() {
                 <dt className="text-muted">Account created</dt>
                 <dd>{formatDateTime(user.created_at)}</dd>
                 <dt className="text-muted">Session expires</dt>
-                <dd>{formatDateTime(expires_at)}</dd>
+                <dd>{expires_at ? formatDateTime(expires_at) : 'Never'}</dd>
             </dl>
             <p className="mt-3 text-sm text-muted">
                 Sessions end at a fixed time after sign-in; activity does not

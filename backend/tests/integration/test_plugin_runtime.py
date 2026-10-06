@@ -58,7 +58,8 @@ async def test_sample_plugin_lifecycle_through_the_engine(
     version = await projects.publish_project(project.id)
 
     executions = ExecutionService(uow)
-    runtime = ExecutionRuntime(uow, nodes.catalog)
+    # As bootstrap wires it: published versions pin plugin versions.
+    runtime = ExecutionRuntime(uow, nodes.catalog, plugins=plugins.versions)
 
     async def run() -> tuple[ExecutionStatus, object]:
         queued = await executions.create_execution(

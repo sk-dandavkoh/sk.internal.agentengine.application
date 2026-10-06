@@ -3,12 +3,13 @@
 import logging
 import time
 from collections.abc import AsyncGenerator, Awaitable, Callable
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.routing import Route
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from akasha.api.routes import create_api_v1_router, create_operational_router
@@ -27,7 +28,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     await app.state.container.start()
     logger.info("application_started", extra={"event": "application_started"})
     try:
-        yield
+        async with AsyncExitStack() as stack:
+            if app.state.mcp is not None:
+                # Stopped before the container: in-flight MCP calls finish
+                # while their services still exist.
+                await stack.enter_async_context(app.state.mcp.run())
+            yield
     finally:
         await app.state.container.shutdown()
         logger.info("application_stopped", extra={"event": "application_stopped"})
@@ -44,6 +50,16 @@ def create_app(
 
     app.include_router(create_operational_router())
     app.include_router(create_api_v1_router())
+    app.state.mcp = None
+    if app.state.container.settings.mcp_enabled:
+        # Imported only when enabled: a disabled engine never builds the
+        # MCP server. A plain route, so it stays out of the OpenAPI document.
+        from akasha.mcp.server import MCP_PATH, create_mcp_endpoint
+
+        endpoint, app.state.mcp = create_mcp_endpoint(app.state.container)
+        app.router.routes.append(
+            Route(MCP_PATH, endpoint, methods=["GET", "POST", "DELETE"])
+        )
 
     # Innermost (added first): BaseHTTPMiddleware would wrap its 413 into an
     # ExceptionGroup, and the access log should record the rejection.

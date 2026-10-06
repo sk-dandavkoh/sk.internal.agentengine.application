@@ -27,6 +27,9 @@ RULES: dict[str, set[str]] = {
     "plugins": {"fastapi", "starlette", "uvicorn", "sqlalchemy", "redis"},
     # The CLI adapts services; persistence and HTTP stay out of it (§58).
     "cli": {"fastapi", "starlette", "sqlalchemy", "redis"},
+    # MCP adapts the application services like the API does (ADR 0006):
+    # its transport is Starlette, persistence and the queue stay out.
+    "mcp": {"uvicorn", "sqlalchemy", "redis"},
     # Workers see the queue contract, never its technology (§72).
     "workers": {"fastapi", "starlette", "uvicorn", "sqlalchemy", "redis"},
 }
@@ -49,6 +52,7 @@ INTERNAL_RULES: dict[str, set[str]] = {
     # the runtime (a plugin node is an ordinary node to both).
     "plugins": {"api", "application", "infrastructure", "runtime", "providers"},
     "workers": {"api", "infrastructure"},
+    "mcp": {"infrastructure"},
 }
 
 

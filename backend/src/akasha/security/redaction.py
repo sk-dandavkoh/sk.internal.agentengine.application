@@ -66,6 +66,7 @@ _TEXT_RULES: tuple[tuple[re.Pattern[str], str], ...] = (
         rf"\1\2{MASK}",
     ),
     (re.compile(r"\bsk-[\w-]{16,}"), MASK),  # OpenAI/Anthropic-style keys
+    (re.compile(r"\bakasha_pat_[\w-]{16,}"), MASK),  # Akasha access tokens
     (re.compile(r"\b(?:ghp|gho|ghs|github_pat)_\w{20,}"), MASK),
     (re.compile(r"\bxox[abprs]-[\w-]{10,}"), MASK),  # Slack
     (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), MASK),  # AWS access key id

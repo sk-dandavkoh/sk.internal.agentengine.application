@@ -49,10 +49,11 @@ the loop never inspects node types.
 import asyncio
 import logging
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from types import MappingProxyType
 
 from akasha.application.events import EventPublisher
 from akasha.application.executions import load_execution, save_execution
@@ -238,7 +239,10 @@ class ExecutionRuntime:
         credentials: SecretSource | None = None,
         heartbeat_seconds: float = 5.0,
         limits: ResourceLimits | None = None,
+        plugins: Mapping[str, str] = MappingProxyType({}),
     ) -> None:
+        """``plugins``: enabled plugin id → version (``PluginRegistry.versions``),
+        checked against each version's pinned plugin versions."""
         if max_concurrency < 1:
             raise ConfigurationError("max_concurrency must be >= 1")
         if heartbeat_seconds <= 0:
@@ -248,6 +252,7 @@ class ExecutionRuntime:
         self._metrics = metrics or EngineMetrics()
         self._state = StateManager(uow, events or EventPublisher(), self._metrics)
         self._catalog = catalog
+        self._plugins = plugins
         self._max_concurrency = max_concurrency
         self._clock = clock
         self._active: dict[str, _CancelRequest] = {}
@@ -357,7 +362,7 @@ class ExecutionRuntime:
             await self._state.save(execution)
             return execution
         try:
-            plan = load_plan(execution.project_version, self._catalog)
+            plan = load_plan(execution.project_version, self._catalog, self._plugins)
         except ExecutionGraphInvalidError as exc:
             codes = sorted({i.code.value for i in exc.result.issues})
             execution.fail(

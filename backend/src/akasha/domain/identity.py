@@ -86,12 +86,65 @@ class UserSession:
     expires_at: datetime
 
 
+# Personal access tokens start with this, so they are recognizable: by the
+# authentication service (which table to look in), by secret scanners and
+# by log redaction (``security.redaction``).
+PAT_MARKER = "akasha_pat_"
+MAX_TOKEN_NAME_LENGTH = 100
+
+
+def validate_token_name(name: str) -> str:
+    if not 0 < len(name) <= MAX_TOKEN_NAME_LENGTH or not name.isprintable():
+        raise DomainValidationError(
+            f"token name must be 1-{MAX_TOKEN_NAME_LENGTH} printable characters"
+        )
+    return name
+
+
+@dataclass(frozen=True)
+class AccessToken:
+    """A personal access token: a long-lived, named, individually revocable
+    credential of one user, for scripts and AI agents (docs/mcp.md §3). It
+    acts with exactly its user's role and access. Like sessions, only the
+    token's SHA-256 is stored; ``hint`` is its first characters, shown so a
+    user can tell tokens apart."""
+
+    id: str
+    user_id: str
+    name: str
+    token_hash: str
+    hint: str
+    created_at: datetime
+    expires_at: datetime | None  # None: until revoked
+    last_used_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        validate_id(self.id)
+        validate_token_name(self.name)
+
+
 @dataclass(frozen=True)
 class Identity:
-    """The authenticated caller of one request."""
+    """The authenticated caller of one request: a browser/API login
+    (``session``) or a personal access token (``access_token``), never
+    both."""
 
     user: User
-    session: UserSession
+    session: UserSession | None = None
+    access_token: AccessToken | None = None
+
+    def __post_init__(self) -> None:
+        if (self.session is None) == (self.access_token is None):
+            raise DomainValidationError(
+                "an identity has exactly one credential: a session or a token"
+            )
+
+    @property
+    def expires_at(self) -> datetime | None:
+        """When the credential stops working; None: until revoked."""
+        if self.session is not None:
+            return self.session.expires_at
+        return None if self.access_token is None else self.access_token.expires_at
 
 
 def may_access_project(user: User, owner_id: str | None) -> bool:

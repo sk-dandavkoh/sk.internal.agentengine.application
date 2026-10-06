@@ -133,6 +133,23 @@ class Settings(BaseSettings):
     # Enable/disable/remove over HTTP need no opt-in (no new code).
     plugins_http_install: bool = False
 
+    # MCP control plane (docs/mcp.md, ADR 0006). Off: no /mcp route exists
+    # at all. On: Streamable HTTP at /mcp of this API process, bearer
+    # session tokens only, the same authorization as the REST API.
+    # Startup-only: changing any of these needs a restart.
+    mcp_enabled: bool = False
+    # Cap on one MCP request body (plugin sources and project packages
+    # travel inline, base64 for binary).
+    mcp_max_request_bytes: int = Field(default=4 * 1024 * 1024, gt=0)
+    # Cap on one tool result (JSON bytes): agents have context limits, so
+    # an oversized result is an error that asks for a smaller page.
+    mcp_max_response_bytes: int = Field(default=256 * 1024, ge=1024)
+    # Let MCP admins hand the engine new code: install, update and test
+    # plugin packages. Off by default: like AKASHA_PLUGINS_HTTP_INSTALL it
+    # makes every admin session (and the agent holding it) as powerful as
+    # shell access to the host. Enable/disable/remove need no opt-in.
+    mcp_plugin_code: bool = False
+
     # Resource limits (Phase 24, ``akasha.domain.limits``). Execution and
     # node timeouts are both the default and the ceiling a request may lower.
     # Attempts include the first one, so 5 allows 4 retries.

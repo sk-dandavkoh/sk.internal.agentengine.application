@@ -29,7 +29,7 @@ from akasha.domain.execution import (
     NodeExecutionStatus,
     NodeLogEntry,
 )
-from akasha.domain.identity import User, UserSession
+from akasha.domain.identity import AccessToken, User, UserSession
 from akasha.domain.project import Project, ProjectStatus, ProjectVersion
 from akasha.errors import AkashaError
 
@@ -378,6 +378,35 @@ class SessionRepository(Protocol):
     async def delete_expired(self, now: datetime) -> None: ...
 
 
+class AccessTokenRepository(Protocol):
+    """Personal access tokens, looked up by the hash of their value."""
+
+    async def add(self, token: AccessToken) -> None: ...
+
+    async def get_active(
+        self, token_hash: str, now: datetime
+    ) -> tuple[AccessToken, User] | None:
+        """The unexpired token and its user, only if the user is enabled."""
+        ...
+
+    async def list_for_user(self, user_id: str) -> Sequence[AccessToken]:
+        """Newest first."""
+        ...
+
+    async def delete(self, token_id: str, *, user_id: str) -> bool:
+        """Revoke one of ``user_id``'s tokens; False if it has none such."""
+        ...
+
+    async def delete_for_user(self, user_id: str) -> None: ...
+
+    async def mark_used(
+        self, token_id: str, now: datetime, *, every: timedelta
+    ) -> None:
+        """Record use, at most once per ``every``: a token authenticates
+        every request, so recording each use would write on every read."""
+        ...
+
+
 class UnitOfWork(Protocol):
     """Explicit transaction boundary (backend/AGENTS.md §16).
 
@@ -393,6 +422,7 @@ class UnitOfWork(Protocol):
     credentials: CredentialRepository
     users: UserRepository
     sessions: SessionRepository
+    access_tokens: AccessTokenRepository
 
     async def __aenter__(self) -> "UnitOfWork": ...
     async def __aexit__(

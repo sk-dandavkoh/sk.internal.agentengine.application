@@ -21,6 +21,7 @@ was not taken is skipped transitively, while a node joining both branches
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass
+from types import MappingProxyType
 from typing import Any
 
 from akasha.application.projects import issue_payload
@@ -126,10 +127,17 @@ def _live(edge: Edge, execution: Execution) -> bool:
     )
 
 
-def load_plan(version: ProjectVersion, catalog: NodeCatalog) -> ExecutionPlan:
+def load_plan(
+    version: ProjectVersion,
+    catalog: NodeCatalog,
+    plugins: Mapping[str, str] = MappingProxyType({}),
+) -> ExecutionPlan:
+    """``plugins`` (enabled plugin id → version): the snapshot's pinned
+    plugin versions must be exactly these, or nothing runs."""
     graph = version.graph
     result = version.validate(
-        {node_type: factory.definition for node_type, factory in catalog.items()}
+        {node_type: factory.definition for node_type, factory in catalog.items()},
+        plugins,
     )
     if not result.ok:
         raise ExecutionGraphInvalidError(result)

@@ -10,14 +10,12 @@
 - DELETE /plugins/{id}?force=     remove; blocked while projects use it
                                   unless ``force`` (same use case as the CLI)
 
-Every operation is ``PluginRegistry`` / ``application.plugins`` — no plugin
-rule lives here. Changes apply to this process; dedicated worker processes
-see them after a restart (§36).
+Every operation is ``application.plugins.PluginService`` (shared with the
+MCP server, one lifecycle lock per process) — no plugin rule lives here.
+Changes apply to this process; dedicated worker processes see them after a
+restart (§36).
 """
 
-import asyncio
-import tempfile
-from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
@@ -25,12 +23,11 @@ from pydantic import BaseModel
 
 from akasha.api.project_schemas import DependencyBody, _dependencies
 from akasha.api.schemas import ErrorResponse, PayloadTooLargeError, read_limited_body
-from akasha.application.plugins import remove_plugin
-from akasha.application.projects import ProjectService
+from akasha.application.plugins import PluginService
 from akasha.bootstrap import Container
 from akasha.errors import AkashaError, ConfigurationError
-from akasha.plugins.archive import MAX_ARCHIVE_BYTES, MEDIA_TYPE, unpack_package
-from akasha.plugins.registry import PluginRecord, PluginRegistry, PluginState
+from akasha.plugins.archive import MAX_ARCHIVE_BYTES, MEDIA_TYPE
+from akasha.plugins.registry import PluginRecord, PluginState
 
 
 class PluginInstallDisabledError(AkashaError):
@@ -97,21 +94,14 @@ def _container(request: Request) -> Container:
     return container
 
 
-def _registry(request: Request) -> PluginRegistry:
-    registry = _container(request).plugins
-    if registry is None:
+def _service(request: Request) -> PluginService:
+    service = _container(request).plugin_service
+    if service is None:
         raise ConfigurationError(
             "No plugin directory is configured.",
             details={"setting": "AKASHA_PLUGINS_DIR"},
         )
-    return registry
-
-
-def _projects(request: Request) -> ProjectService:
-    projects = _container(request).projects
-    if projects is None:
-        raise ConfigurationError("Plugin removal needs the database.")
-    return projects
+    return service
 
 
 def _install_enabled(request: Request) -> bool:
@@ -124,10 +114,6 @@ def create_plugins_router() -> APIRouter:
         code: {"model": ErrorResponse} for code in (403, 404, 409, 422, 500)
     }
     router = APIRouter(prefix="/plugins", tags=["plugins"], responses=errors)
-    # Serializes lifecycle calls: ``prepare`` runs in a thread (it may
-    # install Python libraries for minutes, ADR 0004) and the registry is
-    # not locked itself. Registry state only changes on the event loop.
-    lifecycle = asyncio.Lock()
 
     @router.get("")
     async def list_plugins(request: Request) -> PluginList:
@@ -173,28 +159,18 @@ def create_plugins_router() -> APIRouter:
                 f"A plugin package must not exceed {MAX_ARCHIVE_BYTES} bytes."
             ),
         )
-        registry = _registry(request)
         # ponytail: unpack, copy and import stay on the event loop (bounded
         # by the archive limits); only installing libraries is slow.
-        async with lifecycle:
-            with tempfile.TemporaryDirectory(prefix="akasha-plugin-upload-") as tmp:
-                package = unpack_package(data, Path(tmp))
-                await asyncio.to_thread(registry.prepare, package)
-                record = registry.install(package)
+        record = await _service(request).install_archive(data)
         return PluginOut.from_record(record)
 
     @router.post("/{plugin_id}/enable")
     async def enable_plugin(plugin_id: str, request: Request) -> PluginOut:
-        registry = _registry(request)
-        async with lifecycle:
-            if registry.get(plugin_id).metadata is not None:
-                await asyncio.to_thread(registry.prepare, registry.path(plugin_id))
-            return PluginOut.from_record(registry.enable(plugin_id))
+        return PluginOut.from_record(await _service(request).enable(plugin_id))
 
     @router.post("/{plugin_id}/disable")
     async def disable_plugin(plugin_id: str, request: Request) -> PluginOut:
-        async with lifecycle:
-            return PluginOut.from_record(_registry(request).disable(plugin_id))
+        return PluginOut.from_record(await _service(request).disable(plugin_id))
 
     @router.delete("/{plugin_id}")
     async def delete_plugin(
@@ -204,10 +180,7 @@ def create_plugins_router() -> APIRouter:
             bool, Query(description="Remove even though projects use it")
         ] = False,
     ) -> RemovePluginResponse:
-        async with lifecycle:
-            users = await remove_plugin(
-                _registry(request), _projects(request), plugin_id, force=force
-            )
+        users = await _service(request).remove(plugin_id, force=force)
         return RemovePluginResponse(plugin_id=plugin_id, affected_projects=list(users))
 
     return router

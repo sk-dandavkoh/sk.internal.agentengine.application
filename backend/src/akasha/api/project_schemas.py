@@ -299,6 +299,9 @@ class ProjectVersionDetail(ProjectVersionSummary):
     triggers: list[TriggerBody]
     dependencies: list[DependencyBody]
     files: list[ProjectFileOut]
+    # Plugin id -> the exact version this version runs on (pinned at
+    # publish); runs refuse any other installed version.
+    plugin_versions: dict[str, str]
 
     @classmethod
     def from_domain(
@@ -310,6 +313,7 @@ class ProjectVersionDetail(ProjectVersionSummary):
             triggers=_triggers(v.triggers),
             dependencies=_dependencies(v.dependencies),
             files=_files(v.files),
+            plugin_versions=dict(v.plugin_versions),
         )
 
 

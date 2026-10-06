@@ -331,6 +331,18 @@ def test_declared_dependency_versions_are_rechecked_at_load() -> None:
     ]
 
 
+def test_pinned_plugin_versions_must_match_exactly_at_load() -> None:
+    execution, _ = diamond()
+    pinned = replace(execution.project_version, plugin_versions={"acme": "1.0.0"})
+    assert load_plan(pinned, CATALOG, {"acme": "1.0.0"}).roots
+    for enabled, code in (({"acme": "1.0.1"}, "incompatible"), ({}, "missing")):
+        with pytest.raises(ExecutionGraphInvalidError) as err:
+            load_plan(pinned, CATALOG, enabled)
+        assert [i.code.value for i in err.value.result.issues] == [f"{code}_dependency"]
+    # Versions published before pinning carry none and run as before.
+    assert load_plan(execution.project_version, CATALOG, {}).roots
+
+
 def test_inputs_collect_in_edge_order_and_defaults_are_private_copies() -> None:
     execution, ids = diamond()
     plan = load_plan(execution.project_version, CATALOG)

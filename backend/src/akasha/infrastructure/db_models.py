@@ -64,6 +64,22 @@ sessions = Table(
     Index("ix_sessions_expires_at", "expires_at"),
 )
 
+access_tokens = Table(
+    "access_tokens",
+    metadata,
+    Column("id", String, primary_key=True),
+    Column("token_hash", String, nullable=False, unique=True),
+    Column(
+        "user_id", String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    ),
+    Column("name", String, nullable=False),
+    Column("hint", String, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False),
+    Column("expires_at", DateTime(timezone=True), nullable=True),
+    Column("last_used_at", DateTime(timezone=True), nullable=True),
+    Index("ix_access_tokens_user_id", "user_id"),
+)
+
 projects = Table(
     "projects",
     metadata,
@@ -116,6 +132,7 @@ project_versions = Table(
         ForeignKey("users.id", ondelete="RESTRICT"),
         nullable=True,
     ),
+    Column("plugin_versions", JSONB_VARIANT, nullable=False, server_default="{}"),
     Index("uq_project_versions_project_version", "project_id", "version", unique=True),
     Index("ix_project_versions_project_id", "project_id"),
 )

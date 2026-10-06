@@ -16,7 +16,7 @@ import asyncio
 import hashlib
 import logging
 import secrets
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 
@@ -30,14 +30,17 @@ from akasha.application.projects import (
     to_page,
 )
 from akasha.domain.identity import (
+    PAT_MARKER,
+    AccessToken,
     Identity,
     Role,
     User,
     UserSession,
     may_access_project,
     validate_password,
+    validate_token_name,
 )
-from akasha.domain.primitives import Timestamps, utcnow
+from akasha.domain.primitives import Timestamps, new_id, utcnow
 from akasha.errors import AkashaError
 from akasha.security.passwords import PasswordHasher
 
@@ -88,6 +91,23 @@ class UserNotFoundError(AkashaError):
 class LastAdminError(AkashaError):
     code = "LAST_ADMIN"
     http_status = 409
+
+
+class AccessTokenNotFoundError(AkashaError):
+    code = "ACCESS_TOKEN_NOT_FOUND"
+    http_status = 404
+
+
+class AccessTokenLimitError(AkashaError):
+    code = "ACCESS_TOKEN_LIMIT"
+    http_status = 409
+
+
+# Bounds the rows one account can create: tokens are for a few agents and
+# scripts, not one per request.
+MAX_ACCESS_TOKENS = 50
+# ``last_used_at`` is recorded at most this often per token.
+_LAST_USED_RESOLUTION = timedelta(hours=1)
 
 
 def token_hash(token: str) -> str:
@@ -220,37 +240,122 @@ class AuthenticationService:
         return LoginResult(token, session, user)
 
     async def authenticate(self, token: str) -> Identity:
+        """The identity behind a session token or a personal access token
+        (recognized by ``PAT_MARKER``)."""
+        now = self._clock()
+        if token.startswith(PAT_MARKER):
+            async with self._uow() as uow:
+                pat = await uow.access_tokens.get_active(token_hash(token), now)
+                if pat is not None:
+                    await uow.access_tokens.mark_used(
+                        pat[0].id, now, every=_LAST_USED_RESOLUTION
+                    )
+                    await uow.commit()
+            if pat is None:
+                raise AuthenticationRequiredError("Authentication required.")
+            return Identity(user=pat[1], access_token=pat[0])
         async with self._uow() as uow:
-            found = await uow.sessions.get_active(token_hash(token), self._clock())
+            found = await uow.sessions.get_active(token_hash(token), now)
         if found is None:
             raise AuthenticationRequiredError("Authentication required.")
         session, user = found
         return Identity(user=user, session=session)
 
     async def logout(self, identity: Identity) -> None:
+        """End the credential the caller used: its session, or (logging out
+        with an access token) that token."""
         async with self._uow() as uow:
-            await uow.sessions.delete(identity.session.token_hash)
+            if identity.session is not None:
+                await uow.sessions.delete(identity.session.token_hash)
+            if identity.access_token is not None:
+                await uow.access_tokens.delete(
+                    identity.access_token.id, user_id=identity.user.id
+                )
             await uow.commit()
         _audit("logout", user_id=identity.user.id)
+
+    async def create_access_token(
+        self,
+        identity: Identity,
+        *,
+        name: str,
+        password: str,
+        expires_in: timedelta | None,
+    ) -> tuple[str, AccessToken]:
+        """Issue a personal access token for the caller. The value is
+        returned once; only its hash is stored.
+
+        Requires the account password, like a password change: a stolen
+        session (or token) alone must not mint credentials that outlive it.
+        ``expires_in`` None: valid until revoked.
+        """
+        validate_token_name(name)
+        user = identity.user
+        now = self._clock()
+        await self._require_password(user, password, now)
+        value = PAT_MARKER + secrets.token_urlsafe(32)
+        token = AccessToken(
+            id=new_id("pat"),
+            user_id=user.id,
+            name=name,
+            token_hash=token_hash(value),
+            hint=value[: len(PAT_MARKER) + 4],
+            created_at=now,
+            expires_at=None if expires_in is None else now + expires_in,
+        )
+        async with self._uow() as uow:
+            held = await uow.access_tokens.list_for_user(user.id)
+            if len(held) >= MAX_ACCESS_TOKENS:
+                raise AccessTokenLimitError(
+                    f"A user can hold at most {MAX_ACCESS_TOKENS} access tokens;"
+                    " revoke one first.",
+                    details={"limit": MAX_ACCESS_TOKENS},
+                )
+            await uow.access_tokens.add(token)
+            await uow.commit()
+        _audit("access_token_created", user_id=user.id, token_id=token.id)
+        return value, token
+
+    async def list_access_tokens(self, identity: Identity) -> Sequence[AccessToken]:
+        """The caller's own tokens (metadata only), newest first."""
+        async with self._uow() as uow:
+            return await uow.access_tokens.list_for_user(identity.user.id)
+
+    async def revoke_access_token(self, identity: Identity, token_id: str) -> None:
+        """Revoke one of the caller's own tokens; another user's token
+        answers not found."""
+        async with self._uow() as uow:
+            mine = await uow.access_tokens.delete(token_id, user_id=identity.user.id)
+            if not mine:
+                raise AccessTokenNotFoundError(
+                    "Access token not found.", details={"token_id": token_id}
+                )
+            await uow.commit()
+        _audit("access_token_revoked", user_id=identity.user.id, token_id=token_id)
+
+    async def _require_password(self, user: User, password: str, now: datetime) -> None:
+        """Check ``user``'s password, throttled like logins."""
+        self._throttle.attempt(user.username, now)
+        async with self._uow() as uow:
+            found = await uow.users.get_with_password(user.username)
+        if found is None or not await self._verify(password, found[1]):
+            raise InvalidCredentialsError("The current password is wrong.")
+        self._throttle.reset(user.username)
 
     async def change_password(
         self, identity: Identity, current_password: str, new_password: str
     ) -> None:
         """Requires the current password (a stolen session alone must not
-        take over the account) and revokes every other session."""
+        take over the account) and revokes every other session. Access
+        tokens stay: they are listed and revoked individually."""
         user = identity.user
         now = self._clock()
         new_hash = await self.hash_password(new_password)
-        self._throttle.attempt(user.username, now)
+        await self._require_password(user, current_password, now)
+        keep = None if identity.session is None else identity.session.token_hash
         async with self._uow() as uow:
-            found = await uow.users.get_with_password(user.username)
-            if found is None or not await self._verify(current_password, found[1]):
-                raise InvalidCredentialsError("The current password is wrong.")
-            self._throttle.reset(user.username)
-            await uow.users.update(_touched(found[0], now), new_hash)
-            await uow.sessions.delete_for_user(
-                user.id, keep=identity.session.token_hash
-            )
+            await uow.users.update(_touched(user, now), new_hash)
+            await uow.sessions.delete_for_user(user.id, keep=keep)
             await uow.commit()
         _audit("password_changed", user_id=user.id)
 
@@ -316,7 +421,9 @@ class UserService:
             user = _touched(user, self._clock())
             await uow.users.update(user, password_hash)
             if disabled or password_hash is not None:
+                # Recovery: an admin reset or disable ends every credential.
                 await uow.sessions.delete_for_user(user.id)
+                await uow.access_tokens.delete_for_user(user.id)
             await uow.commit()
         _audit("user_updated", user_id=user.id, actor_id=admin.user.id)
         return user

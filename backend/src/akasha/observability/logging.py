@@ -88,3 +88,6 @@ def configure_logging(
     root.handlers.clear()
     root.addHandler(handler)
     root.setLevel(level.upper())
+    # The MCP SDK's debug lines can quote whole protocol frames (tool
+    # arguments are workflow data, AGENTS §76): never below INFO.
+    logging.getLogger("mcp").setLevel(max(root.level, logging.INFO))

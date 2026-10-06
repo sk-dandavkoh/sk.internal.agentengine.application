@@ -20,6 +20,7 @@ from sqlalchemy import (
     func,
     literal,
     literal_column,
+    or_,
     select,
     text,
 )
@@ -30,6 +31,7 @@ from sqlalchemy.engine import CursorResult, RowMapping
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from akasha.application.persistence import (
+    AccessTokenRepository,
     ConcurrentModificationError,
     CredentialRepository,
     EventRepository,
@@ -61,7 +63,7 @@ from akasha.domain.execution import (
     RetryPolicy,
     TimeoutPolicy,
 )
-from akasha.domain.identity import Role, User, UserSession
+from akasha.domain.identity import AccessToken, Role, User, UserSession
 from akasha.domain.node import NodeErrorKind
 from akasha.domain.primitives import Timestamps, is_storable
 from akasha.domain.project import (
@@ -294,6 +296,7 @@ class SqlAlchemyProjectVersionRepository(ProjectVersionRepository):
                 published_at=version.published_at,
                 files=serialize_files(version.files),
                 published_by=version.published_by,
+                plugin_versions=dict(version.plugin_versions),
             )
         )
 
@@ -359,6 +362,7 @@ class SqlAlchemyProjectVersionRepository(ProjectVersionRepository):
             published_at=_ensure_utc(r["published_at"]),
             files=deserialize_files(r["files"]),
             published_by=r["published_by"],
+            plugin_versions=dict(r["plugin_versions"]),
         )
 
 
@@ -1270,6 +1274,117 @@ class SqlAlchemySessionRepository(SessionRepository):
         )
 
 
+class SqlAlchemyAccessTokenRepository(AccessTokenRepository):
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def add(self, token: AccessToken) -> None:
+        await self._session.execute(
+            m.access_tokens.insert().values(
+                id=token.id,
+                token_hash=token.token_hash,
+                user_id=token.user_id,
+                name=token.name,
+                hint=token.hint,
+                created_at=token.created_at,
+                expires_at=token.expires_at,
+                last_used_at=token.last_used_at,
+            )
+        )
+
+    async def get_active(
+        self, token_hash: str, now: datetime
+    ) -> tuple[AccessToken, User] | None:
+        t, u = m.access_tokens, m.users
+        row = (
+            (
+                await self._session.execute(
+                    select(
+                        t.c.id.label("token_id"),
+                        t.c.token_hash,
+                        t.c.user_id,
+                        t.c.name,
+                        t.c.hint,
+                        t.c.created_at.label("token_created_at"),
+                        t.c.expires_at,
+                        t.c.last_used_at,
+                        *SqlAlchemyUserRepository._PUBLIC,
+                    )
+                    .join(u, u.c.id == t.c.user_id)
+                    .where(
+                        t.c.token_hash == token_hash,
+                        or_(t.c.expires_at.is_(None), t.c.expires_at > now),
+                        u.c.disabled.is_(False),
+                    )
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if row is None:
+            return None
+        token = _access_token({**row, "id": row["token_id"]}, "token_created_at")
+        return token, _user(row)
+
+    async def list_for_user(self, user_id: str) -> Sequence[AccessToken]:
+        t = m.access_tokens
+        rows = (
+            (
+                await self._session.execute(
+                    select(t)
+                    .where(t.c.user_id == user_id)
+                    .order_by(t.c.created_at.desc(), t.c.id)
+                )
+            )
+            .mappings()
+            .all()
+        )
+        return [_access_token(row, "created_at") for row in rows]
+
+    async def delete(self, token_id: str, *, user_id: str) -> bool:
+        t = m.access_tokens
+        result = cast(
+            "CursorResult[Any]",
+            await self._session.execute(
+                delete(t).where(t.c.id == token_id, t.c.user_id == user_id)
+            ),
+        )
+        return result.rowcount == 1
+
+    async def delete_for_user(self, user_id: str) -> None:
+        t = m.access_tokens
+        await self._session.execute(delete(t).where(t.c.user_id == user_id))
+
+    async def mark_used(
+        self, token_id: str, now: datetime, *, every: timedelta
+    ) -> None:
+        t = m.access_tokens
+        await self._session.execute(
+            t.update()
+            .where(
+                t.c.id == token_id,
+                or_(t.c.last_used_at.is_(None), t.c.last_used_at <= now - every),
+            )
+            .values(last_used_at=now)
+        )
+
+
+def _access_token(row: Mapping[Any, Any], created: str) -> AccessToken:
+    def utc(value: datetime | None) -> datetime | None:
+        return None if value is None else _ensure_utc(value)
+
+    return AccessToken(
+        id=row["id"],
+        user_id=row["user_id"],
+        name=row["name"],
+        token_hash=row["token_hash"],
+        hint=row["hint"],
+        created_at=_ensure_utc(row[created]),
+        expires_at=utc(row["expires_at"]),
+        last_used_at=utc(row["last_used_at"]),
+    )
+
+
 class SqlAlchemyUnitOfWork(UnitOfWork):
     """One session = one transaction; commit is explicit, exit rolls back."""
 
@@ -1289,6 +1404,9 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
         )
         self.users: UserRepository = SqlAlchemyUserRepository(self._session)
         self.sessions: SessionRepository = SqlAlchemySessionRepository(self._session)
+        self.access_tokens: AccessTokenRepository = SqlAlchemyAccessTokenRepository(
+            self._session
+        )
 
     async def __aenter__(self) -> "SqlAlchemyUnitOfWork":
         return self

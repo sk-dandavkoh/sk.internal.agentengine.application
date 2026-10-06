@@ -3,6 +3,11 @@ import {
     useQueryClient,
     type QueryClient,
 } from '@tanstack/react-query'
+import {
+    createAccessToken,
+    revokeAccessToken,
+    type CreateAccessTokenInput,
+} from './auth'
 import type { ApiClient } from './client'
 import { useApiClient } from './context'
 import {
@@ -205,6 +210,25 @@ export function useCancelExecution() {
                 queryKeys.projects.executions(execution.project_id),
                 queryKeys.executions.overview(),
             ),
+    )
+}
+
+// -- access tokens -------------------------------------------------------------
+
+export function useCreateAccessToken() {
+    return useApiMutation(
+        (client, input: CreateAccessTokenInput) =>
+            createAccessToken(client, input),
+        (qc) => invalidate(qc, queryKeys.accessTokens()),
+        // The variables hold the password and the result the token value.
+        { gcTime: 0 },
+    )
+}
+
+export function useRevokeAccessToken() {
+    return useApiMutation(
+        (client, id: string) => revokeAccessToken(client, id),
+        (qc) => invalidate(qc, queryKeys.accessTokens()),
     )
 }
 

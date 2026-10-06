@@ -234,6 +234,13 @@ void auth.changePassword(recorder, {
     current_password: 'a',
     new_password: 'b',
 })
+void auth.listAccessTokens(recorder)
+void auth.createAccessToken(recorder, {
+    name: 'agent',
+    password: 'p',
+    expires_in_days: 90,
+})
+void auth.revokeAccessToken(recorder, 'pat_1')
 const draft = projects.projectDraftSchema.parse({})
 void projects.listProjects(recorder, {
     offset: 0,
