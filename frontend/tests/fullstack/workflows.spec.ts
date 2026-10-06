@@ -1027,11 +1027,14 @@ test('triggers are configured, validated and stored by the backend', async ({
     await row('Webhook')
         .getByRole('button', { name: /^Delete trigger/ })
         .click()
-    await p
-        .getByRole('dialog', { name: 'Delete trigger?' })
-        .getByRole('button', { name: 'Delete trigger' })
-        .click()
-    await expect(p.getByText('Removed from the draft')).toBeVisible()
+    const confirm = p.getByRole('dialog', { name: 'Delete trigger?' })
+    await confirm.getByRole('button', { name: 'Delete trigger' }).click()
+    // The dialog closes only once the PUT has succeeded; its body also says
+    // "removed from the draft", so the alert is matched by role, not text.
+    await expect(confirm).toBeHidden()
+    await expect(
+        p.getByRole('status').filter({ hasText: 'Removed from the draft' }),
+    ).toBeVisible()
     expect((await onServer()).map((t) => t.trigger_type)).toEqual([
         'manual',
         'cron',
