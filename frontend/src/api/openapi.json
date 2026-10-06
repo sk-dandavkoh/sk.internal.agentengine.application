@@ -1449,6 +1449,19 @@
         "title": "ImportWorkflowResponse",
         "type": "object"
       },
+      "InputResponse": {
+        "properties": {
+          "response": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "title": "Response",
+            "type": "object"
+          }
+        },
+        "title": "InputResponse",
+        "type": "object"
+      },
       "JsonValue": {},
       "LogLevel": {
         "description": "Python's level names; the order is severity (``at_least``).",
@@ -1804,6 +1817,7 @@
           "pending",
           "ready",
           "running",
+          "waiting",
           "completed",
           "failed",
           "skipped",
@@ -2112,6 +2126,62 @@
           "has_more"
         ],
         "title": "PageInfo",
+        "type": "object"
+      },
+      "PendingInput": {
+        "description": "A waiting node's request. ``response_schema`` uses the node config\nschema subset, so clients render it with their config forms.",
+        "properties": {
+          "deadline": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deadline"
+          },
+          "node_id": {
+            "title": "Node Id",
+            "type": "string"
+          },
+          "prompt": {
+            "title": "Prompt",
+            "type": "string"
+          },
+          "response_schema": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "title": "Response Schema",
+            "type": "object"
+          }
+        },
+        "required": [
+          "node_id",
+          "prompt",
+          "response_schema",
+          "deadline"
+        ],
+        "title": "PendingInput",
+        "type": "object"
+      },
+      "PendingInputs": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PendingInput"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "PendingInputs",
         "type": "object"
       },
       "Person": {
@@ -4656,6 +4726,170 @@
           }
         },
         "summary": "List Events",
+        "tags": [
+          "executions"
+        ]
+      }
+    },
+    "/api/v1/executions/{execution_id}/inputs": {
+      "get": {
+        "operationId": "list_inputs_api_v1_executions__execution_id__inputs_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "execution_id",
+            "required": true,
+            "schema": {
+              "title": "Execution Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PendingInputs"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "List Inputs",
+        "tags": [
+          "executions"
+        ]
+      }
+    },
+    "/api/v1/executions/{execution_id}/inputs/{node_id}": {
+      "post": {
+        "description": "Accepted, not finished: the execution is queued and a worker\ncontinues it. 422 when the response does not match the request; 409\nwhen the node is not waiting (already answered, cancelled) or another\nbranch of the execution is running.",
+        "operationId": "respond_api_v1_executions__execution_id__inputs__node_id__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "execution_id",
+            "required": true,
+            "schema": {
+              "title": "Execution Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "node_id",
+            "required": true,
+            "schema": {
+              "title": "Node Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InputResponse"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Respond",
         "tags": [
           "executions"
         ]

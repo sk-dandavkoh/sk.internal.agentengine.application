@@ -48,6 +48,7 @@ from akasha.domain.node import (
     NodeMetrics,
     NodeOutput,
     NodeResult,
+    NodeWait,
     PortType,
     check_node_contract,
 )
@@ -59,7 +60,8 @@ from akasha.errors import (
 
 # 1.1.0: ConfigIssue / NodeConfigSchema.issues, CREDENTIAL_REFERENCE_FORMAT,
 # nullable type lists and additionalProperties schemas (additive).
-SDK_VERSION: Final = "1.1.0"
+# 1.2.0: NodeWait, NodeCapabilities.waits_for_input, context.resume (additive).
+SDK_VERSION: Final = "1.2.0"
 
 __all__ = [
     "CREDENTIAL_REFERENCE_FORMAT",
@@ -83,6 +85,7 @@ __all__ = [
     "NodeOutput",
     "NodeResult",
     "NodeValidationError",
+    "NodeWait",
     "PortType",
     "check_node_contract",
 ]

@@ -44,6 +44,12 @@ ROADMAP_NODES = {
     "core.file_write",
     "core.file_list",
     "core.command",
+    # Core node portfolio (docs/reports/backend/core-node-portfolio.md):
+    # human-in-the-loop, data shaping, databases, browser automation.
+    "core.human",
+    "core.transform",
+    "core.database",
+    "core.browser",
 }
 REGISTRY = create_builtin_registry()
 BUILTINS = REGISTRY.list_nodes()
@@ -88,11 +94,15 @@ def test_capabilities_are_declared_truthfully() -> None:
     def ids(flag: str) -> set[str]:
         return {d.node_id for d in BUILTINS if getattr(d.capabilities, flag)}
 
-    assert ids("is_control_flow") == {"core.if", "core.switch"}
-    # core.agent: its tools may have side effects.
+    assert ids("is_control_flow") == {"core.human", "core.if", "core.switch"}
+    assert ids("waits_for_input") == {"core.human"}
+    # core.agent: its tools may have side effects. core.database: writes;
+    # core.browser: clicks may submit forms.
     assert ids("has_side_effects") == {
         "core.agent",
+        "core.browser",
         "core.command",
+        "core.database",
         "core.file_write",
         "core.http",
         "core.smtp",
@@ -101,7 +111,9 @@ def test_capabilities_are_declared_truthfully() -> None:
     # I/O is short, bounded by the file size limit.
     assert ids("supports_cancellation") == {
         "core.agent",
+        "core.browser",
         "core.command",
+        "core.database",
         "core.delay",
         "core.http",
         "core.llm",

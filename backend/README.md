@@ -35,7 +35,7 @@ Built-in node settings:
 | `AKASHA_NETWORK_ALLOWED_HOSTS` | `[]` | JSON list of hosts allowed despite resolving privately |
 | `AKASHA_HTTP_MAX_RESPONSE_BYTES` | `5242880` | response cap for core.http/core.web_search |
 | `AKASHA_WEB_SEARCH_URL` | unset | SearXNG base URL for core.web_search |
-| `AKASHA_WORKSPACE_DIR` | unset (image: `/var/lib/akasha/workspace`) | existing directory; the file nodes and core.command work in one subdirectory per workflow |
+| `AKASHA_WORKSPACE_DIR` | unset (image: `/var/lib/akasha/workspace`) | existing directory; the file nodes, core.command, core.database (SQLite files) and core.browser (screenshots) work in one subdirectory per workflow |
 | `AKASHA_WORKSPACE_MAX_FILE_BYTES` | `1048576` | size cap for core.file_read/core.file_write |
 | `AKASHA_COMMAND_ALLOWED` | `[]` | JSON list of programs core.command may run; empty disables it. Not a sandbox (ADR 0005) |
 | `AKASHA_COMMAND_MAX_OUTPUT_BYTES` | `262144` | stdout/stderr cap per stream for core.command |

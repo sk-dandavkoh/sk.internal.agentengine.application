@@ -23,6 +23,13 @@ dependencies = [
     "mcp~=2.3",
 ]
 
+[project.optional-dependencies]
+# core.browser (headless Chromium). Optional: the browser binaries are large,
+# so only deployments that want browser automation install them
+# (``uv sync --extra browser && uv run playwright install chromium``).
+# Same release as the frontend's @playwright/test, so one browser build.
+browser = ["playwright~=1.63.0"]
+
 [project.scripts]
 akasha = "akasha.cli:main"
 
@@ -80,4 +87,9 @@ explicit_package_bases = true
 
 [[tool.mypy.overrides]]
 module = ["croniter", "croniter.*"]
+ignore_missing_imports = true
+
+# Optional extra (``browser``): typed when installed, absent otherwise.
+[[tool.mypy.overrides]]
+module = ["playwright", "playwright.*"]
 ignore_missing_imports = true

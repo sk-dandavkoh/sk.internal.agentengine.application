@@ -16,7 +16,7 @@ import asyncio
 import os
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -54,9 +54,11 @@ from akasha.domain.workflow import WorkflowDraft
 from akasha.infrastructure.database import Database
 from akasha.infrastructure.persistence import SqlAlchemyUnitOfWork
 from akasha.infrastructure.redis_queue import RedisExecutionQueue, encode_job
+from akasha.nodes.builtins import create_builtin_registry
 from akasha.runtime.runtime import ExecutionRuntime
 from akasha.workers import Worker, WorkerManager
 from tests.integration.fixtures import make_auth_kit
+from tests.integration.test_runtime import TickClock
 
 pytestmark = pytest.mark.usefixtures("clean_db")
 
@@ -756,3 +758,41 @@ async def test_execution_outlives_the_http_request(h: Harness) -> None:
         assert await h.queue.next_ack() == execution_id
         got = await api.get(f"/api/v1/executions/{execution_id}")
         assert got.json()["status"] == "completed"
+
+
+async def test_recovery_pass_continues_expired_waits(h: Harness) -> None:
+    """A WAITING execution has no worker; the recovery pass is what notices
+    its deadline, settles it and puts it back on the queue."""
+    catalog = create_builtin_registry().catalog
+    clock = TickClock()
+    runtime = ExecutionRuntime(h.uow, catalog, clock=clock)
+    svc = WorkflowService(h.uow, {t: c.definition for t, c in catalog.items()})
+    workflow = await svc.create_workflow("waits")
+    graph = Graph()
+    ask = NodeInstance.create(
+        "core.human", config={"prompt": "ok?", "timeout_seconds": 60}
+    )
+    done = NodeInstance.create("core.output")
+    graph.add_node(ask)
+    graph.add_node(done)
+    graph.add_edge(Edge(ask.id, "timed_out", done.id, "value"))
+    await svc.update_draft(
+        workflow.id,
+        expected_revision=workflow.revision,
+        name="waits",
+        draft=WorkflowDraft(graph=graph),
+    )
+    version = await svc.publish_workflow(workflow.id)
+    execution = await h.executions.create_execution(
+        workflow.id, version.version, dispatch=False
+    )
+    assert (await runtime.run(execution.id)).status is _E.WAITING
+
+    manager = WorkerManager(
+        Worker(h.queue, runtime, poll_seconds=POLL), h.queue, h.executions
+    )
+    assert (await manager.recover())[2] == 0  # not due: nothing touched
+    clock.now += timedelta(seconds=120)
+    assert (await manager.recover())[2] == 1
+    assert await h.status(execution.id) is _E.QUEUED
+    assert execution.id in await h.guarded()  # dispatched to the queue

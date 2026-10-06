@@ -41,29 +41,39 @@ loop enforces the rest of ``ResourceLimits``: nodes in flight per execution
 (``max_concurrency``) and node/execution output size. Output that breaks a
 cap never reaches the aggregate: the node fails instead.
 
-Workers (``akasha.workers``) call ``run`` and ``recover_stale``; the queue
-never reaches in here. Control flow is generic (``ExecutionPlan.readiness``):
-the loop never inspects node types.
+Waiting: a node attempt ending in ``NodeWait`` parks the node WAITING. When
+nothing runs or can run any more and a node waits, the execution is saved
+WAITING and ``run`` returns: no task, heartbeat or worker slot is held while
+a person thinks. ``ExecutionService.respond`` (or ``expire_waits``, for wait
+deadlines and the execution deadline) queues it again; ``run`` then resumes
+it like a recovered execution, and the answered node's next attempt gets the
+response as ``context.resume``.
+
+Workers (``akasha.workers``) call ``run``, ``recover_stale`` and
+``expire_waits``; the queue never reaches in here. Control flow is generic
+(``ExecutionPlan.readiness``): the loop never inspects node types.
 """
 
 import asyncio
 import logging
 from collections import deque
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from functools import partial
 from types import MappingProxyType
 
 from akasha.application.events import EventPublisher
 from akasha.application.executions import load_execution, save_execution
-from akasha.application.persistence import ConcurrentModificationError
+from akasha.application.persistence import ConcurrentModificationError, UnitOfWork
 from akasha.application.workflows import UowFactory
 from akasha.domain.execution import (
     Execution,
     ExecutionError,
     ExecutionStatus,
     NodeExecutionStatus,
+    WaitState,
 )
 from akasha.domain.limits import ResourceLimits, json_size
 from akasha.domain.node import (
@@ -72,6 +82,7 @@ from akasha.domain.node import (
     NodeExecutionContext,
     NodeMetrics,
     NodeResult,
+    NodeWait,
 )
 from akasha.domain.primitives import utcnow
 from akasha.errors import AkashaError, ConfigurationError, InvalidStateTransitionError
@@ -149,19 +160,22 @@ class StateManager:
                 await uow.executions.list_stale(stale_after=stale_after, limit=limit)
             )
 
+    async def list_due_waits(self, *, now: datetime, limit: int) -> list[str]:
+        async with self._uow() as uow:
+            return list(await uow.executions.list_due_waits(now=now, limit=limit))
+
     async def recover(
         self,
         execution_id: str,
         *,
-        stale_after: timedelta,
+        claim: Callable[[UnitOfWork], Awaitable[bool]],
         settle: Callable[[Execution], None],
     ) -> Execution | None:
-        """Claim, settle and save one stale execution in one transaction;
-        None when it is not stale (any more) or another recoverer holds it."""
+        """Claim, settle and save one execution in one transaction; None
+        when ``claim`` refuses (it no longer qualifies, or another worker
+        holds it). Used for stale runs and for due waits."""
         async with self._uow() as uow:
-            if not await uow.executions.claim_stale(
-                execution_id, stale_after=stale_after
-            ):
+            if not await claim(uow):
                 return None
             execution = await load_execution(uow, execution_id)
             settle(execution)
@@ -190,6 +204,20 @@ class _CancelRequest:
 
     def should_stop(self) -> bool:
         return self.stopping or self.event.is_set()
+
+
+async def _claim_stale(
+    execution_id: str, stale_after: timedelta, uow: UnitOfWork
+) -> bool:
+    return await uow.executions.claim_stale(execution_id, stale_after=stale_after)
+
+
+async def _claim_due_wait(execution_id: str, now: datetime, uow: UnitOfWork) -> bool:
+    return await uow.executions.claim_due_wait(execution_id, now=now)
+
+
+def _expire(execution: Execution, *, now: datetime) -> None:
+    execution.expire_waits(now=now)
 
 
 def _verdict(
@@ -319,7 +347,9 @@ class ExecutionRuntime:
                 continue  # ours and alive; only its heartbeat is late
             try:
                 execution = await self._state.recover(
-                    execution_id, stale_after=stale_after, settle=self._settle
+                    execution_id,
+                    claim=partial(_claim_stale, execution_id, stale_after),
+                    settle=self._settle,
                 )
             except AkashaError as exc:
                 # One unrecoverable row (e.g. its version's nodes changed
@@ -337,6 +367,23 @@ class ExecutionRuntime:
             if execution is not None:
                 recovered.append(execution)
         return recovered
+
+    async def expire_waits(self, *, limit: int = 100) -> list[Execution]:
+        """Settle WAITING executions that are due: a node's wait deadline
+        or the execution deadline passed (``Execution.expire_waits``).
+        Returns them: those now QUEUED must be dispatched, the rest ended.
+        Safe from every worker at once, like ``recover_stale``."""
+        now = self._clock()
+        settled: list[Execution] = []
+        for execution_id in await self._state.list_due_waits(now=now, limit=limit):
+            execution = await self._state.recover(
+                execution_id,
+                claim=partial(_claim_due_wait, execution_id, now),
+                settle=partial(_expire, now=now),
+            )
+            if execution is not None:
+                settled.append(execution)
+        return settled
 
     def _settle(self, execution: Execution) -> None:
         graph = execution.workflow_version.graph
@@ -452,11 +499,14 @@ class ExecutionRuntime:
                     # _launch and _retry_wait read the clock separately: a
                     # backoff that ended in between leaves a READY node that
                     # neither launched nor waits. Launch it, never finish.
-                    if any(
-                        ne.status is NodeExecutionStatus.READY
-                        for ne in execution.node_executions.values()
-                    ):
+                    statuses = {ne.status for ne in execution.node_executions.values()}
+                    if NodeExecutionStatus.READY in statuses:
                         continue
+                    if NodeExecutionStatus.WAITING in statuses:
+                        # Nothing else can run: park it, release the worker.
+                        execution.wait(now=self._clock())
+                        await self._state.save(execution)
+                        return
                     break
                 waits = [next_beat - loop.time()]
                 if backoff is not None:
@@ -575,6 +625,7 @@ class ExecutionRuntime:
                 },
                 # A copy for the same reason as ``config``.
                 execution_input=deepcopy(execution.input),
+                resume=deepcopy(ne.resume_input),
                 metrics=NodeMetrics(definition.metrics),
                 events=NodeEvents(definition.events),
             )
@@ -644,6 +695,17 @@ class ExecutionRuntime:
             if isinstance(outcome, NodeResult):
                 execution.complete_node(node_id, outputs=outcome.outputs, now=now)
                 completed.append(node_id)
+            elif isinstance(outcome, NodeWait):
+                deadline = None if outcome.timeout is None else now + outcome.timeout
+                execution.wait_node(
+                    node_id,
+                    WaitState(
+                        outcome.prompt,
+                        outcome.response_schema.json_schema,
+                        deadline,
+                    ),
+                    now=now,
+                )
             elif retry and execution.can_retry_node(node_id, outcome):
                 execution.retry_node(node_id, outcome, now=now)
             else:

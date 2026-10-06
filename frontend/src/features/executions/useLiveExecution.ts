@@ -112,6 +112,8 @@ export function describeEvent(
             return 'Execution recovered after its worker stopped'
         case 'execution.resumed':
             return 'Execution resumed'
+        case 'execution.waiting':
+            return 'Execution waiting for input'
         case 'node.started':
             return `${node} started${ofAttempt}`
         case 'node.completed':
@@ -124,6 +126,12 @@ export function describeEvent(
             return `${node} skipped`
         case 'node.cancelled':
             return `${node} cancelled`
+        case 'node.waiting':
+            return `${node} waiting for input`
+        case 'node.resumed':
+            return str(payload['outcome']) === 'timed_out'
+                ? `${node} continued after its wait timed out`
+                : `${node} answered`
         case 'node.emitted':
             return `${node} emitted ${str(payload['name']) ?? 'an event'}`
         default:

@@ -23,8 +23,15 @@ Lifecycle events (Phase 11) are recorded by the transitions themselves, so no
 caller can change state without its event: ``pending_events`` accumulates
 them until persistence stores them in the same transaction as the state.
 Rehydrating an execution records nothing. Not evented: enqueue (folded into
-``execution.created``), mark_ready and pause/wait/resume — no runtime path
-drives the last three yet.
+``execution.created``), mark_ready and pause/resume — no runtime path drives
+those two yet.
+
+Waiting (core node portfolio): a node attempt may end in ``wait_node`` (the
+node needs outside input, e.g. a person's answer). Once nothing else can run,
+the runtime moves the execution to WAITING: persisted, owned by no worker, so
+it survives restarts and holds no process. ``resume_node`` (a response) or
+``expire_waits`` (a deadline) makes the waiting node READY again and the
+execution QUEUED (``wake``); a worker then resumes it like a recovered run.
 
 Recovery (Phase 23): ``recover`` takes over a started execution whose owner
 died. Work that finished stays finished; the attempts the owner left
@@ -45,7 +52,12 @@ from typing import Any, Final
 
 from akasha import __version__
 from akasha.domain.event import Event, EventType, PayloadValue
-from akasha.domain.node import RETRYABLE_ERROR_KINDS, NodeError, NodeErrorKind
+from akasha.domain.node import (
+    RETRYABLE_ERROR_KINDS,
+    NodeConfigSchema,
+    NodeError,
+    NodeErrorKind,
+)
 from akasha.domain.primitives import (
     Entity,
     is_storable,
@@ -75,6 +87,7 @@ class NodeExecutionStatus(StrEnum):
     PENDING = auto()
     READY = auto()
     RUNNING = auto()
+    WAITING = auto()  # an attempt asked for outside input (``wait_node``)
     COMPLETED = auto()
     FAILED = auto()
     SKIPPED = auto()
@@ -98,6 +111,9 @@ EXECUTION_ACTIONS: Final[Mapping[str, tuple[frozenset[_E], _E]]] = {
     "pause": (frozenset({_E.RUNNING}), _E.PAUSED),
     "wait": (frozenset({_E.RUNNING}), _E.WAITING),
     "resume": (frozenset({_E.PAUSED, _E.WAITING}), _E.RUNNING),
+    # A waiting node was answered or expired: back to the queue, owner-less
+    # until a worker resumes it (``start`` keeps the first start time).
+    "wake": (frozenset({_E.WAITING}), _E.QUEUED),
     "complete": (frozenset({_E.RUNNING}), _E.COMPLETED),
     # Failure can strike before start (e.g. snapshot cannot be loaded) or
     # while paused/waiting (an in-flight node fails permanently).
@@ -115,7 +131,13 @@ NODE_ACTIONS: Final[Mapping[str, tuple[frozenset[_N], _N]]] = {
     "complete": (frozenset({_N.RUNNING}), _N.COMPLETED),
     "fail": (frozenset({_N.RUNNING}), _N.FAILED),
     "skip": (frozenset({_N.PENDING, _N.READY}), _N.SKIPPED),
-    "cancel": (frozenset({_N.PENDING, _N.READY, _N.RUNNING}), _N.CANCELLED),
+    "wait": (frozenset({_N.RUNNING}), _N.WAITING),
+    # The answered (or expired) node runs again with the response.
+    "resume": (frozenset({_N.WAITING}), _N.READY),
+    "cancel": (
+        frozenset({_N.PENDING, _N.READY, _N.RUNNING, _N.WAITING}),
+        _N.CANCELLED,
+    ),
 }
 
 
@@ -387,6 +409,31 @@ class CancellationState:
 
 
 @dataclass(frozen=True)
+class WaitState:
+    """What a waiting node asks for (``NodeWait`` as persisted): the prompt
+    shown to whoever answers, the JSON-Schema object (config-schema subset)
+    a response must satisfy, and when the wait expires (None: never; the
+    execution deadline still applies)."""
+
+    prompt: str
+    response_schema: Mapping[str, Any]
+    deadline: datetime | None = None
+
+    def __post_init__(self) -> None:
+        if not self.prompt.strip():
+            raise DomainValidationError("a wait prompt must not be blank")
+        if not is_storable(dict(self.response_schema)):
+            raise DomainValidationError("a response schema must be JSON")
+        # Fails on a schema the validator cannot apply, at wait time.
+        NodeConfigSchema(dict(self.response_schema))
+
+    def issues(self, response: Mapping[str, Any]) -> list[str]:
+        """Why ``response`` does not answer this wait (empty: it does)."""
+        schema = NodeConfigSchema(dict(self.response_schema))
+        return [f"{i.location} {i.message}" for i in schema.issues(response)]
+
+
+@dataclass(frozen=True)
 class ExecutionMetadata:
     """Reproducibility metadata (AGENTS §73).
 
@@ -441,6 +488,10 @@ class NodeExecution(Entity):
     finished_at: datetime | None = None
     # Values keyed by output port; set exactly when the node COMPLETED.
     outputs: dict[str, Any] | None = None
+    # The last wait request (kept after it was answered: audit) and the
+    # answer the next attempt receives as ``context.resume``.
+    waiting_for: WaitState | None = None
+    resume_input: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         self.id = validate_id(self.id)
@@ -457,6 +508,8 @@ class NodeExecution(Entity):
             raise DomainValidationError("failed node execution requires an error")
         if self.outputs is not None and self.status is not _N.COMPLETED:
             raise DomainValidationError("only a completed node has outputs")
+        if self.status is _N.WAITING and self.waiting_for is None:
+            raise DomainValidationError("a waiting node requires its wait request")
 
     @classmethod
     def for_node(cls, node_id: str) -> "NodeExecution":
@@ -496,7 +549,13 @@ class NodeExecution(Entity):
                 retry_at=self.retry_at.isoformat(),
             )
         self.status = target
-        self.attempt += 1
+        # Answering a wait continues the attempt that asked: it is not a
+        # retry (reports count ``attempt - 1`` retries) and does not use up
+        # the retry policy. ``retry`` always sets ``retry_at``; ``resume``
+        # never does, so a READY node with a response and no backoff is a
+        # resumed one.
+        if self.resume_input is None or self.retry_at is not None:
+            self.attempt += 1
         self.started_at = now
         self.retry_at = None
 
@@ -529,6 +588,15 @@ class NodeExecution(Entity):
                 current=self.status,
             )
         self._finish("skip", now)
+
+    def wait(self, wait: WaitState) -> None:
+        self.status = _apply(NODE_ACTIONS, "wait", self.status)
+        self.waiting_for = wait
+        self.resume_input = None
+
+    def resume(self, resume: Mapping[str, Any]) -> None:
+        self.status = _apply(NODE_ACTIONS, "resume", self.status)
+        self.resume_input = deepcopy(dict(resume))
 
     def cancel(self, *, now: datetime | None = None) -> None:
         self._finish("cancel", now)
@@ -761,8 +829,124 @@ class Execution(Entity):
     def pause(self) -> None:
         self.status = self._target("pause")
 
-    def wait(self) -> None:
+    def wait(self, *, now: datetime | None = None) -> None:
+        """Park the execution: no node runs or can run, at least one waits
+        for outside input. The runtime calls it; bare transitions (tests)
+        need no waiting node."""
         self.status = self._target("wait")
+        if any(ne.status is _N.WAITING for ne in self.node_executions.values()):
+            self._emit(EventType.EXECUTION_WAITING, now or utcnow())
+
+    @property
+    def wake_at(self) -> datetime | None:
+        """When a WAITING execution must be looked at again without a
+        response: the earliest wait deadline or the execution deadline."""
+        if self.status is not _E.WAITING:
+            return None
+        times = [
+            ne.waiting_for.deadline
+            for ne in self.node_executions.values()
+            if ne.status is _N.WAITING
+            and ne.waiting_for is not None
+            and ne.waiting_for.deadline is not None
+        ]
+        if (
+            deadline := self.timeout_policy.execution_deadline(self.started_at)
+        ) is not None:
+            times.append(deadline)
+        return min(times, default=None)
+
+    def resume_node(
+        self,
+        node_id: str,
+        response: Mapping[str, Any],
+        *,
+        responded_by: str | None = None,
+        now: datetime | None = None,
+    ) -> None:
+        """Answer a waiting node and queue the execution to continue.
+
+        Only while the execution is WAITING: then no worker owns it, so this
+        CAS-guarded write cannot race a running scheduler loop. A second
+        answer finds the node READY and is refused (no duplicate resume).
+        """
+        ne = self._waiting_node(node_id)
+        if ne.waiting_for is not None and (problems := ne.waiting_for.issues(response)):
+            raise DomainValidationError(
+                "the response does not match what the node asks for",
+                details={"issues": "; ".join(problems[:10])},
+            )
+        self._resume(
+            ne,
+            {
+                "response": dict(response),
+                "responded_by": responded_by,
+                "timed_out": False,
+            },
+            now or utcnow(),
+        )
+        self.wake()
+
+    def wake(self) -> None:
+        """Queue a WAITING execution to continue (``resume_node`` and
+        ``expire_waits`` call it after making a waiting node READY)."""
+        self.status = self._target("wake")
+
+    def expire_waits(self, *, now: datetime | None = None) -> bool:
+        """Settle what is due on a WAITING execution: past the execution
+        deadline it times out; a node whose wait deadline passed is resumed
+        with ``timed_out`` and the execution is queued. Returns whether the
+        state changed."""
+        now = now or utcnow()
+        if self.status is not _E.WAITING:
+            return False
+        if self.cancellation is not None:
+            self.cancel(now=now)
+            return True
+        if self.is_timed_out(now):
+            self.time_out(now=now)
+            return True
+        due = sorted(
+            node_id
+            for node_id, ne in self.node_executions.items()
+            if ne.status is _N.WAITING
+            and ne.waiting_for is not None
+            and ne.waiting_for.deadline is not None
+            and ne.waiting_for.deadline <= now
+        )
+        for node_id in due:
+            self._resume(
+                self.node_executions[node_id],
+                {"response": None, "responded_by": None, "timed_out": True},
+                now,
+            )
+        if due:
+            self.wake()
+        return bool(due)
+
+    def _waiting_node(self, node_id: str) -> NodeExecution:
+        ne = self.node(node_id)
+        if self.status is not _E.WAITING or ne.status is not _N.WAITING:
+            raise _illegal(
+                "the node is not waiting for a response",
+                action="node.resume",
+                current=ne.status,
+                node_id=node_id,
+                execution_status=str(self.status),
+            )
+        self._target("wake")  # refuses after a cancellation request
+        return ne
+
+    def _resume(
+        self, ne: NodeExecution, resume: Mapping[str, Any], now: datetime
+    ) -> None:
+        ne.resume(resume)
+        self._emit(
+            EventType.NODE_RESUMED,
+            now,
+            node_id=ne.node_id,
+            outcome="timed_out" if resume["timed_out"] else "responded",
+        )
 
     def resume(self) -> None:
         self.status = self._target("resume")
@@ -964,6 +1148,16 @@ class Execution(Entity):
         self._logs.extend(
             NodeLogEntry(self.id, node_id, ne.attempt, level, message, at, fields)
             for level, message, at, fields in lines
+        )
+
+    def wait_node(
+        self, node_id: str, wait: WaitState, *, now: datetime | None = None
+    ) -> None:
+        """The running attempt asked for outside input (``NodeWait``)."""
+        ne = self._node_for(node_id, "wait", _E_STARTED, blocked_by_cancellation=False)
+        ne.wait(wait)
+        self._emit(
+            EventType.NODE_WAITING, now or utcnow(), node_id=node_id, attempt=ne.attempt
         )
 
     def skip_node(self, node_id: str, *, now: datetime | None = None) -> None:

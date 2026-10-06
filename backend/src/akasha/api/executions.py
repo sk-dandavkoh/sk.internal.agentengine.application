@@ -10,6 +10,9 @@
 - GET  /executions/{execution_id}/logs?after=&limit=&node_id=&level=&q= : what
   its nodes logged (redacted, bounded per attempt)
 - POST /executions/{execution_id}/cancel : request cooperative cancellation
+- GET  /executions/{execution_id}/inputs : what its waiting nodes ask for
+- POST /executions/{execution_id}/inputs/{node_id} : answer one (editors
+  only, like every write) and queue the execution to continue
 
 Where the path carries the workflow or execution id, ``authorize_path``
 limits the route to callers who may see that workflow; the cross-workflow
@@ -158,6 +161,24 @@ class CancelRequest(BaseModel):
     reason: str = Field(default="cancelled through the API", max_length=500)
 
 
+class PendingInput(BaseModel):
+    """A waiting node's request. ``response_schema`` uses the node config
+    schema subset, so clients render it with their config forms."""
+
+    node_id: str
+    prompt: str
+    response_schema: dict[str, JsonValue]
+    deadline: datetime | None
+
+
+class PendingInputs(BaseModel):
+    items: list[PendingInput]
+
+
+class InputResponse(BaseModel):
+    response: dict[str, JsonValue] = Field(default_factory=dict)
+
+
 def create_executions_router() -> APIRouter:
     errors: dict[int | str, dict[str, Any]] = {
         code: {"model": ErrorResponse} for code in (404, 409, 422, 500)
@@ -274,5 +295,40 @@ def create_executions_router() -> APIRouter:
         reason = (body or CancelRequest()).reason
         await runtime.cancel(execution_id, reason=reason)
         return ExecutionDetail.from_domain(await svc.get_execution(execution_id))
+
+    @router.get("/executions/{execution_id}/inputs")
+    async def list_inputs(execution_id: str, svc: Executions) -> PendingInputs:
+        waits = await svc.pending_inputs(execution_id)
+        return PendingInputs(
+            items=[
+                PendingInput(
+                    node_id=node_id,
+                    prompt=wait.prompt,
+                    response_schema=dict(wait.response_schema),
+                    deadline=wait.deadline,
+                )
+                for node_id, wait in waits.items()
+            ]
+        )
+
+    @router.post(
+        "/executions/{execution_id}/inputs/{node_id}",
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    async def respond(
+        execution_id: str,
+        node_id: str,
+        body: InputResponse,
+        svc: Executions,
+        identity: CurrentIdentity,
+    ) -> ExecutionDetail:
+        """Accepted, not finished: the execution is queued and a worker
+        continues it. 422 when the response does not match the request; 409
+        when the node is not waiting (already answered, cancelled) or another
+        branch of the execution is running."""
+        execution = await svc.respond(
+            execution_id, node_id, body.response, responded_by=identity.user.id
+        )
+        return ExecutionDetail.from_domain(execution)
 
     return router

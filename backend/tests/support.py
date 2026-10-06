@@ -78,6 +78,7 @@ def make_context(
     execution_input: Mapping[str, Any] | None = None,
     is_cancelled: Callable[[], bool] | None = None,
     credentials: CredentialResolver | None = None,
+    resume: Mapping[str, Any] | None = None,
 ) -> NodeExecutionContext:
     return NodeExecutionContext(
         execution_id=new_id("exec"),
@@ -94,6 +95,7 @@ def make_context(
         # As the runtime builds them: only declared names are accepted.
         metrics=NodeMetrics(node.definition.metrics),
         events=NodeEvents(node.definition.events),
+        resume=resume,
     )
 
 

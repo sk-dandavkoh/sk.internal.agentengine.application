@@ -33,6 +33,7 @@ async def run(node: Node, config: dict[str, Any], inputs: dict[str, Any]) -> Nod
     node.definition.validate_inputs(inputs)
     context = make_context(node, config=config, inputs=inputs)
     result = await node.execute(replace(context, workflow_id=WORKFLOW))
+    assert isinstance(result, NodeResult)
     node.definition.validate_outputs(result.outputs)
     return result
 

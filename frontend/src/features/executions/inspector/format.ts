@@ -10,6 +10,7 @@ export const nodeStatusDisplay: Record<
     pending: { label: 'Pending', tone: 'neutral' },
     ready: { label: 'Ready', tone: 'info' },
     running: { label: 'Running', tone: 'info' },
+    waiting: { label: 'Waiting for input', tone: 'warning' },
     completed: { label: 'Completed', tone: 'success' },
     failed: { label: 'Failed', tone: 'danger' },
     skipped: { label: 'Skipped', tone: 'neutral' },

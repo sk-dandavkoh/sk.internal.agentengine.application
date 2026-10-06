@@ -297,6 +297,7 @@ Node execution:
 PENDING
 READY
 RUNNING
+WAITING
 COMPLETED
 FAILED
 SKIPPED
@@ -332,6 +333,15 @@ actions share a target with different legal sources. Rules (Phase 07):
   with `started_at` set is a recovered one: it may carry finished nodes but
   never a `RUNNING` one, and `start` resumes it (keeps `started_at` and the
   recorded node versions, emits `execution.resumed`).
+- Waiting (core node portfolio, ADR 0009): a node attempt may end in
+  `wait_node` (`RUNNING → WAITING`, the node's request persisted). Once
+  nothing runs or can run, the runtime moves the execution to `WAITING`
+  and releases it: no task, heartbeat or worker slot is held, and a
+  waiting execution is never "stale". `resume_node` (a validated answer)
+  or `expire_waits` (a wait deadline) makes the node `READY` again
+  (`WAITING → READY`) and the execution `QUEUED` (`wake`); a worker resumes
+  it like a recovered run. Answering continues the attempt that asked (no
+  retry is counted). The execution deadline still counts waiting time.
 
 ----------
 
@@ -788,6 +798,15 @@ waiting state
 
 The runtime remains responsible for execution state.
 
+Implementation of the waiting state (ADR 0009): `execute` returns
+`NodeResult | NodeWait`. `NodeWait(prompt, response_schema, timeout)` is
+allowed only for nodes declaring `NodeCapabilities.waits_for_input`
+(otherwise `NODE_OUTPUT_INVALID`); the response schema uses the config
+schema subset, so the backend validates answers with the same validator
+and the frontend renders them with the same form. The answered attempt
+receives `NodeExecutionContext.resume` (`response`, `responded_by`,
+`timed_out`). Built-in user: `core.human`.
+
 ----------
 
 # 10. Execution Runtime
@@ -969,7 +988,11 @@ omitted output is an inactive branch whose consumers the runtime skips
 exactly one port; `core.merge` joins whatever branches are live. Conditions
 are declarative config (operator + operand, JSON equality), not
 expressions. Loops/ForEach, Try/Catch and subgraphs are not implemented;
-graph validation still rejects every cycle.
+graph validation still rejects every cycle. `core.human` (core node
+portfolio) is control flow too: it routes its input to `approved`,
+`rejected` or `timed_out` and adds the answer on `response`. List
+operations that would otherwise need a loop (filter, map, sort, group,
+aggregate) are declarative steps of `core.transform`.
 
 ----------
 
@@ -2048,15 +2071,30 @@ use the same node set. Duplicate ids are rejected
 - Built-ins (`nodes/builtins.py`): core.input, core.output, core.log,
   core.if, core.switch, core.delay, core.merge, core.http, core.web_search
   (SearXNG JSON API), core.smtp, core.llm, (Phase 27) core.set and
-  core.pick, and (ADR 0005) core.agent, core.web_fetch, core.file_read,
-  core.file_write, core.file_list and core.command. The composition root builds the registry from settings
-  (`bootstrap.create_node_registry`).
+  core.pick, (ADR 0005) core.agent, core.web_fetch, core.file_read,
+  core.file_write, core.file_list and core.command, and (core node
+  portfolio, docs/reports/backend/core-node-portfolio.md) core.human,
+  core.transform, core.database and core.browser. The composition root
+  builds the registry from settings (`bootstrap.create_node_registry`).
+- Core node portfolio rules: one node per capability, operations are
+  config of that node (HTTP methods, SQL statement kinds, browser actions,
+  transform steps), never sibling node types. Data enters through input
+  ports; destinations, SQL text, selectors and credentials are author
+  config — the split that makes every node safe as an agent tool.
 - Data shaping (Phase 27) stays declarative, like conditions: `core.set`
   builds an object from static `fields` plus the input under `key` (the
   way to get constants into a scheduled run, or to wrap a list for
   `core.llm`'s `variables`); `core.pick` and `core.if`'s optional `field`
   (core.if 1.1.0) follow a dotted path (`lead.contacts.0`), the same
   lookup `core.llm` templates use. No expressions are evaluated.
+- `core.transform` is the one data-shaping pipeline: `parse_json`,
+  `to_json`, `parse_csv`, `to_csv`, `pick`, `filter` (core.if's
+  operators), `map`, `sort`, `limit`, `unique`, `flatten`, `group`,
+  `aggregate` and `template` (core.llm's `{{ path }}` substitution). Still
+  no expressions; per-step parameters are checked when the step runs.
+- `core.http` 1.1.0: optional `query` (merged into the URL's own query)
+  and `variables` inputs; `{{ name }}` placeholders are allowed only after
+  the host and filled URL-encoded, so data picks a resource, never a server.
 
 ----------
 
@@ -3159,6 +3197,18 @@ Implementation (Phase 09, `security/network.py`, `nodes/http.py`):
 - `core.smtp` never sends a password unencrypted (`security: none` plus a
   username) to a destination the operator has not trusted
   (`SMTP_INSECURE_AUTH`).
+- `core.database` (PostgreSQL): the connection URL is a credential; its
+  host passes the same guard and the client connects to the vetted address
+  (`hostaddr`). Unix sockets, several hosts and a pre-set `hostaddr` are
+  refused (`DATABASE_CONFIG_INVALID`).
+- `core.browser` (Playwright/Chromium) has no network of its own: every
+  request the page makes is intercepted and performed by the engine through
+  core.http's `fetch` (guard and DNS pinning on every request and redirect
+  hop, response cap, at most 300 requests per attempt); host resolution is
+  disabled and unroutable traffic (WebSockets) goes to a dead proxy.
+  Service workers and downloads are off; there is no upload step. Each
+  attempt gets its own browser process and context (no shared cookies or
+  storage). The browser is an optional extra (`uv sync --extra browser`).
 
 ----------
 
@@ -3181,6 +3231,10 @@ paths, `..` segments, backslashes and NUL bytes are refused
 check. Listings never follow symlinks. Text only (UTF-8), capped by
 `AKASHA_WORKSPACE_MAX_FILE_BYTES`. Known ceiling: check-then-open, a
 concurrent local process swapping a directory for a symlink can race it.
+The same guard places `core.database` SQLite files and `core.browser`
+screenshots. SQLite connections deny `ATTACH`/`DETACH` (and so
+`VACUUM INTO`) through an authorizer, so SQL cannot reach other files;
+extension loading stays disabled.
 
 ----------
 
@@ -3520,6 +3574,12 @@ Each cap is enforced by the layer that owns the resource:
 | command output | 256 KiB per stream (`AKASHA_COMMAND_MAX_OUTPUT_BYTES`) | `core.command`, rest drained | output cut, `truncated: true` |
 | command duration | 30 s (config, ≤ 600 s) | `core.command`, process group killed | node `COMMAND_TIMEOUT` |
 | LLM output tokens per request | 16384 | `AIService`, before the provider call | `PROVIDER_CONFIGURATION`; unset `max_tokens` gets the cap |
+| database statement duration | 30 s (config, ≤ 600 s) | `core.database` (SQLite interrupted, PostgreSQL cancelled) | node `DATABASE_TIMEOUT` |
+| database result rows | 1000 (config, ≤ 10000) | `core.database` | rows cut, `truncated: true` |
+| browser attempt duration | 30 s (config, ≤ 120 s) | `core.browser`, browser closed | node `BROWSER_TIMEOUT` |
+| browser requests per attempt | 300 | `core.browser` interception | further requests aborted |
+| human answer | 64 KiB JSON | `ExecutionService.respond` | 422 |
+| human prompt | 10000 chars | `core.human` | prompt cut |
 
 - Admission (`ExecutionService.create_execution`) replaces a missing
   timeout with the cap and rejects a requested value above it. Every
@@ -4943,13 +5003,17 @@ first model call (`AGENT_TOOL_INVALID`), outputs validated, results masked
 for resolved secrets and cut at `max_tool_result_chars`. A tool resolves
 only credential references in its own config — never the agent's provider
 key or another tool's credential. `core.agent` and control-flow nodes
-cannot be tools (no nested agents: agent depth is 1, §131). Plugin nodes
-are tools like built-ins.
+cannot be tools (no nested agents: agent depth is 1, §131), and neither
+can nodes declaring `waits_for_input` (`core.human`: a tool call cannot
+suspend the agent's attempt). Plugin nodes are tools like built-ins.
 
 Built-in tool nodes: `core.web_search` and `core.web_fetch` (research,
 SSRF guard on every hop, readable text extracted from HTML),
 `core.file_read`/`core.file_write`/`core.file_list` (§64) and
-`core.command` (ADR 0005).
+`core.command` (ADR 0005); from the core node portfolio `core.database`
+(the model supplies only `params`, never SQL), `core.http` (`body`,
+`query`, `variables`), `core.transform` (`value`) and `core.browser`
+(`url`, `values`; selectors stay config).
 
 ----------
 
@@ -4966,6 +5030,30 @@ WAITING
 execution state.
 
 A future human interaction Node may suspend an execution and resume it later.
+
+Implementation (core node portfolio, ADR 0009): `core.human` asks for
+approval and/or form input; the execution waits persistently (§3.6, §9).
+
+- API: `GET /executions/{id}/inputs` lists what waiting nodes ask for;
+  `POST /executions/{id}/inputs/{node_id}` answers one (workflow editors
+  only, like every write; 422 when the answer does not match the schema,
+  409 when the node is no longer waiting or another branch of the
+  execution is running). The answer and the responding user are stored on
+  the node execution and returned on the node's `response` output; events
+  carry only `outcome` (`responded` / `timed_out`), never the answer.
+- Concurrency: read and write are separate transactions and the save is
+  a compare-and-swap on the execution revision, so of two answers exactly
+  one wins. Only a WAITING execution (no owner) can be answered.
+- Deadlines: `executions.wake_at` (earliest wait deadline or execution
+  deadline, WAITING rows only, partial index) is scanned by every worker's
+  recovery pass (`ExecutionRuntime.expire_waits`, rows claimed with
+  `FOR UPDATE SKIP LOCKED`); due executions continue on `timed_out` or end
+  in `TIMEOUT`.
+- Frontend: the execution page shows a "Waiting for input" card per
+  request with a form generated from its response schema.
+- Not implemented: assignment to named users, escalation chains as a
+  feature (compose `timed_out` → `core.smtp`/another `core.human`),
+  reminders.
 
 ----------
 

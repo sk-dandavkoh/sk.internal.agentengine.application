@@ -64,6 +64,7 @@ from akasha.domain.execution import (
     NodeLogEntry,
     RetryPolicy,
     TimeoutPolicy,
+    WaitState,
 )
 from akasha.domain.identity import (
     AccessToken,
@@ -662,7 +663,7 @@ class SqlAlchemyExecutionRepository(ExecutionRepository):
     def _stale(self, stale_after: timedelta) -> Any:
         c = m.executions.c
         return (
-            c.status.in_([s.value for s in _STARTED]),
+            c.status.in_([s.value for s in _OWNED]),
             c.heartbeat_at < func.now() - stale_after,
         )
 
@@ -683,10 +684,32 @@ class SqlAlchemyExecutionRepository(ExecutionRepository):
         )
         return row.scalar_one_or_none() is not None
 
+    def _due_wait(self, now: datetime) -> Any:
+        c = m.executions.c
+        return (c.status == ExecutionStatus.WAITING.value, c.wake_at <= now)
+
+    async def list_due_waits(self, *, now: datetime, limit: int) -> Sequence[str]:
+        rows = await self._session.execute(
+            select(m.executions.c.id)
+            .where(*self._due_wait(now))
+            .order_by(m.executions.c.wake_at, m.executions.c.id)
+            .limit(limit)
+        )
+        return list(rows.scalars())
+
+    async def claim_due_wait(self, execution_id: str, *, now: datetime) -> bool:
+        row = await self._session.execute(
+            select(m.executions.c.id)
+            .where(m.executions.c.id == execution_id, *self._due_wait(now))
+            .with_for_update(skip_locked=True)
+        )
+        return row.scalar_one_or_none() is not None
+
     async def save(self, execution: Execution) -> None:
         e = execution
         values = {
             "status": e.status.value,
+            "wake_at": e.wake_at,
             # Every write proves the writer alive (see ``heartbeat``).
             "heartbeat_at": func.now(),
             "metadata": {
@@ -767,7 +790,9 @@ class SqlAlchemyExecutionRepository(ExecutionRepository):
         e.revision += 1
 
 
-_STARTED = (ExecutionStatus.RUNNING, ExecutionStatus.PAUSED, ExecutionStatus.WAITING)
+# Statuses with an owning runtime that heart-beats. WAITING has none: a
+# waiting execution is parked in the database until answered or due.
+_OWNED = (ExecutionStatus.RUNNING, ExecutionStatus.PAUSED)
 
 
 def _opt_utc(dt: datetime | None) -> datetime | None:
@@ -863,6 +888,16 @@ def _node_row(execution_id: str, ne: NodeExecution) -> dict[str, Any]:
         "attempt": ne.attempt,
         "failures": [_error_doc(f) for f in ne.failures],
         "outputs": _persistable(ne.outputs),
+        "wait": None
+        if ne.waiting_for is None
+        else {
+            "prompt": ne.waiting_for.prompt,
+            "response_schema": dict(ne.waiting_for.response_schema),
+            "deadline": None
+            if ne.waiting_for.deadline is None
+            else ne.waiting_for.deadline.isoformat(),
+        },
+        "resume": ne.resume_input,
         "retry_at": ne.retry_at,
         "started_at": ne.started_at,
         "finished_at": ne.finished_at,
@@ -880,6 +915,16 @@ def _node_to_domain(row: RowMapping) -> NodeExecution:
         started_at=_opt_utc(row["started_at"]),
         finished_at=_opt_utc(row["finished_at"]),
         outputs=None if row["outputs"] is None else dict(row["outputs"]),
+        waiting_for=None
+        if row["wait"] is None
+        else WaitState(
+            prompt=row["wait"]["prompt"],
+            response_schema=row["wait"]["response_schema"],
+            deadline=None
+            if row["wait"]["deadline"] is None
+            else datetime.fromisoformat(row["wait"]["deadline"]),
+        ),
+        resume_input=None if row["resume"] is None else dict(row["resume"]),
     )
 
 

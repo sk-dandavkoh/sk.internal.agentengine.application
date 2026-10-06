@@ -18,6 +18,7 @@ import re
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
+from datetime import timedelta
 from enum import StrEnum, auto
 from typing import Any, ClassVar, Protocol
 
@@ -123,6 +124,10 @@ class NodeCapabilities:
     has_side_effects: bool = False  # retry/idempotency relevance (§44/§46)
     is_control_flow: bool = False  # if/switch/loop-style runtime semantics
     streams_output: bool = False
+    # May end an attempt with ``NodeWait`` (outside input, e.g. a person's
+    # answer). Only these nodes may; they cannot be agent tools, because a
+    # tool call has no way to suspend the agent's attempt.
+    waits_for_input: bool = False
 
 
 # ``format`` of a string holding a credential reference (``credential:<name>``)
@@ -565,6 +570,10 @@ class NodeExecutionContext:
     execution_input: Mapping[str, Any] = field(default_factory=dict)
     metrics: NodeMetrics = field(default_factory=NodeMetrics)
     events: NodeEvents = field(default_factory=NodeEvents)
+    # Set on the attempt after a ``NodeWait`` was answered or expired:
+    # ``{"response": <validated JSON object> | None, "responded_by": <user
+    # id> | None, "timed_out": bool}``. None on every ordinary attempt.
+    resume: Mapping[str, Any] | None = None
 
     async def resolve_credential(self, reference: str) -> str:
         """The secret behind a credential reference from this node's config.
@@ -590,6 +599,31 @@ class NodeResult:
     """
 
     outputs: Mapping[str, Any]
+
+
+@dataclass(frozen=True)
+class NodeWait:
+    """An attempt that needs outside input before the node can produce
+    outputs (architecture §9: a node may return a waiting state).
+
+    The runtime parks the node WAITING and, once nothing else can run, the
+    execution WAITING — persisted, owned by no worker, no process held. A
+    response must satisfy ``response_schema`` (the config-schema subset, so
+    forms render it like node config); it reaches the node's next attempt as
+    ``NodeExecutionContext.resume``. After ``timeout`` the next attempt runs
+    with ``resume["timed_out"]`` instead. Only nodes declaring
+    ``capabilities.waits_for_input`` may return it.
+    """
+
+    prompt: str
+    response_schema: NodeConfigSchema
+    timeout: timedelta | None = None
+
+    def __post_init__(self) -> None:
+        if not self.prompt.strip():
+            raise NodeContractError("a wait prompt must not be blank")
+        if self.timeout is not None and self.timeout <= timedelta(0):
+            raise NodeContractError("a wait timeout must be positive")
 
 
 class NodeErrorKind(StrEnum):
@@ -639,7 +673,8 @@ class Node(ABC):
     definition: ClassVar[NodeDefinition]
 
     @abstractmethod
-    async def execute(self, context: NodeExecutionContext) -> NodeResult: ...
+    async def execute(self, context: NodeExecutionContext) -> "NodeResult | NodeWait":
+        """``NodeWait`` only for nodes declaring ``waits_for_input``."""
 
 
 class NodeFactory(Protocol):

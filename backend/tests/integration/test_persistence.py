@@ -7,6 +7,7 @@ published versions. No mocks for persistence behavior (backend/AGENTS.md
 """
 
 import asyncio
+import json
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import replace
@@ -35,7 +36,7 @@ UowFactory = Callable[[], AbstractAsyncContextManager[SqlAlchemyUnitOfWork]]
 pytestmark = pytest.mark.usefixtures("clean_db")
 
 _BACKENDS_DIR = Path(__file__).resolve().parents[2]
-_HEAD = "0017_workflow_members"
+_HEAD = "0018_waiting_nodes"
 
 
 def _alembic_command(verb: str, db_url: str, target: str) -> None:
@@ -739,6 +740,116 @@ async def test_0011_upgrade_leaves_existing_versions_without_author(
                     await ctx.workflows.save(workflow)
                     await ctx.versions.save(pid, snapshot)
                     await ctx.commit()
+        finally:
+            await db.dispose()
+    finally:
+        async with admin.engine.connect() as conn:
+            await conn.execution_options(isolation_level="AUTOCOMMIT")
+            await conn.execute(text(f"DROP DATABASE IF EXISTS {scratch}"))
+        await admin.dispose()
+
+
+async def test_0018_upgrade_keeps_executions_and_downgrade_refuses_waiting_nodes(
+    db_url: str,
+) -> None:
+    """Executions written under 0017 load after 0018 as "not waiting"; a
+    downgrade with a waiting node is refused instead of losing its state."""
+    admin = Database(normalize_async_url(db_url))
+    scratch = "akasha_migration_0018"
+    try:
+        async with admin.engine.connect() as conn:
+            await conn.execution_options(isolation_level="AUTOCOMMIT")
+            await conn.execute(text(f"DROP DATABASE IF EXISTS {scratch}"))
+            await conn.execute(text(f"CREATE DATABASE {scratch}"))
+        scratch_url = f"{db_url.rpartition('/')[0]}/{scratch}"
+        await asyncio.to_thread(
+            _alembic_command, "upgrade", scratch_url, "0017_workflow_members"
+        )
+        wf, node, exe, nexec = (
+            new_id("wf"),
+            new_id("node"),
+            new_id("exec"),
+            new_id("nexec"),
+        )
+        graph = json.dumps(
+            {
+                "nodes": [
+                    {"id": node, "node_type": "core.output", "config": {}, "label": ""}
+                ],
+                "edges": [],
+            }
+        )
+        db = Database(normalize_async_url(scratch_url))
+        try:
+            async with db.engine.begin() as conn:
+                await conn.execute(
+                    text(
+                        "INSERT INTO workflows (id, name, status, draft_graph,"
+                        " draft_triggers, draft_dependencies, current_version,"
+                        " created_at, updated_at) VALUES (:id, 'p', 'published',"
+                        " CAST(:g AS jsonb), '[]', '[]', 1, now(), now())"
+                    ),
+                    {"id": wf, "g": graph},
+                )
+                await conn.execute(
+                    text(
+                        "INSERT INTO workflow_versions (id, workflow_id, version,"
+                        " schema_version, graph, triggers, dependencies,"
+                        " published_at) VALUES (:id, :wf, 1, 1, CAST(:g AS jsonb),"
+                        " '[]', '[]', now())"
+                    ),
+                    {"id": new_id("wfver"), "wf": wf, "g": graph},
+                )
+                await conn.execute(
+                    text(
+                        "INSERT INTO executions (id, workflow_id, workflow_version,"
+                        " status, metadata, retry_policy, timeout_policy, revision,"
+                        " created_at, started_at, finished_at) VALUES (:id, :wf, 1,"
+                        " 'completed', CAST(:meta AS jsonb), CAST(:retry AS jsonb),"
+                        " CAST(:timeout AS jsonb), 3, now(), now(), now())"
+                    ),
+                    {
+                        "id": exe,
+                        "wf": wf,
+                        "meta": '{"trigger_type": "manual", "trigger_id": null,'
+                        ' "correlation_id": null, "engine_version": "0.1.0"}',
+                        "retry": '{"max_attempts": 1, "initial_backoff_s": 1,'
+                        ' "backoff_multiplier": 2, "max_backoff_s": 60,'
+                        ' "retryable_kinds": ["timeout", "transient"]}',
+                        "timeout": '{"execution_timeout_s": 3600,'
+                        ' "node_timeout_s": 900}',
+                    },
+                )
+                await conn.execute(
+                    text(
+                        "INSERT INTO node_executions (id, execution_id, node_id,"
+                        " status, attempt, failures, outputs, started_at,"
+                        " finished_at) VALUES (:id, :exe, :node, 'completed', 1,"
+                        " '[]', '{\"value\": 1}', now(), now())"
+                    ),
+                    {"id": nexec, "exe": exe, "node": node},
+                )
+            await asyncio.to_thread(_alembic_command, "upgrade", scratch_url, "head")
+
+            async with SqlAlchemyUnitOfWork(db) as ctx:
+                execution = await ctx.executions.get(exe)
+            assert execution is not None and execution.wake_at is None
+            loaded = execution.node(node)
+            assert loaded.outputs == {"value": 1}
+            assert (loaded.waiting_for, loaded.resume_input) == (None, None)
+
+            async with db.engine.begin() as conn:
+                await conn.execute(
+                    text(
+                        "UPDATE node_executions SET status = 'waiting',"
+                        ' wait = \'{"prompt": "ok?", "response_schema":'
+                        ' {"type": "object"}, "deadline": null}\''
+                    )
+                )
+            with pytest.raises(RuntimeError, match="node executions are waiting"):
+                await asyncio.to_thread(
+                    _alembic_command, "downgrade", scratch_url, "0017_workflow_members"
+                )
         finally:
             await db.dispose()
     finally:

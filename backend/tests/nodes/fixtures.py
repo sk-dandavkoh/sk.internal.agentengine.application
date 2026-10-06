@@ -21,6 +21,7 @@ def run_node() -> RunNode:
         execution_input: Mapping[str, Any] | None = None,
         is_cancelled: Callable[[], bool] | None = None,
         credentials: CredentialResolver | None = None,
+        resume: Mapping[str, Any] | None = None,
     ) -> NodeResult:
         definition = node.definition
         definition.validate_config(config or {})
@@ -32,8 +33,11 @@ def run_node() -> RunNode:
             execution_input=execution_input,
             is_cancelled=is_cancelled,
             credentials=credentials,
+            resume=resume,
         )
         result = await node.execute(context)
+        # A NodeWait is not a result; drive waiting nodes with make_context.
+        assert isinstance(result, NodeResult), result
         definition.validate_outputs(result.outputs)
         return result
 

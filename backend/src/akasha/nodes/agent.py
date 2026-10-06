@@ -359,8 +359,10 @@ class AgentNode(Node):
                 raise _tool_invalid(name, f"unknown node type {node_type!r}")
             definition = factory.definition
             # No nested agents: bounds agent/tool call depth (architecture
-            # §131). Control-flow nodes route graphs, they answer nothing.
-            if node_type == NODE_ID or definition.capabilities.is_control_flow:
+            # §131). Control-flow nodes route graphs, they answer nothing;
+            # waiting nodes (core.human) cannot suspend a tool call.
+            caps = definition.capabilities
+            if node_type == NODE_ID or caps.is_control_flow or caps.waits_for_input:
                 raise _tool_invalid(name, f"{node_type!r} cannot be used as a tool")
             config = entry.get("config", {})
             if issues := definition.config_issues(config):
@@ -465,6 +467,12 @@ class AgentNode(Node):
                 NodeErrorKind.TIMEOUT,
                 "AGENT_TOOL_TIMEOUT",
             ) from None
+        if not isinstance(result, NodeResult):  # a NodeWait; see _tools
+            raise _error(
+                "the tool asked to wait for input, which tools cannot do",
+                NodeErrorKind.PERMANENT,
+                "AGENT_TOOL_OUTPUT_INVALID",
+            )
         try:
             definition.validate_outputs(result.outputs)
         except NodeValidationError as exc:

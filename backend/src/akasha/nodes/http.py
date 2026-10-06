@@ -14,16 +14,16 @@ import functools
 import json
 import re
 import ssl
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 import httpcore
 import httpx
 
-from akasha.nodes.core import VERSION, closed_schema
+from akasha.nodes.core import MISSING, PATH, VERSION, closed_schema, lookup
 from akasha.sdk import (
     CREDENTIAL_REFERENCE_FORMAT,
     Node,
@@ -162,7 +162,7 @@ async def fetch(
     max_bytes: int,
     headers: dict[str, str] | None = None,
     content: bytes | None = None,
-    params: dict[str, str] | None = None,
+    params: dict[str, str | list[str]] | None = None,
     follow_redirects: bool = False,
     secret_headers: frozenset[str] = frozenset(),
 ) -> FetchedResponse:
@@ -221,7 +221,7 @@ async def _exchange(
     max_bytes: int,
     headers: dict[str, str] | None,
     content: bytes | None,
-    params: dict[str, str] | None,
+    params: dict[str, str | list[str]] | None,
     follow_redirects: bool,
     secret_headers: frozenset[str],
 ) -> FetchedResponse:
@@ -307,10 +307,29 @@ class HttpNode(Node):
             node_id="core.http",
             name="HTTP Request",
             description="Sends an HTTP request and returns the response.",
-            version=VERSION,
+            # 1.1.0: the optional ``query`` and ``variables`` inputs.
+            version="1.1.0",
             category="web",
         ),
-        inputs=(NodeInput("body", PortType.JSON, required=False, nullable=True),),
+        inputs=(
+            NodeInput("body", PortType.JSON, required=False, nullable=True),
+            NodeInput(
+                "query",
+                PortType.OBJECT,
+                required=False,
+                default={},
+                description="Query parameters added to the URL (lists repeat"
+                " the parameter).",
+            ),
+            NodeInput(
+                "variables",
+                PortType.OBJECT,
+                required=False,
+                default={},
+                description="Values for {{ name }} placeholders in the URL"
+                " path; inserted URL-encoded.",
+            ),
+        ),
         outputs=(
             NodeOutput("status", PortType.NUMBER),
             NodeOutput("headers", PortType.OBJECT),
@@ -323,7 +342,12 @@ class HttpNode(Node):
                     "enum": list(METHODS),
                     "default": DEFAULT_METHOD,
                 },
-                "url": {"type": "string", "pattern": "^https?://"},
+                "url": {
+                    "type": "string",
+                    "pattern": "^https?://",
+                    "description": "May hold {{ name }} placeholders after the"
+                    " host, filled from the variables input.",
+                },
                 "headers": {
                     "type": "object",
                     "additionalProperties": {"type": "string"},
@@ -399,7 +423,7 @@ class HttpNode(Node):
                 headers = {**headers, "content-type": "application/json"}
         response = await fetch(
             cfg.get("method", DEFAULT_METHOD),
-            cfg["url"],
+            _url(cfg["url"], context.inputs),
             policy=self._policy,
             time_limit=cfg.get("timeout_seconds", DEFAULT_TIMEOUT_SECONDS),
             max_bytes=self._max_bytes,
@@ -417,6 +441,62 @@ class HttpNode(Node):
                 "body": decode_body(response),
             }
         )
+
+
+_URL_PLACEHOLDER = re.compile(r"\{\{(.*?)\}\}")
+
+
+def _fill_url(template: str, variables: dict[str, Any]) -> str:
+    """Fill ``{{ path }}`` placeholders with URL-encoded values. Only after
+    the host: the destination stays the author's (a value cannot add ``/``,
+    ``?``, ``#`` or ``@`` either), so data — or a model calling this node
+    as a tool — picks a resource, never a server."""
+    if "{{" not in template:
+        return template
+    _, _, rest = template.partition("://")
+    if "{{" in rest.split("/", 1)[0]:
+        raise _error(
+            "URL placeholders are only allowed after the host",
+            NodeErrorKind.CONFIGURATION,
+            "HTTP_INVALID_URL",
+        )
+
+    def substitute(match: re.Match[str]) -> str:
+        path = match.group(1).strip()
+        value = lookup(variables, path) if re.fullmatch(PATH, path) else MISSING
+        if value is MISSING or isinstance(value, dict | list):
+            raise _error(
+                f"URL variable is missing or not a scalar: {path}",
+                NodeErrorKind.VALIDATION,
+                "HTTP_URL_VARIABLE_MISSING",
+            )
+        text = json.dumps(value) if not isinstance(value, str) else value
+        return quote(text, safe="")
+
+    return _URL_PLACEHOLDER.sub(substitute, template)
+
+
+def _url(template: str, inputs: Mapping[str, Any]) -> str:
+    """The configured URL with ``variables`` filled in and ``query`` added
+    to (never replacing) its own query string."""
+    url = _fill_url(template, inputs.get("variables", {}))
+
+    def text(value: Any) -> str:
+        return value if isinstance(value, str) else json.dumps(value)
+
+    query = {
+        name: [text(v) for v in value] if isinstance(value, list) else text(value)
+        for name, value in inputs.get("query", {}).items()
+        if value is not None
+    }
+    if not query:
+        return url
+    try:
+        return str(httpx.URL(url).copy_merge_params(query))
+    except httpx.InvalidURL:
+        raise _error(
+            "the URL is not valid", NodeErrorKind.CONFIGURATION, "HTTP_INVALID_URL"
+        ) from None
 
 
 class _TextExtractor(HTMLParser):

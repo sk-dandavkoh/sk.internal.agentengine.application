@@ -4,6 +4,8 @@ through the node contract, error feedback, limits, cancellation and secret
 safety. Tools are real registered nodes; no provider is contacted."""
 
 import asyncio
+import json
+import sqlite3
 from dataclasses import dataclass, field
 from datetime import timedelta
 from pathlib import Path
@@ -537,6 +539,7 @@ async def test_file_tools_write_and_read_in_the_workflow_workspace(
     }
     context = make_context(node, config=config, inputs={"variables": {"task": "x"}})
     result = await node.execute(context)
+    assert isinstance(result, NodeResult)
     assert result.outputs["text"] == "saved and verified"
     assert (tmp_path / context.workflow_id / "notes" / "a.md").read_text() == "# Notes"
     assert llm.requests[2].messages[-1].content == '{"content": "# Notes", "size": 7}'
@@ -590,3 +593,78 @@ async def test_a_tool_cannot_resolve_references_outside_its_own_config() -> None
     assert not isinstance(outcome, ExecutionError)
     assert outcome.outputs["steps"][0]["error_code"] == "CREDENTIAL_NOT_REFERENCED"
     assert CANARY not in str(llm.requests[1].messages)
+
+
+# -- core node portfolio as tools ---------------------------------------------------
+
+
+def test_new_core_nodes_offer_only_their_data_ports_to_models() -> None:
+    """What a model may supply is exactly the input ports; SQL text, URLs,
+    selectors and credentials stay in the author's config."""
+    definitions = create_builtin_registry().definitions
+    offered = {
+        node_id: set(tool_parameters(definitions[node_id])["properties"])
+        for node_id in ("core.database", "core.http", "core.transform", "core.browser")
+    }
+    assert offered == {
+        "core.database": {"params"},
+        "core.http": {"body", "query", "variables"},
+        "core.transform": {"value"},
+        "core.browser": {"url", "values"},
+    }
+
+
+async def test_waiting_nodes_cannot_be_tools(run_node: RunNode) -> None:
+    llm = ScriptedLLM([reply("never")])
+    error = await failure(
+        run_node,
+        llm,
+        {"name": "ask", "node_type": "core.human", "config": {"prompt": "ok?"}},
+    )
+    assert error.code == "AGENT_TOOL_INVALID"
+    assert "cannot be used as a tool" in error.message
+    assert llm.requests == []
+
+
+async def test_database_tool_binds_model_arguments_as_parameters(
+    tmp_path: Path,
+) -> None:
+    db = "crm.db"
+    tool = {
+        "name": "find_customer",
+        "node_type": "core.database",
+        "description": "Looks a customer up by e-mail.",
+        "config": {
+            "engine": "sqlite",
+            "database": db,
+            "sql": "SELECT name FROM customers WHERE email = ?",
+            "read_only": True,
+        },
+    }
+    injection = "x' OR '1'='1"
+    llm = ScriptedLLM(
+        [
+            reply(None, call("find_customer", "c1", params=[injection])),
+            reply(None, call("find_customer", "c2", params=["ada@example.com"])),
+            reply(None, call("find_customer", "c3", params=["a", "b"])),
+            reply("Ada"),
+        ]
+    )
+    workspace = Workspace(tmp_path)
+    node = agent(llm, workspace)
+    context = make_context(
+        node, config={**BASE, "tools": [tool]}, inputs={"variables": {"task": "x"}}
+    )
+    with sqlite3.connect(workspace.workflow_dir(context.workflow_id) / db) as conn:
+        conn.execute("CREATE TABLE customers (email TEXT, name TEXT)")
+        conn.execute("INSERT INTO customers VALUES ('ada@example.com', 'Ada')")
+    result = await node.execute(context)
+    assert isinstance(result, NodeResult)
+    turns = [
+        m.content or "" for m in llm.requests[-1].messages if m.role.value == "tool"
+    ]
+    assert json.loads(turns[0])["rows"] == []  # the injection matched nothing
+    assert json.loads(turns[1])["rows"] == [{"name": "Ada"}]
+    assert json.loads(turns[2])["error"]["code"] == "DATABASE_STATEMENT_INVALID"
+    assert [s["ok"] for s in result.outputs["steps"]] == [True, True, False]
+    assert result.outputs["text"] == "Ada"

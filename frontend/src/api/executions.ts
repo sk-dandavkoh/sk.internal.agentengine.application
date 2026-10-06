@@ -128,6 +128,25 @@ export interface ExecutionListParams extends PageParams {
     status?: readonly ExecutionStatus[]
 }
 
+/**
+ * What a waiting node asks for (core.human). `response_schema` uses the
+ * node config schema subset, so the config form renders it; the backend
+ * validates every answer against it.
+ */
+export const pendingInputSchema = z.object({
+    node_id: z.string(),
+    /** Rendered from workflow data: show as text, never as markup. */
+    prompt: z.string(),
+    response_schema: jsonObject,
+    /** After it the node continues as timed out. */
+    deadline: timestamp.nullable(),
+})
+export type PendingInput = z.infer<typeof pendingInputSchema>
+
+export const pendingInputsSchema = z.object({
+    items: z.array(pendingInputSchema),
+})
+
 const path = (executionId: string) =>
     `/executions/${encodeURIComponent(executionId)}`
 
@@ -221,6 +240,34 @@ export function cancelExecution(
         `${path(executionId)}/cancel`,
         executionSchema,
         reason === undefined ? {} : { body: { reason } },
+    )
+}
+
+export function listPendingInputs(
+    client: ApiClient,
+    executionId: string,
+    signal?: AbortSignal,
+) {
+    return client.request(
+        'GET',
+        `${path(executionId)}/inputs`,
+        pendingInputsSchema,
+        { signal },
+    )
+}
+
+/** Answers a waiting node; the execution is queued to continue. */
+export function respondToInput(
+    client: ApiClient,
+    executionId: string,
+    nodeId: string,
+    response: JsonObject,
+) {
+    return client.request(
+        'POST',
+        `${path(executionId)}/inputs/${encodeURIComponent(nodeId)}`,
+        executionSchema,
+        { body: { response } },
     )
 }
 

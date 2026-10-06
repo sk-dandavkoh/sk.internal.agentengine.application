@@ -29,6 +29,19 @@ const CATEGORY_GLYPHS: Readonly<Record<string, ReactNode>> = {
     ),
     transform: <path d="M4 7h12l-3-3M16 13H4l3 3" />,
     communication: <path d="M3 5h14v10H3zM3 5l7 6 7-6" />,
+    human_interaction: (
+        <>
+            <circle cx="10" cy="6.5" r="3" />
+            <path d="M4 17c0-3.3 2.7-6 6-6s6 2.7 6 6" />
+        </>
+    ),
+    database: (
+        <>
+            <ellipse cx="10" cy="5" rx="6" ry="2.5" />
+            <path d="M4 5v10c0 1.4 2.7 2.5 6 2.5s6-1.1 6-2.5V5M4 10c0 1.4 2.7 2.5 6 2.5s6-1.1 6-2.5" />
+        </>
+    ),
+    file: <path d="M5 2.5h6.5L15 6v11.5H5zM11.5 2.5V6H15" />,
 }
 const GENERIC_GLYPH = (
     <path d="M10 2.5 17 6v8l-7 3.5L3 14V6l7-3.5ZM3 6l7 3.5L17 6M10 9.5v8" />

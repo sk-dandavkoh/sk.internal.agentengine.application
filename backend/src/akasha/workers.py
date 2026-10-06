@@ -293,11 +293,15 @@ class WorkerManager:
 
     async def recover(self) -> tuple[int, int, int]:
         """One recovery pass: take over stale started executions and
-        dispatch those queued to resume, redeliver dead workers' held jobs,
+        settle due waits, dispatch those queued to resume, redeliver dead
+        workers' held jobs,
         re-dispatch executions left QUEUED for ``recovery_seconds``. Returns
         the three counts (stale ones: every execution taken over, whatever
         its outcome)."""
         stale = await self.worker.runtime.recover_stale(stale_after=self._stale)
+        # Waits past their deadline continue (timed out) or end; counted
+        # with the stale ones, both are "taken over and settled".
+        stale += await self.worker.runtime.expire_waits()
         for execution in stale:
             if execution.status is ExecutionStatus.QUEUED:
                 # A lost job is caught by ``dispatch_queued`` later.

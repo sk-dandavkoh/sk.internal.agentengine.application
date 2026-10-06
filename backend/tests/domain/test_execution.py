@@ -37,6 +37,7 @@ from akasha.domain.execution import (
     NodeExecutionStatus,
     RetryPolicy,
     TimeoutPolicy,
+    WaitState,
 )
 from akasha.domain.graph import Graph, NodeInstance
 from akasha.domain.node import NodeError, NodeErrorKind
@@ -66,6 +67,17 @@ def _err(
 
 
 TRANSIENT = _err(NodeErrorKind.TRANSIENT)
+WAIT = WaitState(
+    "Approve?",
+    {
+        "type": "object",
+        "properties": {"decision": {"type": "string", "enum": ["approve", "reject"]}},
+        "required": ["decision"],
+        "additionalProperties": False,
+    },
+    deadline=T0 + timedelta(seconds=30),
+)
+ANSWER = {"response": {"decision": "approve"}, "responded_by": None, "timed_out": False}
 PERMANENT = _err(NodeErrorKind.PERMANENT)
 
 
@@ -138,6 +150,7 @@ EXPECTED_EXECUTION = {
         E.QUEUED,
     },
     E.PAUSED: {E.RUNNING, E.FAILED, E.CANCELLED, E.TIMEOUT, E.QUEUED},
+    # QUEUED from WAITING is also ``wake``: a waiting node was answered.
     E.WAITING: {E.RUNNING, E.FAILED, E.CANCELLED, E.TIMEOUT, E.QUEUED},
     E.COMPLETED: set(),
     E.FAILED: set(),
@@ -148,7 +161,9 @@ EXPECTED_EXECUTION = {
 EXPECTED_NODE = {
     N.PENDING: {N.READY, N.SKIPPED, N.CANCELLED},
     N.READY: {N.RUNNING, N.SKIPPED, N.CANCELLED},
-    N.RUNNING: {N.READY, N.COMPLETED, N.FAILED, N.CANCELLED},  # READY = retry
+    # READY = retry; WAITING = the attempt asked for outside input.
+    N.RUNNING: {N.READY, N.WAITING, N.COMPLETED, N.FAILED, N.CANCELLED},
+    N.WAITING: {N.READY, N.CANCELLED},  # READY = answered or expired
     N.COMPLETED: set(),
     N.FAILED: set(),
     N.SKIPPED: set(),
@@ -279,6 +294,7 @@ def _drive_node(state: NodeExecutionStatus) -> NodeExecution:
         N.FAILED: [ne.mark_ready, lambda: ne.start(now=T0), lambda: ne.fail(PERMANENT)],
         N.SKIPPED: [ne.skip],
         N.CANCELLED: [ne.cancel],
+        N.WAITING: [ne.mark_ready, lambda: ne.start(now=T0), lambda: ne.wait(WAIT)],
     }
     for step in path[state]:
         step()
@@ -294,6 +310,10 @@ def _node_action(ne: NodeExecution, action: str) -> None:
             ne.retry(TRANSIENT, retry_at=T0)
         case "start":
             ne.start(now=T0)
+        case "wait":
+            ne.wait(WAIT)
+        case "resume":
+            ne.resume(ANSWER)
         case _:
             getattr(ne, action)()
 
@@ -1023,6 +1043,7 @@ class ExecutionMachine(RuleBasedStateMachine):
             "fail": lambda: e.fail(error, now=now),
             "cancel": lambda: e.cancel(now=now),
             "time_out": lambda: e.time_out(now=now),
+            "wake": e.wake,
             # Only the first node type is side-effect free.
             "recover": lambda: e.recover(repeatable=frozenset(self.ids[:1]), now=now),
         }
@@ -1035,7 +1056,9 @@ class ExecutionMachine(RuleBasedStateMachine):
 
     @rule(
         idx=st.integers(0, 2),
-        op=st.sampled_from(["ready", "start", "skip", "complete", "fail", "retry"]),
+        op=st.sampled_from(
+            ["ready", "start", "skip", "complete", "fail", "retry", "wait", "answer"]
+        ),
         error=_ERRORS,
     )
     def node_action(self, idx: int, op: str, error: ExecutionError) -> None:
@@ -1047,8 +1070,20 @@ class ExecutionMachine(RuleBasedStateMachine):
             "complete": lambda: e.complete_node(nid, now=now),
             "fail": lambda: e.fail_node(nid, error, now=now),
             "retry": lambda: e.retry_node(nid, error, now=now),
+            "wait": lambda: e.wait_node(nid, WAIT, now=now),
+            "answer": lambda: e.resume_node(nid, {"decision": "reject"}, now=now),
         }
         self._try(ops[op])
+
+    @rule()
+    def expire_waits(self) -> None:
+        self._try(lambda: self.e.expire_waits(now=self.now))
+
+    @invariant()
+    def waiting_nodes_carry_their_request(self) -> None:
+        for n in self.e.node_executions.values():
+            if n.status is N.WAITING:
+                assert n.waiting_for is not None
 
     @invariant()
     def terminal_execution_has_only_terminal_nodes(self) -> None:

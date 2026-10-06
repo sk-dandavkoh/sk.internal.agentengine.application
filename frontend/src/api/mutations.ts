@@ -21,6 +21,7 @@ import {
     cancelExecution,
     executeWorkflowVersion,
     invokeTrigger,
+    respondToInput,
 } from './executions'
 import {
     createWorkflow,
@@ -225,6 +226,25 @@ export function useCancelExecution() {
         (qc, execution) =>
             invalidate(
                 qc,
+                queryKeys.executions.detail(execution.id),
+                queryKeys.workflows.executions(execution.workflow_id),
+                queryKeys.executions.overview(),
+            ),
+    )
+}
+
+/** Answers a waiting node. No optimistic update: the server decides
+ * (validation, a concurrent answer, a cancelled run). */
+export function useRespondToInput() {
+    return useApiMutation(
+        (
+            client,
+            v: { executionId: string; nodeId: string; response: JsonObject },
+        ) => respondToInput(client, v.executionId, v.nodeId, v.response),
+        (qc, execution) =>
+            invalidate(
+                qc,
+                // Prefix: the execution, its inputs, events and report.
                 queryKeys.executions.detail(execution.id),
                 queryKeys.workflows.executions(execution.workflow_id),
                 queryKeys.executions.overview(),

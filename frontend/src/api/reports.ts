@@ -11,6 +11,8 @@ export const nodeExecutionStatusSchema = z.enum([
     'pending',
     'ready',
     'running',
+    // Asked for outside input (core.human); answering makes it ready again.
+    'waiting',
     'completed',
     'failed',
     'skipped',

@@ -23,6 +23,7 @@ import { Mono } from './inspector/display'
 import { GraphPanel, NodesPanel } from './inspector/FlowPanels'
 import { ErrorsPanel, EventsPanel, LogsPanel } from './inspector/HistoryPanels'
 import { OverviewPanel } from './inspector/OverviewPanel'
+import { PendingInputs } from './PendingInputs'
 import { LiveActivity, LiveIndicator } from './live'
 import { useLiveExecution } from './useLiveExecution'
 
@@ -68,6 +69,7 @@ function ExecutionView({ execution }: { execution: Execution }) {
             label: 'Overview',
             content: (
                 <div className="flex flex-col gap-6">
+                    <PendingInputs execution={execution} />
                     <OverviewPanel execution={execution} report={report} />
                     {live.state !== 'idle' && (
                         <Card

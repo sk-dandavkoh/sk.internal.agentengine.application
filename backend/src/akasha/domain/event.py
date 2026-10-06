@@ -36,6 +36,8 @@ class EventType(StrEnum):
     # resumes (never restarts) when a worker runs it.
     EXECUTION_RECOVERED = "execution.recovered"
     EXECUTION_RESUMED = "execution.resumed"
+    # Nothing can run until a waiting node is answered (or its wait expires).
+    EXECUTION_WAITING = "execution.waiting"
     NODE_STARTED = "node.started"
     NODE_COMPLETED = "node.completed"
     NODE_FAILED = "node.failed"
@@ -43,6 +45,8 @@ class EventType(StrEnum):
     NODE_SKIPPED = "node.skipped"
     NODE_CANCELLED = "node.cancelled"
     NODE_EMITTED = "node.emitted"  # a node's own declared event (SDK)
+    NODE_WAITING = "node.waiting"  # the attempt asked for outside input
+    NODE_RESUMED = "node.resumed"  # answered or expired; it runs again
     WORKFLOW_PUBLISHED = "workflow.published"
     # Audit (architecture §67): packages carry workflow content across
     # installations. ``workflow_version`` is the exported version (None for
@@ -66,6 +70,7 @@ PAYLOAD_KEYS: Final[Mapping[EventType, frozenset[str]]] = {
     # How many in-flight node attempts the dead owner left behind.
     EventType.EXECUTION_RECOVERED: frozenset({"interrupted_nodes"}),
     EventType.EXECUTION_RESUMED: frozenset(),
+    EventType.EXECUTION_WAITING: frozenset(),
     EventType.NODE_STARTED: frozenset({"attempt"}),
     EventType.NODE_COMPLETED: frozenset({"attempt"}),
     EventType.NODE_FAILED: _ERROR | {"attempt"},
@@ -75,6 +80,9 @@ PAYLOAD_KEYS: Final[Mapping[EventType, frozenset[str]]] = {
     EventType.NODE_CANCELLED: frozenset(),
     # ``name`` is one of the node definition's declared event names.
     EventType.NODE_EMITTED: frozenset({"name", "attempt"}),
+    EventType.NODE_WAITING: frozenset({"attempt"}),
+    # ``outcome``: "responded" or "timed_out". Never the response itself.
+    EventType.NODE_RESUMED: frozenset({"outcome"}),
     EventType.WORKFLOW_PUBLISHED: frozenset(),
     EventType.WORKFLOW_EXPORTED: frozenset(),
     EventType.WORKFLOW_IMPORTED: frozenset(),

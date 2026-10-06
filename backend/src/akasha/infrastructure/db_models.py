@@ -165,7 +165,7 @@ _EXECUTION_STATUSES = (
     "'completed','failed','cancelled','timeout'"
 )
 _NODE_STATUSES = (
-    "'pending','ready','running','completed','failed','skipped','cancelled'"
+    "'pending','ready','running','waiting','completed','failed','skipped','cancelled'"
 )
 
 executions = Table(
@@ -195,6 +195,9 @@ executions = Table(
         nullable=False,
         server_default=func.now(),
     ),
+    # WAITING only (migration 0018): when the execution must be settled
+    # without a response (a wait deadline or the execution deadline).
+    Column("wake_at", DateTime(timezone=True), nullable=True),
     # Pins the immutable snapshot; RESTRICT keeps history reproducible.
     ForeignKeyConstraint(
         ["workflow_id", "workflow_version"],
@@ -220,6 +223,12 @@ executions = Table(
         "heartbeat_at",
         postgresql_where=text("status IN ('running','paused','waiting')"),
     ),
+    # Due waits are scanned by wake time among WAITING rows only.
+    Index(
+        "ix_executions_waiting_wake_at",
+        "wake_at",
+        postgresql_where=text("status = 'waiting'"),
+    ),
 )
 
 node_executions = Table(
@@ -237,6 +246,9 @@ node_executions = Table(
     Column("attempt", Integer, nullable=False),
     Column("failures", JSONB_VARIANT, nullable=False),
     Column("outputs", JSONB_VARIANT, nullable=True),
+    # The last wait request and the response the next attempt receives.
+    Column("wait", JSONB_VARIANT, nullable=True),
+    Column("resume", JSONB_VARIANT, nullable=True),
     Column("retry_at", DateTime(timezone=True), nullable=True),
     Column("started_at", DateTime(timezone=True), nullable=True),
     Column("finished_at", DateTime(timezone=True), nullable=True),

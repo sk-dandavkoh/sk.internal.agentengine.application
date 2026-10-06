@@ -7,6 +7,7 @@ composition root calls ``create_builtin_registry`` once at startup.
 
 from akasha.domain.ai import LLMClient
 from akasha.nodes.agent import AgentNode
+from akasha.nodes.browser import BrowserNode
 from akasha.nodes.command import DEFAULT_MAX_OUTPUT_BYTES, CommandNode
 from akasha.nodes.control import IfNode, SwitchNode
 from akasha.nodes.core import (
@@ -18,6 +19,7 @@ from akasha.nodes.core import (
     PickNode,
     SetNode,
 )
+from akasha.nodes.database import DatabaseNode
 from akasha.nodes.files import (
     DEFAULT_MAX_FILE_BYTES,
     FileListNode,
@@ -30,9 +32,11 @@ from akasha.nodes.http import (
     WebFetchNode,
     WebSearchNode,
 )
+from akasha.nodes.human import HumanNode
 from akasha.nodes.llm import LlmNode
 from akasha.nodes.registry import NodeRegistry
 from akasha.nodes.smtp import SmtpNode
+from akasha.nodes.transform import TransformNode
 from akasha.security.network import NetworkPolicy
 from akasha.security.paths import Workspace
 
@@ -49,9 +53,10 @@ def create_builtin_registry(
     command_max_output_bytes: int = DEFAULT_MAX_OUTPUT_BYTES,
 ) -> NodeRegistry:
     """A registry with every ``core.*`` node. ``network`` governs the
-    user-configured destinations of core.http, core.web_fetch and
-    core.smtp; ``llm`` serves core.llm and core.agent (without it they fail
-    with LLM_NOT_CONFIGURED); ``workspace`` hosts the file nodes and
+    user-configured destinations of core.http, core.web_fetch, core.smtp,
+    core.database (PostgreSQL) and core.browser; ``llm`` serves core.llm and
+    core.agent (without it they fail with LLM_NOT_CONFIGURED); ``workspace``
+    hosts the file nodes, SQLite databases, browser screenshots and
     core.command, which runs only ``allowed_commands``. core.agent offers
     any node of this registry as a tool — plugin nodes included."""
     policy = network or NetworkPolicy()
@@ -66,6 +71,8 @@ def create_builtin_registry(
         MergeNode,
         SetNode,
         PickNode,
+        HumanNode,
+        TransformNode,
     ):
         registry.register(node_cls)
     registry.register(
@@ -91,6 +98,16 @@ def create_builtin_registry(
     )
     registry.register(
         FileListNode, lambda: FileListNode(workspace, max_file_bytes=max_file_bytes)
+    )
+    registry.register(DatabaseNode, lambda: DatabaseNode(workspace, policy))
+    registry.register(
+        BrowserNode,
+        lambda: BrowserNode(
+            policy,
+            workspace,
+            max_response_bytes=http_max_response_bytes,
+            max_file_bytes=max_file_bytes,
+        ),
     )
     registry.register(
         CommandNode,

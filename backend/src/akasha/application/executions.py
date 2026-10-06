@@ -29,13 +29,15 @@ from akasha.domain.execution import (
     ExecutionMetadata,
     ExecutionStatus,
     LogLevel,
+    NodeExecutionStatus,
     NodeLogEntry,
     RetryPolicy,
     TimeoutPolicy,
+    WaitState,
 )
-from akasha.domain.limits import ResourceLimitError, ResourceLimits
-from akasha.domain.primitives import utcnow
-from akasha.errors import AkashaError
+from akasha.domain.limits import ResourceLimitError, ResourceLimits, json_size
+from akasha.domain.primitives import is_storable, utcnow
+from akasha.errors import AkashaError, DomainValidationError
 from akasha.observability.execution import observe_execution
 from akasha.observability.metrics import EngineMetrics
 
@@ -45,6 +47,11 @@ logger = logging.getLogger("akasha.application.executions")
 class ExecutionNotFoundError(AkashaError):
     code = "EXECUTION_NOT_FOUND"
     http_status = 404
+
+
+# A response is a person's answer, persisted on the node execution and
+# handed to the node: large payloads belong in files, not in a form.
+MAX_RESPONSE_BYTES = 64 * 1024
 
 
 async def load_execution(uow: UnitOfWork, execution_id: str) -> Execution:
@@ -209,6 +216,64 @@ class ExecutionService:
                 extra={"event": "execution_dispatch_failed"},
                 exc_info=True,
             )
+
+    async def pending_inputs(self, execution_id: str) -> dict[str, WaitState]:
+        """What the execution's waiting nodes ask for, by node id."""
+        execution = await self.get_execution(execution_id)
+        return {
+            node_id: ne.waiting_for
+            for node_id, ne in sorted(execution.node_executions.items())
+            if ne.status is NodeExecutionStatus.WAITING and ne.waiting_for is not None
+        }
+
+    async def respond(
+        self,
+        execution_id: str,
+        node_id: str,
+        response: Mapping[str, Any],
+        *,
+        responded_by: str | None = None,
+    ) -> Execution:
+        """Answer a waiting node and dispatch the execution to continue.
+
+        The response must satisfy the node's response schema. The save is a
+        compare-and-swap on the execution's revision, so of two concurrent
+        answers exactly one wins; the other finds the node no longer waiting
+        (409). While another branch of the execution is running the answer
+        is refused (409) and can be sent again once it waits.
+        """
+        if (
+            not is_storable(dict(response))
+            or json_size(dict(response)) > MAX_RESPONSE_BYTES
+        ):
+            raise DomainValidationError(
+                "the response must be a JSON object of at most "
+                f"{MAX_RESPONSE_BYTES} bytes"
+            )
+        # Read and write in separate transactions, like ``runtime.cancel``:
+        # the revision CAS decides between concurrent answers. Holding the
+        # read's share lock into the write would deadlock two of them.
+        async with self._uow() as uow:
+            execution = await load_execution(uow, execution_id)
+        execution.resume_node(node_id, response, responded_by=responded_by)
+        async with self._uow() as uow:
+            await save_execution(uow, execution)
+            await uow.commit()
+        events = execution.pull_events()
+        execution.pull_logs()
+        observe_execution(execution, events, self._metrics)
+        await self._events.publish(events)
+        logger.info(
+            "node_responded",
+            extra={
+                "event": "node_responded",
+                "execution_id": execution_id,
+                "node_id": node_id,
+                "responded_by": responded_by,
+            },
+        )
+        await self._dispatch(execution.id)
+        return execution
 
     async def get_execution(self, execution_id: str) -> Execution:
         async with self._uow() as uow:

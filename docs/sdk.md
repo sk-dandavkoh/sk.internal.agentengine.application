@@ -1,6 +1,6 @@
 # Python Node SDK
 
-SDK version: **1.1.0** (`akasha.sdk.SDK_VERSION`)
+SDK version: **1.2.0** (`akasha.sdk.SDK_VERSION`)
 
 The SDK is the supported way to write custom Nodes. A custom Node imports
 from two modules only:
@@ -118,12 +118,14 @@ repeat those checks.
 | `execution_id`, `node_execution_id`, `node_instance_id`, `workflow_id`, `workflow_version` | Ids, for correlation only. |
 | `runtime_metadata` | Includes `attempt` (1-based) and `engine_version`. |
 | `execution_input` | The payload the execution started with. Entry nodes read it; other nodes use their ports. |
+| `resume` | `None`, except on the attempt after a `NodeWait` was answered or expired: `{"response", "responded_by", "timed_out"}`. |
 
 ### Result and errors
 
 | Name | Purpose |
 |---|---|
 | `NodeResult(outputs)` | The success value: a mapping from output port name to value. |
+| `NodeWait(prompt, response_schema, timeout=None)` | (1.2.0) Ask for outside input instead of finishing: the execution waits persistently until it is answered (validated against `response_schema`, a `NodeConfigSchema`) or `timeout` passes, then `execute` runs again with `context.resume`. Only for nodes declaring `NodeCapabilities(waits_for_input=True)`; such nodes cannot be agent tools. `akasha.sdk.testing.run_node` covers result-returning attempts only. |
 | `NodeError(message, kind=..., code=..., details=...)` | The only way to report failure. `code` is your stable, upper-case identifier. `details` values are strings. |
 | `NodeErrorKind` | `VALIDATION`, `CONFIGURATION`, `PERMANENT` (not retryable); `TRANSIENT`, `TIMEOUT` (retryable); `CANCELLATION`. |
 | `NodeContractError`, `NodeConfigurationError`, `NodeValidationError` | Raised by the definition, config and port checks. You meet them in tests. |

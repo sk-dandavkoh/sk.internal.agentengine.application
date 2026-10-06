@@ -164,6 +164,23 @@ values stop the container with a `CONFIGURATION_ERROR` naming the setting.
 Apply a changed `.env` with `docker compose up -d` (recreates the affected
 containers).
 
+Optional node dependencies:
+
+- `core.database` with SQLite needs `AKASHA_WORKSPACE_DIR` (the files live
+  in the workflow's workspace directory); with PostgreSQL the connection
+  URL is a credential, and a database on a private network must be allowed
+  like any other destination (`AKASHA_NETWORK_ALLOWED_HOSTS`).
+- `core.browser` needs the backend's optional `browser` extra and a
+  Chromium build: `uv sync --extra browser && uv run playwright install
+  --with-deps chromium`. The default image does not include them (they add
+  several hundred megabytes); without them the node fails with
+  `BROWSER_NOT_CONFIGURED`. Screenshots need `AKASHA_WORKSPACE_DIR`.
+- `core.human` answers that nobody gives are settled by the workers'
+  recovery pass (`AKASHA_QUEUE_RECOVERY_SECONDS`), so a wait deadline is
+  honoured within that interval. The execution timeout
+  (`AKASHA_LIMIT_EXECUTION_TIMEOUT_SECONDS`, default one hour) counts
+  waiting time: raise it for approvals that may take days.
+
 ## 5. Health, readiness, logs, metrics
 
 | Endpoint | Meaning | Use for |

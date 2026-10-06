@@ -17,6 +17,7 @@ import {
     type LogFilter,
     type LogPage,
     type WorkflowExecutionListParams,
+    listPendingInputs,
 } from './executions'
 import { listNodeDefinitions, validateNodeConfig } from './nodes'
 import { listPlugins } from './plugins'
@@ -77,6 +78,8 @@ export const queryKeys = {
             ['executions', executionId, 'events', after] as const,
         report: (executionId: string) =>
             ['executions', executionId, 'report'] as const,
+        inputs: (executionId: string) =>
+            ['executions', executionId, 'inputs'] as const,
         logs: (executionId: string, filter: LogFilter) =>
             ['executions', executionId, 'logs', filter] as const,
     },
@@ -194,6 +197,13 @@ export const executionQueries = {
             queryKey: queryKeys.executions.events(executionId, after),
             queryFn: ({ signal }) =>
                 listExecutionEvents(client, executionId, { after }, signal),
+        }),
+    /** What the execution's waiting nodes ask for. */
+    inputs: (client: ApiClient, executionId: string) =>
+        queryOptions({
+            queryKey: queryKeys.executions.inputs(executionId),
+            queryFn: ({ signal }) =>
+                listPendingInputs(client, executionId, signal),
         }),
     report: (client: ApiClient, executionId: string) =>
         queryOptions({

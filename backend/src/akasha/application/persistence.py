@@ -253,14 +253,25 @@ class ExecutionRepository(Protocol):
         ...
 
     async def list_stale(self, *, stale_after: timedelta, limit: int) -> Sequence[str]:
-        """Ids of started (running/paused/waiting) executions without a
-        heartbeat for ``stale_after``, stalest first."""
+        """Ids of running/paused executions without a heartbeat for
+        ``stale_after``, stalest first. WAITING executions have no owner, so
+        they are never stale (``list_due_waits`` covers their deadlines)."""
         ...
 
     async def claim_stale(self, execution_id: str, *, stale_after: timedelta) -> bool:
         """Lock the execution row for this transaction if it is still stale.
         Skips a row another recoverer holds; an owner's heartbeat then waits
         for the commit and finds the revision moved on."""
+        ...
+
+    async def list_due_waits(self, *, now: datetime, limit: int) -> Sequence[str]:
+        """Ids of WAITING executions whose ``wake_at`` is at or before
+        ``now``, earliest first."""
+        ...
+
+    async def claim_due_wait(self, execution_id: str, *, now: datetime) -> bool:
+        """Lock the execution row for this transaction if it is still a due
+        WAITING execution; skips a row another worker holds."""
         ...
 
 

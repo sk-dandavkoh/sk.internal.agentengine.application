@@ -16,7 +16,7 @@ import asyncio
 import logging
 import traceback
 from collections.abc import Mapping
-from dataclasses import replace
+from dataclasses import replace as replace_fields
 from datetime import timedelta
 from typing import Any, cast
 
@@ -27,6 +27,7 @@ from akasha.domain.node import (
     NodeExecutionContext,
     NodeFactory,
     NodeResult,
+    NodeWait,
 )
 from akasha.errors import NodeValidationError
 from akasha.security.redaction import (
@@ -37,7 +38,7 @@ from akasha.security.redaction import (
 
 logger = logging.getLogger("akasha.runtime.executor")
 
-NodeOutcome = NodeResult | ExecutionError
+NodeOutcome = NodeResult | NodeWait | ExecutionError
 
 
 def _invalid(code: str, message: str, node_id: str) -> ExecutionError:
@@ -54,10 +55,16 @@ async def execute_node(
 ) -> NodeOutcome:
     outcome = await _execute(node_cls, context, limit=limit)
     if isinstance(outcome, ExecutionError):
-        return replace(
+        return replace_fields(
             outcome,
             message=redact_text(outcome.message),
             details={k: str(v) for k, v in redact_mapping(outcome.details).items()},
+        )
+    if isinstance(outcome, NodeWait):
+        # The prompt is persisted and shown to whoever answers; it may be
+        # rendered from data that held a resolved secret.
+        return replace_fields(
+            outcome, prompt=redact_text(str(mask_known_secrets(outcome.prompt)))
         )
     return NodeResult(cast("Mapping[str, Any]", mask_known_secrets(outcome.outputs)))
 
@@ -118,6 +125,14 @@ async def _execute(
         # the limit was still exceeded.
         return ExecutionError.node_timeout(node_id=node_id, timeout=limit)
 
+    if isinstance(result, NodeWait):
+        if not definition.capabilities.waits_for_input:
+            return _invalid(
+                "NODE_OUTPUT_INVALID",
+                "node asked to wait but does not declare waits_for_input",
+                node_id,
+            )
+        return result
     if not isinstance(result, NodeResult) or not isinstance(result.outputs, Mapping):
         return _invalid(
             "NODE_OUTPUT_INVALID", "node did not return a NodeResult", node_id

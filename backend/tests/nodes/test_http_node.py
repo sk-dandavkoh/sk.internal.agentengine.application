@@ -472,3 +472,69 @@ async def test_credential_headers_do_not_follow_cross_origin_redirects(
         echoed = result.outputs["body"]["headers"]
         assert ("x-api-key" in echoed) is kept, target
         assert echoed["x-trace"] == "t1"  # ordinary headers still follow
+
+
+# -- query and URL variables (core.http 1.1.0) -------------------------------
+
+
+async def test_query_input_is_merged_into_the_url(
+    run_node: RunNode, http_server: LocalHttpServer
+) -> None:
+    await run_node(
+        local_node(),
+        config={"url": f"{http_server.base_url}/echo?fixed=1"},
+        inputs={
+            "query": {"q": "a b&c", "n": 2, "on": True, "tag": ["x", "y"], "skip": None}
+        },
+    )
+    (request,) = http_server.state.requests
+    assert request.path == "/echo?fixed=1&q=a+b%26c&n=2&on=true&tag=x&tag=y"
+
+
+async def test_url_variables_are_encoded_into_the_path(
+    run_node: RunNode, http_server: LocalHttpServer
+) -> None:
+    await run_node(
+        local_node(),
+        config={
+            "url": f"{http_server.base_url}/status/{{{{ code }}}}?id={{{{ lead.id }}}}"
+        },
+        inputs={"variables": {"code": 204, "lead": {"id": "a/../b?x#y@evil"}}},
+    )
+    (request,) = http_server.state.requests
+    # The value is one opaque segment: no traversal, no new query or host.
+    assert request.path == "/status/204?id=a%2F..%2Fb%3Fx%23y%40evil"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://{{ host }}/x",
+        "http://127.0.0.1:{{ port }}/x",
+        "https://user{{ x }}@example.com/",
+    ],
+)
+async def test_url_variables_cannot_choose_the_server(
+    run_node: RunNode, url: str
+) -> None:
+    with pytest.raises(NodeError) as exc:
+        await run_node(
+            local_node(),
+            config={"url": url},
+            inputs={"variables": {"host": "169.254.169.254", "port": "1", "x": "y"}},
+        )
+    assert exc.value.code == "HTTP_INVALID_URL"
+
+
+@pytest.mark.parametrize("variables", [{}, {"id": {"nested": 1}}, {"id": [1]}])
+async def test_missing_or_structured_url_variables_fail(
+    run_node: RunNode, http_server: LocalHttpServer, variables: dict[str, Any]
+) -> None:
+    with pytest.raises(NodeError) as exc:
+        await run_node(
+            local_node(),
+            config={"url": f"{http_server.base_url}/echo/{{{{ id }}}}"},
+            inputs={"variables": variables},
+        )
+    assert exc.value.code == "HTTP_URL_VARIABLE_MISSING"
+    assert not http_server.state.requests

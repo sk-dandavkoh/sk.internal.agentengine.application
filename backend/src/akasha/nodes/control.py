@@ -75,7 +75,7 @@ def _contains(value: Any, operand: Any) -> bool:
     )
 
 
-_OPERATORS: dict[str, Callable[[Any, Any], bool]] = {
+OPERATORS: dict[str, Callable[[Any, Any], bool]] = {
     "equals": json_equal,
     "not_equals": lambda value, operand: not json_equal(value, operand),
     "greater_than": _compare(operator.gt),
@@ -85,7 +85,7 @@ _OPERATORS: dict[str, Callable[[Any, Any], bool]] = {
     "contains": _contains,
     "is_null": lambda value, _: value is None,
 }
-_UNARY = frozenset({"is_null"})
+UNARY_OPERATORS = frozenset({"is_null"})
 
 
 class IfNode(Node):
@@ -108,7 +108,7 @@ class IfNode(Node):
         ),
         config_schema=closed_schema(
             {
-                "operator": {"type": "string", "enum": sorted(_OPERATORS)},
+                "operator": {"type": "string", "enum": sorted(OPERATORS)},
                 "operand": {  # any JSON value
                     "description": "The value compared with; unused by is_null.",
                 },
@@ -125,7 +125,7 @@ class IfNode(Node):
 
     async def execute(self, context: NodeExecutionContext) -> NodeResult:
         op = context.config["operator"]
-        if op not in _UNARY and "operand" not in context.config:
+        if op not in UNARY_OPERATORS and "operand" not in context.config:
             raise NodeError(
                 f"operator {op!r} needs an operand",
                 kind=NodeErrorKind.CONFIGURATION,
@@ -143,7 +143,7 @@ class IfNode(Node):
                     code="CONDITION_FIELD_MISSING",
                     details={"field": field},
                 )
-        taken = _OPERATORS[op](tested, context.config.get("operand"))
+        taken = OPERATORS[op](tested, context.config.get("operand"))
         return NodeResult({"true" if taken else "false": value})
 
 

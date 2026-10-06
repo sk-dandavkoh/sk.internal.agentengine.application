@@ -281,6 +281,8 @@ void executions.listExecutionLogs(recorder, 'e', {
     limit: 5,
 })
 void executions.cancelExecution(recorder, 'e', 'r')
+void executions.listPendingInputs(recorder, 'e')
+void executions.respondToInput(recorder, 'e', 'n', { decision: 'approve' })
 void executions.executeWorkflowVersion(recorder, 'p', 1, { k: 'v' })
 void executions.invokeTrigger(recorder, 'p', 't', { k: 'v' })
 void reports.getExecutionReport(recorder, 'e')

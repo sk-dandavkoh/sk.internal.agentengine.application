@@ -402,6 +402,10 @@ core.file_read
 core.file_write
 core.file_list
 core.command
+core.human
+core.transform
+core.database
+core.browser
 ```
 
 Weitere Nodes können durch Python oder Plugins hinzugefügt werden.

@@ -61,6 +61,7 @@ PUBLIC_API = {
     "NodeOutput",
     "NodeResult",
     "NodeValidationError",
+    "NodeWait",
     "PortType",
     "check_node_contract",
 }
