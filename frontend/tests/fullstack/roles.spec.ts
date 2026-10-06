@@ -4,7 +4,7 @@ import { expect, test } from '../e2e/fixtures'
 import { adminApi, signIn } from './session'
 
 // What a member sees against the real backend: admin-only areas and other
-// users' projects are refused by the backend, and the UI shows that answer.
+// users' workflows are refused by the backend, and the UI shows that answer.
 // Settings changes the member's password on the backend, which ends the
 // member's other sessions. Plugins is checked from the admin's side.
 
@@ -19,7 +19,7 @@ test.afterAll(async () => {
     await api.dispose()
 })
 
-test('a member is refused admin areas and other projects by the backend; Settings changes the password', async ({
+test('a member is refused admin areas and other workflows by the backend; Settings changes the password', async ({
     browser,
 }) => {
     const member = {
@@ -33,8 +33,8 @@ test('a member is refused admin areas and other projects by the backend; Setting
             })
         ).status(),
     ).toBe(201)
-    const adminProject = (await (
-        await api.post('/api/v1/projects', {
+    const adminWorkflow = (await (
+        await api.post('/api/v1/workflows', {
             data: { name: `Admin only ${randomUUID().slice(0, 8)}` },
         })
     ).json()) as { id: string }
@@ -83,14 +83,14 @@ test('a member is refused admin areas and other projects by the backend; Setting
     )
     expect(write).toBe(403)
 
-    await test.step("another user's project is not served", async () => {
+    await test.step("another user's workflow is not served", async () => {
         const detail = p.waitForResponse((r) =>
-            r.url().endsWith(`/api/v1/projects/${adminProject.id}`),
+            r.url().endsWith(`/api/v1/workflows/${adminWorkflow.id}`),
         )
-        await p.goto(`/projects/${adminProject.id}`)
+        await p.goto(`/workflows/${adminWorkflow.id}`)
         expect((await detail).status()).toBe(404)
         await expect(
-            p.getByRole('heading', { level: 1, name: 'Project not found' }),
+            p.getByRole('heading', { level: 1, name: 'Workflow not found' }),
         ).toBeVisible()
     })
 

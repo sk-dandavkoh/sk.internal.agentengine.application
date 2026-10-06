@@ -17,7 +17,7 @@ Report date: 2026-10-05. Branch `main`. Base commit `94d6bfb` (frontend phase 21
   - Verify that a new developer can install, start, test, lint, typecheck, build, run E2E and understand the feature structure.
   - "Without creating a framework inside the application."
 
-`frontend/AGENTS.md` §1 ranks an explicit project requirement above the roadmap, so the session prompt's scope was implemented. The roadmap's feature list was not worked on in this phase (§19). Some of its items already existed from earlier phases (§14).
+`frontend/AGENTS.md` §1 ranks an explicit workflow requirement above the roadmap, so the session prompt's scope was implemented. The roadmap's feature list was not worked on in this phase (§19). Some of its items already existed from earlier phases (§14).
 
 **Actually implemented.** Only tooling, tests and documentation changed; no application code.
 
@@ -25,7 +25,7 @@ Report date: 2026-10-05. Branch `main`. Base commit `94d6bfb` (frontend phase 21
 - **Port guard:** the same script now refuses to start on a port that already answers.
 - **`npm run check`:** one command for format check, lint, typecheck, unit tests and build.
 - **Flaky unit tests (pre-existing):** fixed in the shared test harness (`src/test/setup.ts`).
-- **Flaky full-stack test (pre-existing):** fixed (`tests/fullstack/projects.spec.ts`).
+- **Flaky full-stack test (pre-existing):** fixed (`tests/fullstack/workflows.spec.ts`).
 - **`frontend/README.md`:**
   - new sections: Local development, Adding a feature, Conventions, Testing, Monitoring, Plugins;
   - two stale claims corrected.
@@ -65,7 +65,7 @@ It forbids new backend domain functions.
 ### Test infrastructure
 - `src/test/setup.ts`: `configure({ asyncUtilTimeout: 5000 })` from `@testing-library/react`, with a comment giving the reason.
 - `src/test/app.tsx`: the doc comment of `routerReady` (`renderRoute().ready`) now says when awaiting it is still needed. Its old text described it as the fix for the cold-import budget.
-- `tests/fullstack/projects.spec.ts`: removed the `expect(getByText('Cancellation requested')).toBeVisible()` assertion in "a run started in the UI is listed, opened and cancelled", with a comment explaining why.
+- `tests/fullstack/workflows.spec.ts`: removed the `expect(getByText('Cancellation requested')).toBeVisible()` assertion in "a run started in the UI is listed, opened and cancelled", with a comment explaining why.
 
 ### Documentation
 - `frontend/README.md`, detailed in §17.
@@ -82,7 +82,7 @@ It forbids new backend domain functions.
 |---|---|---|
 | `frontend/package.json` | Modified | Added `dev:backend` and `check` scripts |
 | `frontend/tests/fullstack/backend.ts` | Modified (+68/−9) | `--dev` mode, port guard, async `until()`, probe timeout, `removeContainers()` |
-| `frontend/tests/fullstack/projects.spec.ts` | Modified | Removed racy assertion on a transient state (§10) |
+| `frontend/tests/fullstack/workflows.spec.ts` | Modified | Removed racy assertion on a transient state (§10) |
 | `frontend/src/test/setup.ts` | Modified | `asyncUtilTimeout: 5000` (§10) |
 | `frontend/src/test/app.tsx` | Modified | `ready` doc comment updated |
 | `frontend/README.md` | Modified (+175/−10) | Sections listed in §17 |
@@ -99,7 +99,7 @@ No architectural changes were introduced during this phase. The following toolin
 - **Context:** the roadmap §28 and the session prompt describe different work under the same phase name.
 - **Chosen approach:** the session prompt.
 - **Alternatives considered:** the roadmap's editor features, or both.
-- **Reason:** `frontend/AGENTS.md` §1 ranks an explicit project requirement first. Doing both would have been scope creep without a request.
+- **Reason:** `frontend/AGENTS.md` §1 ranks an explicit workflow requirement first. Doing both would have been scope creep without a request.
 - **Consequences:** the roadmap's Phase 22 editor features remain unscheduled (§19, §21).
 
 ### Decision: the dev backend is a mode of the full-stack test script
@@ -127,7 +127,7 @@ No architectural changes were introduced during this phase. The following toolin
 - **Consequences:** a failing `findBy*` takes up to 5 s instead of 1 s to report. Tests that need the route loaded before acting (e.g. with fake timers) still use `ready`.
 
 ### Decision: no shared fixture module, no Storybook
-- **Fixtures:** the domain builders (`execution()`, `report()`, `project()`, `node()`) differ per test file on purpose: different node types, statuses and outputs, verified by diffing `ReportsPage.test.tsx` against `ExecutionInspector.test.tsx`. The only identical helpers are three-line `page()` functions, and their `limit` differs per endpoint (10/25/50/100). A shared module would add indirection without removing duplication that matters. The README states the fixture rule instead.
+- **Fixtures:** the domain builders (`execution()`, `report()`, `workflow()`, `node()`) differ per test file on purpose: different node types, statuses and outputs, verified by diffing `ReportsPage.test.tsx` against `ExecutionInspector.test.tsx`. The only identical helpers are three-line `page()` functions, and their `limit` differs per endpoint (10/25/50/100). A shared module would add indirection without removing duplication that matters. The README states the fixture rule instead.
 - **Storybook:** `/dev/ui` (`src/app/UiCatalogPage.tsx`) already renders every primitive in every state and both themes, and it is the E2E target for primitives. Storybook would add a dependency tree and a second catalog.
 
 ## 6. Domain / Data Model Changes
@@ -225,7 +225,7 @@ No contract changes. No backend function was missing for this scope. The dev bac
 - **Root cause:** the cancel mutation stays pending until its invalidation refetch completes (`mutations.ts`). If the worker finishes the cooperative cancellation before that refetch, the backend already reports `cancelled`, so the intermediate state is never rendered. The test asserted a state the system may legitimately skip.
 - **Fix:** removed that assertion. The final UI state, the hidden cancel button and the stored `{status: 'cancelled', cancellable: false}` are still asserted.
 - **Regression test:** the intermediate state stays covered deterministically by `src/features/executions/ExecutionsPage.test.tsx:647`. The full-stack rerun passed 17/17.
-- **Affected area:** `tests/fullstack/projects.spec.ts`.
+- **Affected area:** `tests/fullstack/workflows.spec.ts`.
 
 **Bug 3 — Dev readiness probe hung (introduced and fixed during this phase)**
 - **Problem:** the first `--dev` runs never printed credentials.
@@ -349,7 +349,7 @@ The final `npm run check` ran after every code change. E2E and full stack ran be
 
 | File | What |
 |---|---|
-| `frontend/README.md` | **Local development** (two terminals, throwaway semantics, port override, persistent alternative, example projects); **Commands** (`dev:backend`, `check`; shortened quality gate); **Structure** (both `components/` entries, `tests/fullstack/`, where hooks and schemas live; stale `hooks/schemas/types` claim removed); **Adding a feature** (API → route → screen → tests → docs, modelled on `features/reports/`); **Conventions** (errors, API layer, components, backend decides); **Testing** (`stubBackend`/`renderRoute` example, fixtures, `FakeWebSocket`, jsdom gaps, locale, E2E with `stubSession`, full stack, no Storybook); **Monitoring**; **Plugins**; stale `PlaceholderPage` sentence removed from Decisions |
+| `frontend/README.md` | **Local development** (two terminals, throwaway semantics, port override, persistent alternative, example workflows); **Commands** (`dev:backend`, `check`; shortened quality gate); **Structure** (both `components/` entries, `tests/fullstack/`, where hooks and schemas live; stale `hooks/schemas/types` claim removed); **Adding a feature** (API → route → screen → tests → docs, modelled on `features/reports/`); **Conventions** (errors, API layer, components, backend decides); **Testing** (`stubBackend`/`renderRoute` example, fixtures, `FakeWebSocket`, jsdom gaps, locale, E2E with `stubSession`, full stack, no Storybook); **Monitoring**; **Plugins**; stale `PlaceholderPage` sentence removed from Decisions |
 | `docs/reports/frontend/phase-22-developer-experience.md` | This report |
 
 **Should be updated later:**
@@ -412,7 +412,7 @@ The final `npm run check` ran after every code change. E2E and full stack ran be
   - `frontend/src/test/app.tsx`
   - `frontend/src/test/setup.ts`
   - `frontend/tests/fullstack/backend.ts`
-  - `frontend/tests/fullstack/projects.spec.ts`
+  - `frontend/tests/fullstack/workflows.spec.ts`
 - **Untracked:**
   - `docs/reports/frontend/phase-22-developer-experience.md` (this report)
   - `.claude/launch.json`: created for the browser-pane check of `npm run dev`; not part of the phase, must not be committed.

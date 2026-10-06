@@ -110,9 +110,9 @@ async def run(
     retry_policy: RetryPolicy | None = None,
     metrics: EngineMetrics | None = None,
 ) -> Execution:
-    project_id, version = await h.publish(catalog, graph)
+    workflow_id, version = await h.publish(catalog, graph)
     queued = await service(h, lim).create_execution(
-        project_id, version, retry_policy=retry_policy
+        workflow_id, version, retry_policy=retry_policy
     )
     async with asyncio.timeout(GUARD):
         await h.runtime(catalog, limits=lim, metrics=metrics).run(queued.id)
@@ -127,8 +127,8 @@ async def test_unset_policies_are_persisted_as_the_caps(h: Harness) -> None:
         execution_timeout=timedelta(seconds=90), node_timeout=timedelta(seconds=9)
     )
     catalog = base_catalog(Probe())
-    project_id, version = await h.publish(catalog, chain(2))
-    created = await service(h, lim).create_execution(project_id, version)
+    workflow_id, version = await h.publish(catalog, chain(2))
+    created = await service(h, lim).create_execution(workflow_id, version)
 
     persisted = await h.load(created.id)
     assert persisted.timeout_policy == TimeoutPolicy(
@@ -160,9 +160,11 @@ async def test_policy_beyond_a_cap_is_rejected_and_nothing_is_stored(
         max_node_attempts=3,
     )
     metrics = EngineMetrics()
-    project_id, version = await h.publish(base_catalog(Probe()), chain(2))
+    workflow_id, version = await h.publish(base_catalog(Probe()), chain(2))
     with pytest.raises(ResourceLimitError) as caught:
-        await service(h, lim, metrics).create_execution(project_id, version, **policies)
+        await service(h, lim, metrics).create_execution(
+            workflow_id, version, **policies
+        )
     assert caught.value.limit is limit
     assert await stored_executions(h) == 0
     assert rejected(metrics, limit) == 1
@@ -174,10 +176,13 @@ async def test_policies_exactly_at_the_caps_are_admitted(h: Harness) -> None:
         node_timeout=timedelta(seconds=10),
         max_node_attempts=3,
     )
-    project_id, version = await h.publish(base_catalog(Probe()), chain(2))
+    workflow_id, version = await h.publish(base_catalog(Probe()), chain(2))
     at = TimeoutPolicy(timedelta(seconds=60), timedelta(seconds=10))
     created = await service(h, lim).create_execution(
-        project_id, version, timeout_policy=at, retry_policy=RetryPolicy(max_attempts=3)
+        workflow_id,
+        version,
+        timeout_policy=at,
+        retry_policy=RetryPolicy(max_attempts=3),
     )
     persisted = await h.load(created.id)
     assert persisted.timeout_policy == at
@@ -201,49 +206,49 @@ async def test_graph_caps_at_and_beyond_the_boundary(
     at = await run(h, catalog, chain(4), lim)
     assert at.status is _E.COMPLETED
 
-    project_id, version = await h.publish(catalog, chain(5))
+    workflow_id, version = await h.publish(catalog, chain(5))
     with pytest.raises(ResourceLimitError) as caught:
-        await service(h, lim).create_execution(project_id, version)
+        await service(h, lim).create_execution(workflow_id, version)
     assert caught.value.limit is limit
     assert await stored_executions(h) == 1  # only the admitted one
 
 
-# -- admission: active executions per project ------------------------------------
+# -- admission: active executions per workflow ------------------------------------
 
 
-async def test_project_capacity_at_beyond_and_after_one_finishes(h: Harness) -> None:
-    lim = limits(max_active_executions_per_project=2)
+async def test_workflow_capacity_at_beyond_and_after_one_finishes(h: Harness) -> None:
+    lim = limits(max_active_executions_per_workflow=2)
     metrics = EngineMetrics()
     svc = service(h, lim, metrics)
     catalog = base_catalog(Probe())
-    project_id, version = await h.publish(catalog, chain(2))
+    workflow_id, version = await h.publish(catalog, chain(2))
     other_id, other_version = await h.publish(catalog, chain(2))
 
-    first = await svc.create_execution(project_id, version)
-    await svc.create_execution(project_id, version)  # exactly at the cap
+    first = await svc.create_execution(workflow_id, version)
+    await svc.create_execution(workflow_id, version)  # exactly at the cap
     with pytest.raises(ExecutionCapacityError):
-        await svc.create_execution(project_id, version)
+        await svc.create_execution(workflow_id, version)
     assert rejected(metrics, Limit.ACTIVE_EXECUTIONS) == 1
-    # The cap is per project.
+    # The cap is per workflow.
     await svc.create_execution(other_id, other_version)
 
     # A finished (here: cancelled) execution frees its slot.
     await h.runtime(catalog).cancel(first.id)
-    await svc.create_execution(project_id, version)
+    await svc.create_execution(workflow_id, version)
     with pytest.raises(ExecutionCapacityError):
-        await svc.create_execution(project_id, version)
+        await svc.create_execution(workflow_id, version)
     assert await stored_executions(h) == 4
 
 
 async def test_concurrent_admissions_never_exceed_the_capacity(h: Harness) -> None:
-    """Stress: 20 simultaneous requests against a cap of 5. The project-row
+    """Stress: 20 simultaneous requests against a cap of 5. The workflow-row
     lock serializes them, so exactly 5 are admitted, never more."""
-    svc = service(h, limits(max_active_executions_per_project=5))
-    project_id, version = await h.publish(base_catalog(Probe()), chain(2))
+    svc = service(h, limits(max_active_executions_per_workflow=5))
+    workflow_id, version = await h.publish(base_catalog(Probe()), chain(2))
 
     async with asyncio.timeout(GUARD):
         results = await asyncio.gather(
-            *(svc.create_execution(project_id, version) for _ in range(20)),
+            *(svc.create_execution(workflow_id, version) for _ in range(20)),
             return_exceptions=True,
         )
 
@@ -383,8 +388,8 @@ async def test_parallel_outputs_share_one_execution_budget(h: Harness) -> None:
     )
     root = json_size({"out": "r"})
     lim = limits(max_node_output_bytes=50, max_execution_output_bytes=root + 300)
-    project_id, version = await h.publish(catalog, graph)
-    queued = await service(h, lim).create_execution(project_id, version)
+    workflow_id, version = await h.publish(catalog, graph)
+    queued = await service(h, lim).create_execution(workflow_id, version)
     async with asyncio.timeout(GUARD):
         await h.runtime(catalog, limits=lim, max_concurrency=4).run(queued.id)
 
@@ -517,8 +522,8 @@ async def test_resumed_run_counts_output_produced_before_the_crash(
         ["A.out>B.text"],
     )
     lim = limits(max_node_output_bytes=100, max_execution_output_bytes=119)
-    project_id, version = await h.publish(catalog, graph)
-    queued = await service(h, lim).create_execution(project_id, version)
+    workflow_id, version = await h.publish(catalog, graph)
+    queued = await service(h, lim).create_execution(workflow_id, version)
 
     owner = asyncio.create_task(h.runtime(catalog, limits=lim).run(queued.id))
     await wait_for(started)
@@ -570,8 +575,8 @@ async def test_in_flight_nodes_never_exceed_the_concurrency_limit(h: Harness) ->
         {"R": ("test.emit", {"value": "r"}), **fan}, [f"R.out>{n}.text" for n in fan]
     )
     lim = limits()
-    project_id, version = await h.publish(catalog, graph)
-    queued = await service(h, lim).create_execution(project_id, version)
+    workflow_id, version = await h.publish(catalog, graph)
+    queued = await service(h, lim).create_execution(workflow_id, version)
     async with asyncio.timeout(GUARD):
         result = await h.runtime(catalog, limits=lim, max_concurrency=3).run(queued.id)
     assert result.status is _E.COMPLETED

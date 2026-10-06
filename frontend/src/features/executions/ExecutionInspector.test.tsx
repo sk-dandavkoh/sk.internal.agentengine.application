@@ -8,13 +8,13 @@ import { MAX_RENDERED_CHARS } from './inspector/format'
 
 const AT = '2026-10-02T08:00:00Z'
 const LATER = '2026-10-02T08:00:01Z'
-const PID = 'proj_1'
+const PID = 'wf_1'
 const EID = 'exec_1'
 
 function execution(status = 'completed') {
     return {
         id: EID,
-        project_id: PID,
+        workflow_id: PID,
         version: 2,
         status,
         trigger_type: 'manual',
@@ -73,7 +73,7 @@ function report(overrides: object = {}, execution: object = {}) {
     return {
         schema_version: 1,
         execution_id: EID,
-        project: {
+        workflow: {
             id: PID,
             name: 'Lead scoring',
             version: 2,
@@ -138,7 +138,7 @@ const logPage = (items: unknown[], has_more = false) => ({
 })
 
 const versionBody = {
-    id: 'pver_2',
+    id: 'wfver_2',
     version: 2,
     description: '',
     schema_version: 1,
@@ -173,7 +173,7 @@ const routes = {
     detail: `GET /executions/${EID}`,
     report: `GET /reports/executions/${EID}`,
     logs: `GET /executions/${EID}/logs`,
-    version: `GET /projects/${PID}/versions/2`,
+    version: `GET /workflows/${PID}/versions/2`,
 }
 
 function backend(

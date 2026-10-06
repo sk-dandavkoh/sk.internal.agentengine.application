@@ -208,7 +208,7 @@ Roadmap §21 objective: inspect executions in detail. The OpenCode prompt adds:
 | `frontend/src/features/versions/SnapshotCanvas.tsx` | Modified | `label`, `footer`, `onNodeClick` |
 | `frontend/src/features/dashboard/format.ts` | Modified | `formatMilliseconds` |
 | `frontend/tests/fullstack/backend.sh` | Modified | Redis container, worker on, `AKASHA_LOG_LEVEL=INFO` |
-| `frontend/tests/fullstack/projects.spec.ts` | Modified | `publishChain`/`publishSlow`; 2 tests adapted; 1 new inspector journey |
+| `frontend/tests/fullstack/workflows.spec.ts` | Modified | `publishChain`/`publishSlow`; 2 tests adapted; 1 new inspector journey |
 | `frontend/tests/fullstack/teardown.ts` | Modified | Comment: removes both containers |
 | `docs/architecture.md` | Modified | §22 endpoint list, §52 node log history, §55 failure attempts |
 | `docs/sdk.md` | Modified | §4 Logging: stored lines and their limits |
@@ -308,7 +308,7 @@ Tab and selected node live in `?tab=&node=` (`frontend/AGENTS.md` §99), so an i
 | Status | Code | When |
 |---|---|---|
 | 401 | `AUTHENTICATION_REQUIRED` | No session |
-| 404 | `EXECUTION_NOT_FOUND` | Unknown execution, and an execution in a project the caller cannot see (`authorize_path`) |
+| 404 | `EXECUTION_NOT_FOUND` | Unknown execution, and an execution in a workflow the caller cannot see (`authorize_path`) |
 | 422 | | Bad `level`, `limit`, `after` or `q` |
 
 **Compatibility:** additive.
@@ -346,7 +346,7 @@ Malformed records (bad `%` args) are caught in `emit` and passed to `Handler.han
   - `executionQueries.report` (one query, shared by all tabs);
   - `useLiveExecution`;
   - the URL state.
-- Tabs render only the selected panel (`Tabs` filters items), so the Graph (`projectQueries.version`, immutable, `staleTime: Infinity`) and the logs queries load only when their tab is opened.
+- Tabs render only the selected panel (`Tabs` filters items), so the Graph (`workflowQueries.version`, immutable, `staleTime: Infinity`) and the logs queries load only when their tab is opened.
 - `LogList` uses `useInfiniteQuery` with key `['executions', id, 'logs', filter]`, so a filter change is a new query.
 - Live reconciliation invalidates `['executions', id]`, which covers detail, report, events and logs.
 
@@ -406,7 +406,7 @@ The search input applies on form submit (`role="search"`), not per keystroke; cl
 ### F8 — The backend refuses secret-shaped strings in node config
 - **Impact:** none (confirmation).
 - **Resolution:** n/a.
-- **Notes:** while seeding a manual test project, a `core.log` message containing `sk-live-…` was rejected with 422 `PLAINTEXT_SECRET`. Secrets can reach logs only through runtime data (inputs), which the capture redacts; that was verified manually.
+- **Notes:** while seeding a manual test workflow, a `core.log` message containing `sk-live-…` was rejected with 422 `PLAINTEXT_SECRET`. Secrets can reach logs only through runtime data (inputs), which the capture redacts; that was verified manually.
 
 ### F9 — The roadmap's eight tabs vs. the implementation
 - **Impact:** LOW.
@@ -426,8 +426,8 @@ The search input applies on form submit (`role="search"`), not per keystroke; cl
 | Ruff S608 in `backup.py` | f-string SQL for `setval` | `select(func.setval(...))` | Backup round-trip test |
 | ESLint fast-refresh errors | Constants exported from component files | Moved to `inspector/format.ts` | Lint |
 | Huge-output test race | `findAllByText` resolved before the log line loaded | `waitFor(... toHaveLength(2))` | `ExecutionInspector.test.tsx` |
-| Full-stack slow runs failed `INPUT_FIELD_MISSING` | `core.input` in the slow graph, runs started with `{}` | Slow graph starts at `core.delay` | `projects.spec.ts` |
-| Full-stack cancel assertion | A RUNNING run's cancel shows "Cancellation requested", not "Execution cancelled" | Assert the request toast, then the persisted "Cancelled" | `projects.spec.ts` |
+| Full-stack slow runs failed `INPUT_FIELD_MISSING` | `core.input` in the slow graph, runs started with `{}` | Slow graph starts at `core.delay` | `workflows.spec.ts` |
+| Full-stack cancel assertion | A RUNNING run's cancel shows "Cancellation requested", not "Execution cancelled" | Assert the request toast, then the persisted "Cancelled" | `workflows.spec.ts` |
 
 **Pre-existing, found during this phase:**
 - F4: Phase 14 refetch amplification.
@@ -597,9 +597,9 @@ Final results after the follow-up:
   - pattern redaction plus exact known-value masking at capture (inside the node task);
   - second redaction on API output;
   - exceptions stored as type name only (no messages, tracebacks or paths, AGENTS §8);
-  - plaintext secrets in project config are rejected by the existing `PLAINTEXT_SECRET` rule (F8);
+  - plaintext secrets in workflow config are rejected by the existing `PLAINTEXT_SECRET` rule (F8);
   - limit: shapeless secrets that never went through the credential store (e.g. typed into an execution input under a non-sensitive key) cannot be recognized. This is unchanged backend policy (architecture §109).
-- **Authorization:** the logs route uses the existing `authorize_path` dependency (session required; project visibility; unknown and hidden executions both answer 404).
+- **Authorization:** the logs route uses the existing `authorize_path` dependency (session required; workflow visibility; unknown and hidden executions both answer 404).
 - **Input validation:** `level` enum; `limit` 1–100; `after` ≥ 0; `q` 1–200 characters; `q` is passed as a bound parameter with LIKE wildcards escaped (no injection, no wildcard scans).
 - **XSS / output encoding:** all untrusted strings render as React text. There is no `dangerouslySetInnerHTML`, `innerHTML`, Markdown or auto-linking in the inspector. JSON is shown via `JSON.stringify`. Tested with `<script>`, `<img onerror>`, `<b>` and `javascript:` payloads.
 - **Browser storage / URL:** nothing stored; the URL holds tab and node ids only (tested).

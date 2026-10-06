@@ -256,7 +256,7 @@ export function CredentialsPage() {
             {forbidden ? (
                 <ErrorState
                     title="Admin access required"
-                    description="Only admins can manage credentials. Your projects can still use a credential by its reference, e.g. credential:<name>."
+                    description="Only admins can manage credentials. Your workflows can still use a credential by its reference, e.g. credential:<name>."
                 />
             ) : (
                 <QuerySection query={query} subject="credentials">
@@ -264,7 +264,7 @@ export function CredentialsPage() {
                         items.length === 0 && offset === 0 ? (
                             <EmptyState
                                 title="No credentials yet"
-                                description="Store an API key or password once; projects reference it by name."
+                                description="Store an API key or password once; workflows reference it by name."
                                 action={newCredential}
                             />
                         ) : (

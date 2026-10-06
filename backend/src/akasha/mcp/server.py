@@ -18,7 +18,7 @@ and the CLI (docs/mcp.md, ADR 0006)::
   why the SDK's DNS-rebinding guard (for unauthenticated local servers) is
   off.
 - Authorization: each tool calls the same ``AuthorizationService`` checks
-  the REST guards call; a hidden project answers "not found" here too.
+  the REST guards call; a hidden workflow answers "not found" here too.
 - Every result passes ``_Kit.tool``: domain errors become structured error
   results, unexpected ones a bare ``INTERNAL_ERROR``; results over
   ``AKASHA_MCP_MAX_RESPONSE_BYTES`` are refused; every call is audit-logged
@@ -69,21 +69,21 @@ _RETRYABLE: Final = frozenset(
 )
 # Arguments that name the resource a call acts on: logged for the audit
 # trail. Ids only, never free text or configuration.
-_TARGETS: Final = ("project_id", "execution_id", "plugin_id", "node_type", "version")
+_TARGETS: Final = ("workflow_id", "execution_id", "plugin_id", "node_type", "version")
 
 _identity: ContextVar[Identity | None] = ContextVar("akasha_mcp_identity", default=None)
 
 INSTRUCTIONS: Final = """\
-Akasha Engine control plane. You can discover node types, build project
+Akasha Engine control plane. You can discover node types, build workflow
 graphs in mutable drafts, validate, publish immutable versions, run them and
 inspect executions, and (admins) manage plugins.
 
 Start with system_info. Typical flow: node_types_list -> node_type_get ->
-project_create -> graph_node_add / graph_node_update / graph_edge_add ->
-project_validate -> project_publish -> execution_start -> execution_get ->
+workflow_create -> graph_node_add / graph_node_update / graph_edge_add ->
+workflow_validate -> workflow_publish -> execution_start -> execution_get ->
 execution_logs_get / execution_node_get.
 
-Every draft write takes expected_revision (from the last project or graph
+Every draft write takes expected_revision (from the last workflow or graph
 result) and returns the new revision; CONCURRENT_MODIFICATION means re-read
 and retry. Errors are structured: {code, message, details, retryable}.
 

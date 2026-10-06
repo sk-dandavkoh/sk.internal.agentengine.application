@@ -77,8 +77,8 @@ calls on `self`.
 | When | What | Failure |
 |---|---|---|
 | Registration | `definition` exists, `execute` is implemented | `NodeContractError` |
-| Draft save / publish | the config holds no plaintext secrets | the project is rejected |
-| Publish (and before every run) | the config matches `config_schema` | the project is rejected |
+| Draft save / publish | the config holds no plaintext secrets | the workflow is rejected |
+| Publish (and before every run) | the config matches `config_schema` | the workflow is rejected |
 | Before `execute` | inputs match the declared input ports | `NODE_INPUT_INVALID` |
 | During `execute` | node timeout, cooperative cancellation | `NODE_TIMEOUT`, cancelled |
 | After `execute` | outputs match the declared output ports | `NODE_OUTPUT_INVALID` |
@@ -115,7 +115,7 @@ repeat those checks.
 | `events` | `emit(name)` for events declared in `definition.events`. |
 | `resolve_credential(reference)` | Returns the secret behind a credential reference in `config`. |
 | `is_cancelled()` | Poll this during long work; stop promptly when it returns `True`. |
-| `execution_id`, `node_execution_id`, `node_instance_id`, `project_id`, `project_version` | Ids, for correlation only. |
+| `execution_id`, `node_execution_id`, `node_instance_id`, `workflow_id`, `workflow_version` | Ids, for correlation only. |
 | `runtime_metadata` | Includes `attempt` (1-based) and `engine_version`. |
 | `execution_input` | The payload the execution started with. Entry nodes read it; other nodes use their ports. |
 
@@ -143,7 +143,7 @@ context.logger.info("payload_signed", extra={"bytes": size})
 ```
 
 Each line automatically carries `execution_id`, `node_execution_id`,
-`node_id`, `node_type`, `project_id` and `correlation_id`. Output is
+`node_id`, `node_type`, `workflow_id` and `correlation_id`. Output is
 redacted centrally.
 
 Still, log sizes, counts and ids, never payloads. Workflow data can be
@@ -317,7 +317,7 @@ Lifecycle (`akasha.plugins.registry.PluginRegistry`, directory
 | install | validate manifest → check compatibility → copy (regular files only, no symlinks) → install `python_requirements` → import → register nodes. On any failure nothing is left behind. |
 | startup | discovers installed plugins, loads enabled ones after their dependencies, and reinstalls missing or stale libraries; one that fails is marked `FAILED`, the Engine still starts. |
 | disable / enable | unregisters / re-registers the nodes; the state survives restarts. Blocked (`PLUGIN_IN_USE`) while an enabled plugin depends on it. |
-| update | replaces the installed package with a new version of the same id, atomically (on failure the old one is restored); refused while projects use the plugin unless forced. Published project versions stay pinned to the plugin version they were published with and refuse to run on another one (ADR 0006). Over MCP: `plugin_update`. |
+| update | replaces the installed package with a new version of the same id, atomically (on failure the old one is restored); refused while workflows use the plugin unless forced. Published workflow versions stay pinned to the plugin version they were published with and refuse to run on another one (ADR 0006). Over MCP: `plugin_update`. |
 | remove | disables, then deletes the installed copy and its libraries. |
 
 Admins drive the same lifecycle over `/api/v1/plugins` and the Plugins page,
@@ -328,7 +328,7 @@ Upload install is opt-in (`AKASHA_PLUGINS_HTTP_INSTALL`, ADR 0001). The
 upload is a ZIP of the package, with the package at the root or in one
 top-level directory.
 
-A project may declare `Dependency(kind="plugin")`. Validate and publish then
+A workflow may declare `Dependency(kind="plugin")`. Validate and publish then
 require an enabled plugin whose version satisfies the constraint.
 
 Plugin code is trusted code, like any custom Node (§ trust model above).
@@ -646,11 +646,11 @@ Then:
    is taken, `export AKASHA_HTTP_PORT=8090` first.
 2. The plugin appears on the Plugins page as `enabled`. If it is `failed`,
    read the reason in the logs: `akdev logs api | grep plugin_`.
-3. Build a project with your node in the editor, publish it and run it.
+3. Build a workflow with your node in the editor, publish it and run it.
    Inspect outputs, logs, events and metrics in the Execution Inspector.
 4. Edit `acme/nodes.py` and save. Watch prints
    `service(s) ["api" "worker"] restarted`, which takes a few seconds. Run
-   the project again to execute the new code.
+   the workflow again to execute the new code.
 
 Useful commands while the stack runs:
 
@@ -703,7 +703,7 @@ configured index. An air-gapped host can use a wheelhouse instead:
    `UV_OFFLINE=1`.
 
 Upgrade: bump `version` in the manifest (and each changed node's
-`metadata.version`), then remove and install. Projects keep working as
+`metadata.version`), then remove and install. Workflows keep working as
 long as the node ids and their compatibility constraints still match. When
 the new version needs a different version of a library the engine already
 loaded, restart between remove and install (§9, `details.distributions`).

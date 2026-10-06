@@ -224,7 +224,7 @@ previous engine version.
 
 `akasha backup` writes one gzip JSON document: a manifest (format, engine
 version, schema revision, enabled plugins) and every row of every table
-from one consistent snapshot — projects, versions, executions, events,
+from one consistent snapshot — workflows, versions, executions, events,
 users and **encrypted** credentials. Login sessions are left out.
 
 Not included, keep them yourself:
@@ -273,7 +273,7 @@ overwrite one deliberately, add `--replace` (truncate and reload, in the
 same transaction).
 
 After a restore, users log in again (sessions are not restored). Verify:
-log in, list projects and credentials, and run a project.
+log in, list workflows and credentials, and run a workflow.
 
 ## 9. Recovery
 
@@ -333,7 +333,7 @@ Settings, tools, security model and client setup: `docs/mcp.md`.
 ## 11. Verifying a deployment
 
 The deployment tests run against the real images and `docker-compose.yml`,
-each in an isolated Compose project that is deleted afterwards, and reach
+each in an isolated Compose workflow that is deleted afterwards, and reach
 the stack only through its one published port:
 
 - the operator lifecycle: clean install → migrate → first admin,
@@ -345,7 +345,7 @@ the stack only through its one published port:
   404 for missing assets), MCP is off (`/mcp` 404), setup is offered and
   then closed, and the generated secrets survive a recreation;
 - MCP enabled: `/mcp` refuses anonymous requests, then a real MCP client
-  goes through nginx to build, publish and start a project, which the
+  goes through nginx to build, publish and start a workflow, which the
   dedicated worker runs to completion; the API stops gracefully.
 
 ```bash

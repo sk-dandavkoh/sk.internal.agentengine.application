@@ -51,8 +51,8 @@ class TriggerScheduler:
         self._clock = clock
         self._poll_seconds = poll_seconds
         self._sleep = sleep
-        # (project id, trigger id) -> (schedule spec, next due). Trigger ids
-        # are unique only per project. The spec makes a republished trigger
+        # (workflow id, trigger id) -> (schedule spec, next due). Trigger ids
+        # are unique only per workflow. The spec makes a republished trigger
         # with a changed type or schedule re-arm from scratch. A next due of
         # None parks an unschedulable trigger until its spec changes. The
         # state lives in memory: a restart re-anchors every schedule.
@@ -62,7 +62,7 @@ class TriggerScheduler:
         """One scheduling pass against ``clock()``; returns fires started."""
         now = self._clock()
         schedules = await self._registry.list_scheduled()
-        live = {(r.project_id, r.trigger.id) for r in schedules}
+        live = {(r.workflow_id, r.trigger.id) for r in schedules}
         # Drop the state of triggers that were unpublished or disabled.
         self._due = {key: state for key, state in self._due.items() if key in live}
         fired = 0
@@ -80,8 +80,8 @@ class TriggerScheduler:
                     extra={
                         "event": "scheduled_trigger_failed",
                         "trigger_id": resolved.trigger.id,
-                        "project_id": resolved.project_id,
-                        "project_version": resolved.version,
+                        "workflow_id": resolved.workflow_id,
+                        "workflow_version": resolved.version,
                     },
                 )
         return fired
@@ -89,7 +89,7 @@ class TriggerScheduler:
     async def _step(self, resolved: ResolvedTrigger, now: datetime) -> bool:
         """Arm, or fire when due. True when an execution was created."""
         trigger = resolved.trigger
-        key = (resolved.project_id, trigger.id)
+        key = (resolved.workflow_id, trigger.id)
         spec = _schedule_spec(trigger)
         state = self._due.get(key)
         if state is None or state[0] != spec:

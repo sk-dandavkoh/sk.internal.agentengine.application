@@ -2,7 +2,7 @@
 
 A report is a read-only projection of *persisted* state: the Execution
 aggregate (canonical status, node executions, errors, outputs) plus its
-pinned ProjectVersion. The event log is attached as a timeline only; no
+pinned WorkflowVersion. The event log is attached as a timeline only; no
 report field is derived from events (architecture §18).
 
 Deterministic: the same persisted state yields the same report and, through
@@ -24,7 +24,7 @@ from pydantic import BaseModel, ConfigDict, JsonValue
 
 from akasha.application.executions import load_execution
 from akasha.application.persistence import UnitOfWork
-from akasha.application.projects import UowFactory
+from akasha.application.workflows import UowFactory
 from akasha.domain.event import Event
 from akasha.domain.execution import (
     Execution,
@@ -78,9 +78,9 @@ class CostReport(_Model):
     currency: str
 
 
-class ProjectReport(_Model):
+class WorkflowReport(_Model):
     id: str
-    name: str | None  # None: the project row no longer exists
+    name: str | None  # None: the workflow row no longer exists
     version: int
     version_description: str
     published_at: datetime
@@ -148,7 +148,7 @@ class EventReport(_Model):
 class ExecutionReport(_Model):
     schema_version: int
     execution_id: str
-    project: ProjectReport
+    workflow: WorkflowReport
     execution: ExecutionSection
     nodes: list[NodeReport]  # ordered by node_id
     metrics: MetricsReport
@@ -162,12 +162,12 @@ class ExecutionReport(_Model):
 def build_report(
     execution: Execution,
     *,
-    project_name: str | None,
+    workflow_name: str | None,
     events: Sequence[Event] = (),
     events_truncated: bool = False,
 ) -> ExecutionReport:
     """Pure: persisted state in, report out."""
-    version = execution.project_version
+    version = execution.workflow_version
     graph_nodes = version.graph.nodes
     nodes = [
         _node(ne, graph_nodes[node_id].node_type, graph_nodes[node_id].label)
@@ -176,9 +176,9 @@ def build_report(
     return ExecutionReport(
         schema_version=REPORT_SCHEMA_VERSION,
         execution_id=execution.id,
-        project=ProjectReport(
-            id=execution.project_id,
-            name=project_name,
+        workflow=WorkflowReport(
+            id=execution.workflow_id,
+            name=workflow_name,
             version=version.version,
             version_description=redact_text(version.description),
             published_at=version.published_at,
@@ -383,10 +383,10 @@ class ReportService:
             # ahead of the state it accompanies.
             events, truncated = await _load_events(uow, execution_id)
             execution = await load_execution(uow, execution_id)
-            project = await uow.projects.get(execution.project_id)
+            workflow = await uow.workflows.get(execution.workflow_id)
         return build_report(
             execution,
-            project_name=None if project is None else project.name,
+            workflow_name=None if workflow is None else workflow.name,
             events=events,
             events_truncated=truncated,
         )

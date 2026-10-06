@@ -1,12 +1,12 @@
 """Execution persistence: executions and node_executions.
 
 Revision ID: 0003_executions
-Revises: 0002_project_revision
+Revises: 0002_workflow_revision
 Create Date: 2026-09-28
 
 Phase 08: the runtime persists every execution/node transition. An
-execution pins its immutable snapshot through (project_id, version) →
-project_versions (RESTRICT). Node executions are rows so per-node state is
+execution pins its immutable snapshot through (workflow_id, version) →
+workflow_versions (RESTRICT). Node executions are rows so per-node state is
 queryable (inspector, recovery); small value objects (policies, errors,
 metadata) are JSONB documents. Purely additive: no existing data changes.
 """
@@ -18,7 +18,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "0003_executions"
-down_revision: str | None = "0002_project_revision"
+down_revision: str | None = "0002_workflow_revision"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -35,8 +35,8 @@ def upgrade() -> None:
     op.create_table(
         "executions",
         sa.Column("id", sa.String(), nullable=False),
-        sa.Column("project_id", sa.String(), nullable=False),
-        sa.Column("project_version", sa.Integer(), nullable=False),
+        sa.Column("workflow_id", sa.String(), nullable=False),
+        sa.Column("workflow_version", sa.Integer(), nullable=False),
         sa.Column("status", sa.String(), nullable=False),
         sa.Column("metadata", postgresql.JSONB(), nullable=False),
         sa.Column("retry_policy", postgresql.JSONB(), nullable=False),
@@ -49,17 +49,17 @@ def upgrade() -> None:
         sa.Column("finished_at", sa.DateTime(timezone=True), nullable=True),
         sa.PrimaryKeyConstraint("id"),
         sa.ForeignKeyConstraint(
-            ["project_id", "project_version"],
-            ["project_versions.project_id", "project_versions.version"],
+            ["workflow_id", "workflow_version"],
+            ["workflow_versions.workflow_id", "workflow_versions.version"],
             ondelete="RESTRICT",
-            name="fk_executions_project_version",
+            name="fk_executions_workflow_version",
         ),
         sa.CheckConstraint(
             f"status IN ({_EXECUTION_STATUSES})", name="ck_executions_status"
         ),
         sa.CheckConstraint("revision >= 1", name="ck_executions_revision_positive"),
     )
-    op.create_index("ix_executions_project_id", "executions", ["project_id"])
+    op.create_index("ix_executions_workflow_id", "executions", ["workflow_id"])
     op.create_table(
         "node_executions",
         sa.Column("id", sa.String(), nullable=False),

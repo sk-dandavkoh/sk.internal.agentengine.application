@@ -49,7 +49,7 @@ From the report page the user can download the canonical JSON export or jump to 
 
 The limitations (§20) are:
 - running executions are not listed;
-- there is no project filter on the list;
+- there is no workflow filter on the list;
 - no full-stack/E2E or real-browser verification of the download was performed.
 
 ## 2. Phase Objective
@@ -83,9 +83,9 @@ The limitations (§20) are:
   - status filter limited to those four values;
   - `status` and `offset` are kept in the URL;
   - empty state that links to `/executions`;
-  - each row reuses `ExecutionTable` (execution id → inspector, project, version link, status badge, trigger, created, duration) and adds a "View report" link.
+  - each row reuses `ExecutionTable` (execution id → inspector, workflow, version link, status badge, trigger, created, duration) and adds a "View report" link.
 - **Report detail** (`ReportDetailPage`, route `/reports/:executionId`). It renders only `ExecutionReport` data:
-  - `Summary`: status, project (with a "project no longer exists" note when `project.name` is null), version, trigger, created/started/finished, the backend's `duration_ms`, correlation id;
+  - `Summary`: status, workflow (with a "workflow no longer exists" note when `workflow.name` is null), version, trigger, created/started/finished, the backend's `duration_ms`, correlation id;
   - `Usage` (reused from the inspector): tokens in/out/total, per-currency cost estimate, `cost_complete` warning, node status counts, attempts/retries/failed attempts, cancellation;
   - `Nodes`: a table (node, type, status, attempts, duration, tokens, cost) and a native `<details>` disclosure per node that has outputs;
   - `ErrorsPanel` (reused): the execution error and every failed attempt per node. "Inspect" navigates to `/executions/:id?tab=nodes&node=…`;
@@ -155,7 +155,7 @@ No architectural changes were introduced during this phase. Two frontend-level d
 - **Consequences:**
   - no new backend surface;
   - list filters are limited to what `/executions` supports (status only);
-  - a future project filter belongs on `/executions`.
+  - a future workflow filter belongs on `/executions`.
 
 ### Decision 2: the export uses the backend bytes, not a client re-serialization
 
@@ -239,10 +239,10 @@ Not applicable:
   - this drove `requestWithBody` (Decision 2);
   - a test proves an unknown field survives the download.
 
-### Finding: the list endpoint has no project filter
+### Finding: the list endpoint has no workflow filter
 - **Impact:** LOW
 - **Resolution:** DEFERRED
-- **Notes:** per-project histories exist on the project page (`/projects/{id}/executions`).
+- **Notes:** per-workflow histories exist on the workflow page (`/workflows/{id}/executions`).
 
 ## 10. Bugs / Problems Found
 
@@ -277,7 +277,7 @@ These run the real router, `ApiClient` and `QueryClient`, with only `fetch` stub
 
 **Detail:**
 4. Successful report:
-   - project link and backend duration "1 s";
+   - workflow link and backend duration "1 s";
    - cost "0.0021 USD" and the node row with 42 tokens;
    - "No errors were recorded";
    - event timeline;
@@ -408,14 +408,14 @@ None:
 | What | Why deferred | Intended phase | Affects completion |
 |---|---|---|---|
 | Full-stack Playwright test of the report page and download | Not required by the phase tests; E2E is its own phase | Phase 26 (E2E Testing) | No |
-| Project filter for the report list | Needs a backend `/executions` filter; out of scope | Unassigned | No |
+| Workflow filter for the report list | Needs a backend `/executions` filter; out of scope | Unassigned | No |
 | PDF/CSV export | Not in the roadmap scope; the backend offers JSON only | Unassigned | No |
 | Business/aggregate reports (vision §34) | Not in the Phase 19 scope | Unassigned | No |
 
 ## 20. Known Limitations
 
 - **Running executions:** `/reports` lists only finished executions (completed, failed, timeout, cancelled). Executions in `created/queued/running/paused/waiting` have a partial report that is reachable only through the inspector "Report" link or a direct URL.
-- **No project filter or search** in the report list.
+- **No workflow filter or search** in the report list.
 - **Logs:** the report contains no log lines (backend contract), so the report page links to the inspector Logs tab and does not embed them.
 - **Download verification:** verified only in jsdom with stubbed `URL.createObjectURL` and `HTMLAnchorElement.click`. There was no real-browser or full-stack check. The detached-anchor technique is standard in current browsers but was not observed here.
 - **Very large reports:** no virtualization of the node table, and outputs exist in the DOM even while collapsed. No browser performance measurement was taken.
@@ -464,7 +464,7 @@ No known open issues resulting from this phase. The items in §19 and §20 are t
 
 ### Deferred
 - E2E/full-stack report test;
-- project filter;
+- workflow filter;
 - aggregate reports.
 
 ### Open
@@ -482,7 +482,7 @@ No known open issues resulting from this phase. The items in §19 and §20 are t
   - routes `/reports` and `/reports/:executionId`;
   - `reportPath(executionId)` in `features/executions/format.ts`;
   - `exportExecutionReport` in `api/reports.ts`;
-  - `ApiClient.requestWithBody` for any endpoint whose exact bytes must be preserved (e.g. a future project-package export).
+  - `ApiClient.requestWithBody` for any endpoint whose exact bytes must be preserved (e.g. a future workflow-package export).
 - **Must not change casually:**
   - **byte fidelity:** the download saves the backend body verbatim (test 10 guards it);
   - **validate-before-save** (test 11);

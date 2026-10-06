@@ -5,7 +5,7 @@ Revises: 0005_events
 Create Date: 2026-09-30
 
 Phase 13: named credentials with AES-GCM encrypted secret material. The
-name is the identity projects reference (``credential:<name>``). Purely
+name is the identity workflows reference (``credential:<name>``). Purely
 additive.
 """
 

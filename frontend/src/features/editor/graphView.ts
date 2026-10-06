@@ -1,5 +1,5 @@
 import type { NodeDefinition, NodePort } from '../../api/nodes'
-import type { Edge, Graph, NodeInstance } from '../../api/projects'
+import type { Edge, Graph, NodeInstance } from '../../api/workflows'
 import type { CardPort } from './NodeCard'
 
 // Read-only views of a draft graph shared by the canvas and the node list.

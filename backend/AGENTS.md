@@ -32,7 +32,7 @@ Das Backend ist die autoritative technische Instanz der Agent Engine.
 Es ist verantwortlich für:
 
 - Domainmodell
-- Projekt- und Versionsverwaltung
+- Workflow- und Versionsverwaltung
 - Graphvalidierung
 - Node Contracts
 - Node Registry
@@ -61,7 +61,7 @@ Insbesondere dürfen folgende Regeln nicht ausschließlich im Frontend implement
 - Port-Kompatibilität
 - Required-Input-Prüfung
 - Config-Validierung
-- Projektstatus
+- Workflowstatus
 - Publish-Regeln
 - Versionierung
 - Execution-State-Transitions
@@ -245,11 +245,11 @@ Domain-Code muss möglichst isoliert testbar sein.
 
 Unter anderem:
 
--   Project
+-   Workflow
     
--   ProjectDraft
+-   WorkflowDraft
     
--   ProjectVersion
+-   WorkflowVersion
     
 -   Graph
     
@@ -276,9 +276,9 @@ Ihre fachliche Semantik muss explizit bleiben.
 
 # 7. Draft vs. Published Version
 
-Ein Project Draft ist veränderbar.
+Ein Workflow Draft ist veränderbar.
 
-Eine veröffentlichte Project Version ist unveränderlich.
+Eine veröffentlichte Workflow Version ist unveränderlich.
 
 Grundregel:
 
@@ -294,9 +294,9 @@ Eine Execution darf niemals stillschweigend auf den aktuellsten Draft zugreifen.
 
 Jede Execution muss eindeutig nachvollziehbar machen:
 
--   Project
+-   Workflow
     
--   Project Version
+-   Workflow Version
     
 -   Node-Versionen
     
@@ -348,17 +348,17 @@ Ein Use Case sollte als klar benennbare Operation erkennbar sein.
 Beispiele:
 
 ```text
-CreateProject
-UpdateProjectDraft
-ValidateProject
-PublishProject
+CreateWorkflow
+UpdateWorkflowDraft
+ValidateWorkflow
+PublishWorkflow
 StartExecution
 CancelExecution
 RetryExecution
 CreateTrigger
 InstallPlugin
-ExportProject
-ImportProject
+ExportWorkflow
+ImportWorkflow
 GenerateExecutionReport
 ```
 
@@ -548,7 +548,7 @@ Transaktionsgrenzen müssen bewusst definiert werden.
 
 Besonders wichtig:
 
--   Project Draft Änderungen
+-   Workflow Draft Änderungen
     
 -   Publish
     
@@ -577,7 +577,7 @@ Die Execution Runtime ist eine zentrale Backend-Komponente.
 
 Sie ist verantwortlich für:
 
--   Laden eines Project-Version-Snapshots
+-   Laden eines Workflow-Version-Snapshots
     
 -   Validierung
     
@@ -760,9 +760,9 @@ Dieser kann abhängig von der Phase enthalten:
     
 -   Node Execution ID
     
--   Project ID
+-   Workflow ID
     
--   Project Version
+-   Workflow Version
     
 -   Logger
     
@@ -975,7 +975,7 @@ API Keys dürfen niemals in Repository, Tests, Logs oder Fixtures landen.
 
 Credentials werden zentral verwaltet.
 
-Project Configs enthalten ausschließlich Referenzen.
+Workflow Configs enthalten ausschließlich Referenzen.
 
 Beispiel:
 
@@ -991,9 +991,9 @@ api_key = "sk-..."
 
 Secrets dürfen niemals:
 
--   in Project JSON
+-   in Workflow JSON
     
--   in Project Exporten
+-   in Workflow Exporten
     
 -   in normalen Logs
     
@@ -1152,8 +1152,8 @@ Events beschreiben Zustandsänderungen bzw. relevante Lifecycle-Ereignisse.
 Beispiele:
 
 ```text
-ProjectCreated
-ProjectPublished
+WorkflowCreated
+WorkflowPublished
 ExecutionCreated
 ExecutionStarted
 ExecutionCompleted
@@ -1468,7 +1468,7 @@ Besonders kritisch:
     
 -   Queue Jobs
     
--   Projekt-Importe
+-   Workflow-Importe
     
 
 Wenn echte Idempotenz nicht möglich ist, muss das Verhalten explizit dokumentiert und getestet werden.
@@ -1505,7 +1505,7 @@ eigene zweite Business-Logik
 
 # 46. Import / Export
 
-Projektpakete dürfen niemals Secrets enthalten.
+Workflowpakete dürfen niemals Secrets enthalten.
 
 Ein Package enthält beispielsweise:
 
@@ -1551,11 +1551,11 @@ Import muss validieren:
 Round-Trip-Tests sind verpflichtend:
 
 ```text
-Project
+Workflow
  ↓ export
 Package
  ↓ import
-Project
+Workflow
 ```
 
 ----------
@@ -1570,7 +1570,7 @@ Reports müssen secret-safe sein.
 
 Mindestens relevante Informationen:
 
--   Project
+-   Workflow
     
 -   Version
     
@@ -2045,7 +2045,7 @@ Parallelitätsprobleme sollen gezielt getestet werden und nicht zufällig auftre
 Mindestens ein vollständiger Backend-E2E-Test muss den zentralen Produktfluss abdecken:
 
 ```text
-Create Project
+Create Workflow
     ↓
 Create / Update Draft
     ↓
@@ -2071,11 +2071,11 @@ Inspect Execution
     ↓
 Generate Report
     ↓
-Export Project
+Export Workflow
     ↓
-Import Project
+Import Workflow
     ↓
-Execute Imported Project
+Execute Imported Workflow
 ```
 
 Dieser Test muss reale Backend-Komponenten soweit sinnvoll integrieren.
@@ -2203,7 +2203,7 @@ Concurrency muss bewusst behandelt werden.
 
 Kritische Bereiche:
 
--   Project Draft Updates
+-   Workflow Draft Updates
     
 -   Publish
     

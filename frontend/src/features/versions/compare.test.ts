@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { projectVersionSchema } from '../../api/projects'
+import { workflowVersionSchema } from '../../api/workflows'
 import { diffVersions } from './compare'
 
 const version = (overrides: object) =>
-    projectVersionSchema.parse({
-        id: 'pver_1',
+    workflowVersionSchema.parse({
+        id: 'wfver_1',
         version: 1,
         description: '',
         schema_version: 1,

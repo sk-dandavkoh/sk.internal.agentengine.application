@@ -8,11 +8,11 @@ import type { NodeCatalog } from '../../api/nodes'
 import type {
     Edge,
     NodePosition,
-    Project,
-    ProjectVersion,
+    Workflow,
+    WorkflowVersion,
     ValidationIssue,
-} from '../../api/projects'
-import { nodeQueries, projectQueries } from '../../api/queries'
+} from '../../api/workflows'
+import { nodeQueries, workflowQueries } from '../../api/queries'
 import { formatDateTime } from '../../lib/format'
 import { QuerySection } from '../../components/QuerySection'
 import {
@@ -33,11 +33,11 @@ import { edgeKey, edgesOf, nodeTitle } from './graphView'
 import { NodeInspector } from './NodeInspector'
 import { NodeLibrary } from './NodeLibrary'
 import { useDraftEditor } from './useDraftEditor'
-import { usePublishWorkflow } from './usePublishWorkflow'
+import { usePublishFlow } from './usePublishFlow'
 import { issueCounts } from './validation'
 import { ValidationPanel } from './ValidationPanel'
 
-const projectPath = (id: string) => `/projects/${encodeURIComponent(id)}`
+const workflowPath = (id: string) => `/workflows/${encodeURIComponent(id)}`
 
 function SaveStatus({
     dirty,
@@ -77,28 +77,28 @@ function isTextInput(target: EventTarget) {
 }
 
 function DraftEditor({
-    project,
+    workflow,
     rules,
     catalogQuery,
     onReload,
     onPublished,
 }: {
-    project: Project
+    workflow: Workflow
     rules: ConnectionRules
     catalogQuery: UseQueryResult<NodeCatalog>
     onReload: () => void
-    onPublished: (version: ProjectVersion) => void
+    onPublished: (version: WorkflowVersion) => void
 }) {
-    const editor = useDraftEditor(project)
+    const editor = useDraftEditor(workflow)
     const { state, dispatch } = editor
     const clean = !editor.dirty && !editor.saving && editor.saveError === null
-    const workflow = usePublishWorkflow({
-        projectId: project.id,
+    const publishFlow = usePublishFlow({
+        workflowId: workflow.id,
         revision: state.revision,
         clean,
         onPublished,
     })
-    const { checked } = workflow
+    const { checked } = publishFlow
     const issuesByNode = useMemo(
         () => issueCounts(checked?.result.issues ?? []),
         [checked],
@@ -110,7 +110,7 @@ function DraftEditor({
     const conflict =
         (editor.saveError instanceof ApiError &&
             editor.saveError.kind === 'conflict') ||
-        workflow.stale
+        publishFlow.stale
     const selected = new Set(state.selection)
     const inspected =
         state.selection.length === 1
@@ -420,10 +420,10 @@ function DraftEditor({
                 </section>
                 <div className="flex flex-col gap-3 xl:col-span-2 2xl:col-span-1">
                     <ValidationPanel
-                        workflow={workflow}
+                        publishFlow={publishFlow}
                         revision={state.revision}
                         clean={clean}
-                        currentVersion={project.current_version}
+                        currentVersion={workflow.current_version}
                         nodeName={(id) => {
                             const node = state.graph.nodes.find(
                                 (n) => n.id === id,
@@ -560,25 +560,25 @@ function DraftEditor({
     )
 }
 
-function EditorHeader({ project }: { project: Project }) {
-    const published = project.current_version
+function EditorHeader({ workflow }: { workflow: Workflow }) {
+    const published = workflow.current_version
     return (
         <PageHeader
-            title={`Draft editor: ${project.name}`}
+            title={`Draft editor: ${workflow.name}`}
             actions={<Badge tone="info">Draft</Badge>}
             description={
                 <>
                     <span className="block">
                         You are editing the draft (revision{' '}
-                        {String(project.revision)}). Saving changes the draft
+                        {String(workflow.revision)}). Saving changes the draft
                         only;{' '}
                         {published > 0
                             ? `published versions, the latest being v${String(published)}, stay unchanged.`
                             : 'nothing has been published yet.'}{' '}
                         Publishing is a separate step.
                     </span>
-                    <TextLink to={projectPath(project.id)}>
-                        Back to project
+                    <TextLink to={workflowPath(workflow.id)}>
+                        Back to workflow
                     </TextLink>
                 </>
             }
@@ -587,22 +587,22 @@ function EditorHeader({ project }: { project: Project }) {
 }
 
 export function EditorPage() {
-    const { projectId = '' } = useParams()
+    const { workflowId = '' } = useParams()
     const client = useApiClient()
     // Loaded once per editor session: background refetches must not
     // replace local edits. `session` restarts it from the server's draft.
     const query = useQuery({
-        ...projectQueries.detail(client, projectId),
+        ...workflowQueries.detail(client, workflowId),
         refetchOnWindowFocus: false,
         refetchOnReconnect: false,
     })
     const nodes = useQuery(nodeQueries.catalog(client))
     // A viewer could edit locally but never save: show why instead.
     const viewOnly =
-        useQuery(projectQueries.sharing(client, projectId)).data?.access ===
+        useQuery(workflowQueries.sharing(client, workflowId)).data?.access ===
         'view'
     const [session, setSession] = useState(0)
-    const [published, setPublished] = useState<ProjectVersion | null>(null)
+    const [published, setPublished] = useState<WorkflowVersion | null>(null)
     const { notify } = useToast()
     const rules = useMemo(
         (): ConnectionRules => ({
@@ -626,32 +626,32 @@ export function EditorPage() {
     )
         return (
             <ErrorState
-                title="Project not found"
+                title="Workflow not found"
                 titleAs="h1"
                 description="It does not exist, was deleted, or you do not have access to it."
                 action={
-                    <TextLink to="/projects">Back to all projects</TextLink>
+                    <TextLink to="/workflows">Back to all workflows</TextLink>
                 }
             />
         )
     return (
         <>
             {query.data === undefined && <PageHeader title="Draft editor" />}
-            <QuerySection query={query} subject="the project draft">
-                {(project) => (
+            <QuerySection query={query} subject="the workflow draft">
+                {(workflow) => (
                     <>
-                        <EditorHeader project={project} />
+                        <EditorHeader workflow={workflow} />
                         {viewOnly && (
                             <Alert
                                 tone="info"
                                 title="View-only access"
                                 className="mb-3"
                             >
-                                This project is shared with you as a viewer: you
-                                can look at it, but not change its draft. Ask
-                                its owner for editor access, or{' '}
+                                This workflow is shared with you as a viewer:
+                                you can look at it, but not change its draft.
+                                Ask its owner for editor access, or{' '}
                                 <TextLink
-                                    to={`${projectPath(project.id)}/versions`}
+                                    to={`${workflowPath(workflow.id)}/versions`}
                                 >
                                     browse its published versions
                                 </TextLink>
@@ -679,15 +679,15 @@ export function EditorPage() {
                                 . This version is immutable; you keep editing
                                 the draft, and further changes need another
                                 publish.{' '}
-                                <TextLink to={projectPath(project.id)}>
-                                    View project
+                                <TextLink to={workflowPath(workflow.id)}>
+                                    View workflow
                                 </TextLink>
                             </Alert>
                         )}
                         {!viewOnly && (
                             <ReactFlowProvider key={session}>
                                 <DraftEditor
-                                    project={project}
+                                    workflow={workflow}
                                     rules={rules}
                                     catalogQuery={nodes}
                                     onReload={() => void reload()}

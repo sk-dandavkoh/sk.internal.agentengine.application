@@ -12,7 +12,7 @@ import * as executions from './executions'
 import * as monitoring from './monitoring'
 import * as nodes from './nodes'
 import * as plugins from './plugins'
-import * as projects from './projects'
+import * as workflows from './workflows'
 import * as reports from './reports'
 import * as sharing from './sharing'
 import * as system from './system'
@@ -243,34 +243,34 @@ void auth.createAccessToken(recorder, {
     expires_in_days: 90,
 })
 void auth.revokeAccessToken(recorder, 'pat_1')
-const draft = projects.projectDraftSchema.parse({})
-void projects.listProjects(recorder, {
+const draft = workflows.workflowDraftSchema.parse({})
+void workflows.listWorkflows(recorder, {
     offset: 0,
     limit: 10,
     q: 'a',
     status: ['draft'],
     sort: '-name',
 })
-void projects.getProject(recorder, 'p')
-void projects.createProject(recorder, { name: 'n', description: 'd' })
-void projects.updateProject(recorder, 'p', {
+void workflows.getWorkflow(recorder, 'p')
+void workflows.createWorkflow(recorder, { name: 'n', description: 'd' })
+void workflows.updateWorkflow(recorder, 'p', {
     name: 'n',
     description: 'd',
     draft,
     expected_revision: 1,
 })
-void projects.duplicateProject(recorder, 'p', 'copy', 1)
-void projects.restoreProjectVersion(recorder, 'p', 1, 2)
-void projects.deleteProject(recorder, 'p')
-void projects.validateProject(recorder, 'p', 1)
-void projects.publishProject(recorder, 'p', 1)
-void projects.listProjectVersions(recorder, 'p')
-void projects.getProjectVersion(recorder, 'p', 1)
-void projects.exportProject(recorder, 'p', 1)
-void projects.importProject(recorder, new Blob(['zip']))
+void workflows.duplicateWorkflow(recorder, 'p', 'copy', 1)
+void workflows.restoreWorkflowVersion(recorder, 'p', 1, 2)
+void workflows.deleteWorkflow(recorder, 'p')
+void workflows.validateWorkflow(recorder, 'p', 1)
+void workflows.publishWorkflow(recorder, 'p', 1)
+void workflows.listWorkflowVersions(recorder, 'p')
+void workflows.getWorkflowVersion(recorder, 'p', 1)
+void workflows.exportWorkflow(recorder, 'p', 1)
+void workflows.importWorkflow(recorder, new Blob(['zip']))
 void executions.listExecutions(recorder, { status: ['failed'], limit: 5 })
 void executions.getExecutionStatusCounts(recorder)
-void executions.listProjectExecutions(recorder, 'p', { version: 1 })
+void executions.listWorkflowExecutions(recorder, 'p', { version: 1 })
 void executions.getExecution(recorder, 'e')
 void executions.listExecutionEvents(recorder, 'e', { after: 3 })
 void executions.listExecutionLogs(recorder, 'e', {
@@ -281,7 +281,7 @@ void executions.listExecutionLogs(recorder, 'e', {
     limit: 5,
 })
 void executions.cancelExecution(recorder, 'e', 'r')
-void executions.executeProjectVersion(recorder, 'p', 1, { k: 'v' })
+void executions.executeWorkflowVersion(recorder, 'p', 1, { k: 'v' })
 void executions.invokeTrigger(recorder, 'p', 't', { k: 'v' })
 void reports.getExecutionReport(recorder, 'e')
 void reports.exportExecutionReport(recorder, 'e')
@@ -307,11 +307,11 @@ void plugins.enablePlugin(recorder, 'acme')
 void plugins.disablePlugin(recorder, 'acme')
 void plugins.removePlugin(recorder, 'acme', { force: true })
 void system.getSystemStatus(recorder)
-void sharing.getProjectSharing(recorder, 'p')
-void sharing.putProjectMember(recorder, 'p', 'u', 'editor')
-void sharing.removeProjectMember(recorder, 'p', 'u')
-void sharing.transferProjectOwnership(recorder, 'p', 'u')
-void sharing.leaveProject(recorder, 'p')
+void sharing.getWorkflowSharing(recorder, 'p')
+void sharing.putWorkflowMember(recorder, 'p', 'u', 'editor')
+void sharing.removeWorkflowMember(recorder, 'p', 'u')
+void sharing.transferWorkflowOwnership(recorder, 'p', 'u')
+void sharing.leaveWorkflow(recorder, 'p')
 void users.listUsers(recorder, { q: 'a', role: 'admin', status: 'active' })
 void users.getUser(recorder, 'u')
 void users.createUser(recorder, {
@@ -328,7 +328,7 @@ void users.updateUser(recorder, 'u', {
 })
 const modules: Record<string, unknown>[] = [
     auth,
-    projects,
+    workflows,
     executions,
     reports,
     monitoring,
@@ -488,9 +488,9 @@ describe('the comparison itself', () => {
 })
 
 describe('query parameter enums match the backend', () => {
-    it('project list sort orders', () => {
-        expect(projects.projectSortSchema.options).toEqual(
-            document.components.schemas.ProjectSort?.enum,
+    it('workflow list sort orders', () => {
+        expect(workflows.workflowSortSchema.options).toEqual(
+            document.components.schemas.WorkflowSort?.enum,
         )
     })
 })

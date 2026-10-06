@@ -7,8 +7,8 @@ import { stubSession } from './session'
 const AT = '2026-10-02T08:00:00Z'
 const execution = (id: string, status: string) => ({
     id,
-    project_id: 'proj_1',
-    project_name: 'Invoice triage with a rather long project name',
+    workflow_id: 'wf_1',
+    workflow_name: 'Invoice triage with a rather long workflow name',
     version: 2,
     status,
     trigger_type: 'manual',
@@ -36,10 +36,10 @@ const replies: Record<string, unknown> = {
         },
     },
     '/api/v1/system/status': { version: '0.27.0', ready: true, failures: {} },
-    '/api/v1/projects': page([
+    '/api/v1/workflows': page([
         {
-            id: 'proj_1',
-            name: 'Invoice triage with a rather long project name',
+            id: 'wf_1',
+            name: 'Invoice triage with a rather long workflow name',
             description: '',
             status: 'published',
             owner_id: 'user_1',
@@ -63,8 +63,8 @@ const failureError = {
 const failureReport = {
     schema_version: 1,
     execution_id: 'exec_f',
-    project: {
-        id: 'proj_1',
+    workflow: {
+        id: 'wf_1',
         name: 'Invoice triage',
         version: 2,
         version_description: '',
@@ -159,7 +159,7 @@ const box = async (p: Page, heading: string) => {
     return b
 }
 
-test('desktop: overview beside system and projects', async ({ page: p }) => {
+test('desktop: overview beside system and workflows', async ({ page: p }) => {
     await p.setViewportSize({ width: 1440, height: 900 })
     await openDashboard(p)
 
@@ -200,7 +200,7 @@ test('every interactive element is reachable by keyboard', async ({
             ),
         )
     }
-    for (const name of ['Refresh', 'All executions', 'All projects'])
+    for (const name of ['Refresh', 'All executions', 'All workflows'])
         expect(reached).toContain(name)
 })
 

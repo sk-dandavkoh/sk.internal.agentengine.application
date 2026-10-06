@@ -15,8 +15,8 @@ const refused = (details: Record<string, unknown>) =>
     new ApiError({
         kind: 'validation',
         status: 422,
-        code: 'PROJECT_VALIDATION_FAILED',
-        message: 'The project draft contains validation errors.',
+        code: 'WORKFLOW_VALIDATION_FAILED',
+        message: 'The workflow draft contains validation errors.',
         details,
     })
 
@@ -54,6 +54,6 @@ describe('issueScope', () => {
         expect(issueScope({ ...issue, node_id: 'b', edge })).toBe('node')
         expect(issueScope({ ...issue, edge })).toBe('connection')
         expect(issueScope({ ...issue, trigger_id: 't' })).toBe('trigger')
-        expect(issueScope(issue)).toBe('project')
+        expect(issueScope(issue)).toBe('workflow')
     })
 })

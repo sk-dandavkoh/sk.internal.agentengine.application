@@ -39,7 +39,7 @@ from packaging.utils import canonicalize_name
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from akasha.domain.plugin import PluginMetadata, PluginNode
-from akasha.domain.project import Dependency
+from akasha.domain.workflow import Dependency
 from akasha.errors import AkashaError
 
 MANIFEST_FILE = "akasha-plugin.json"

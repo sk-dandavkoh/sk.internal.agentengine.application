@@ -17,7 +17,7 @@ from akasha.bootstrap import create_container
 from akasha.config import Settings
 from akasha.domain.graph_validation import ValidationCode
 from akasha.domain.plugin import PluginMetadata, compatibility_issues
-from akasha.domain.project import Dependency, ProjectDraft
+from akasha.domain.workflow import Dependency, WorkflowDraft
 from akasha.errors import (
     AkashaError,
     ConfigurationError,
@@ -288,8 +288,8 @@ def test_incompatible_plugins_are_not_installed(
     assert_untouched(plugins, nodes, installed)
 
 
-def test_project_plugin_dependencies_are_checked_when_plugins_are_given() -> None:
-    draft = ProjectDraft(dependencies=[Dependency("plugin", "acme", ">=1.0.0")])
+def test_workflow_plugin_dependencies_are_checked_when_plugins_are_given() -> None:
+    draft = WorkflowDraft(dependencies=[Dependency("plugin", "acme", ">=1.0.0")])
 
     def codes(plugins: dict[str, str] | None) -> list[ValidationCode]:
         return [

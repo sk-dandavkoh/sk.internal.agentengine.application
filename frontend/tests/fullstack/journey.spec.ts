@@ -6,7 +6,7 @@ import { admin, adminApi, downloaded, unzip } from './session'
 
 // The V1 user journey end to end, through the UI only, against the real
 // backend and worker (playwright.fullstack.config.ts): sign in, build a
-// project from nothing, publish, run, follow, inspect, measure, report,
+// workflow from nothing, publish, run, follow, inspect, measure, report,
 // export, import and run the import. Each step builds on the last, so this
 // is one test of steps; `api` only checks what the backend stored.
 
@@ -21,7 +21,7 @@ test.afterAll(async () => {
     await api.dispose()
 })
 
-interface StoredProject {
+interface StoredWorkflow {
     id: string
     current_version: number
     draft: {
@@ -33,10 +33,10 @@ interface StoredProject {
     }
 }
 
-async function stored(projectId: string): Promise<StoredProject> {
-    const response = await api.get(`/api/v1/projects/${projectId}`)
+async function stored(workflowId: string): Promise<StoredWorkflow> {
+    const response = await api.get(`/api/v1/workflows/${workflowId}`)
     expect(response.status()).toBe(200)
-    return (await response.json()) as StoredProject
+    return (await response.json()) as StoredWorkflow
 }
 
 async function addNode(p: Page, type: string, name: string) {
@@ -73,10 +73,10 @@ async function validateAndPublish(p: Page, version: number) {
     ).toBeVisible()
 }
 
-/** Runs the project's published manual trigger from its row; returns the
+/** Runs the workflow's published manual trigger from its row; returns the
  * execution id once the page shows it completed. */
-async function runTrigger(p: Page, projectId: string): Promise<string> {
-    await p.goto(`/projects/${projectId}/triggers`)
+async function runTrigger(p: Page, workflowId: string): Promise<string> {
+    await p.goto(`/workflows/${workflowId}/triggers`)
     const row = p
         .getByRole('table', { name: 'Triggers' })
         .getByRole('row')
@@ -100,7 +100,7 @@ test('the V1 journey: build, publish, run, inspect, report, export, import, run 
     const p = await context.newPage()
     const name = `Journey ${randomUUID().slice(0, 8)}`
     const message = `journey-log-${randomUUID().slice(0, 8)}`
-    let projectId = ''
+    let workflowId = ''
     let executionId = ''
     let packagePath = ''
 
@@ -119,18 +119,18 @@ test('the V1 journey: build, publish, run, inspect, report, export, import, run 
         ).toBeVisible()
     })
 
-    await test.step('create the project and open it', async () => {
+    await test.step('create the workflow and open it', async () => {
         await p
             .getByRole('navigation', { name: 'Main' })
-            .getByRole('link', { name: 'Projects' })
+            .getByRole('link', { name: 'Workflows' })
             .click()
-        await p.getByRole('button', { name: 'New project' }).first().click()
-        const dialog = p.getByRole('dialog', { name: 'New project' })
+        await p.getByRole('button', { name: 'New workflow' }).first().click()
+        const dialog = p.getByRole('dialog', { name: 'New workflow' })
         await dialog.getByLabel('Name').fill(name)
-        await dialog.getByRole('button', { name: 'Create project' }).click()
+        await dialog.getByRole('button', { name: 'Create workflow' }).click()
         await expect(p.getByRole('heading', { level: 1, name })).toBeVisible()
-        projectId = /\/projects\/([^/]+)$/.exec(p.url())?.[1] ?? ''
-        expect((await stored(projectId)).draft.graph.nodes).toEqual([])
+        workflowId = /\/workflows\/([^/]+)$/.exec(p.url())?.[1] ?? ''
+        expect((await stored(workflowId)).draft.graph.nodes).toEqual([])
     })
 
     await test.step('edit the draft: add, configure and connect nodes', async () => {
@@ -153,7 +153,7 @@ test('the V1 journey: build, publish, run, inspect, report, export, import, run 
     await test.step('save the graph', async () => {
         await p.keyboard.press('ControlOrMeta+s')
         await expect(p.getByText('All changes saved to draft')).toBeVisible()
-        const { graph } = (await stored(projectId)).draft
+        const { graph } = (await stored(workflowId)).draft
         const typeOf = (id: string) =>
             graph.nodes.find((n) => n.id === id)?.node_type ?? '?'
         expect(
@@ -168,7 +168,7 @@ test('the V1 journey: build, publish, run, inspect, report, export, import, run 
     })
 
     await test.step('configure a manual trigger', async () => {
-        await p.goto(`/projects/${projectId}/triggers`)
+        await p.goto(`/workflows/${workflowId}/triggers`)
         await p.getByRole('button', { name: 'New trigger' }).click()
         const dialog = p.getByRole('dialog', { name: 'New trigger' })
         await dialog.getByLabel('Type').selectOption('manual')
@@ -179,14 +179,16 @@ test('the V1 journey: build, publish, run, inspect, report, export, import, run 
             .filter({ hasText: 'Manual' })
         await expect(row.getByText('Not published')).toBeVisible()
         expect(
-            (await stored(projectId)).draft.triggers.map((t) => t.trigger_type),
+            (await stored(workflowId)).draft.triggers.map(
+                (t) => t.trigger_type,
+            ),
         ).toEqual(['manual'])
     })
 
     await test.step('validate and publish', async () => {
-        await p.goto(`/projects/${projectId}/editor`)
+        await p.goto(`/workflows/${workflowId}/editor`)
         await validateAndPublish(p, 1)
-        expect((await stored(projectId)).current_version).toBe(1)
+        expect((await stored(workflowId)).current_version).toBe(1)
     })
 
     await test.step('trigger a run and follow it live to its end', async () => {
@@ -197,7 +199,7 @@ test('the V1 journey: build, publish, run, inspect, report, export, import, run 
                 frames.push(String(payload))
             })
         })
-        executionId = await runTrigger(p, projectId)
+        executionId = await runTrigger(p, workflowId)
         const activity = p.getByRole('list', { name: 'Live activity' })
         await expect(activity.getByText('Execution completed')).toBeVisible()
         await expect(p.getByText('Live updates finished')).toBeVisible()
@@ -276,46 +278,46 @@ test('the V1 journey: build, publish, run, inspect, report, export, import, run 
         })
     })
 
-    await test.step('export the project', async () => {
-        await p.goto(`/projects/${projectId}`)
+    await test.step('export the workflow', async () => {
+        await p.goto(`/workflows/${workflowId}`)
         const { download, path } = await downloaded(p, () =>
             p.getByRole('button', { name: 'Export', exact: true }).click(),
         )
         expect(download.suggestedFilename()).toBe(
-            `${projectId}-draft.akasha.zip`,
+            `${workflowId}-draft.akasha.zip`,
         )
-        await expect(p.getByText('Project exported')).toBeVisible()
+        await expect(p.getByText('Workflow exported')).toBeVisible()
         const files = unzip(readFileSync(path))
         expect([...files.values()].join()).toContain(message)
         packagePath = path
     })
 
-    await test.step('import it as a new project', async () => {
-        await p.goto('/projects')
-        await p.getByRole('button', { name: 'Import project' }).click()
-        const dialog = p.getByRole('dialog', { name: 'Import project' })
+    await test.step('import it as a new workflow', async () => {
+        await p.goto('/workflows')
+        await p.getByRole('button', { name: 'Import workflow' }).click()
+        const dialog = p.getByRole('dialog', { name: 'Import workflow' })
         await dialog
-            .getByLabel('Project package (.zip)')
+            .getByLabel('Workflow package (.zip)')
             .setInputFiles(packagePath)
         await dialog
             .getByRole('button', { name: 'Import', exact: true })
             .click()
         await expect(dialog.getByText(`Imported “${name}”`)).toBeVisible()
         await expect(dialog.getByText('The draft is valid')).toBeVisible()
-        await dialog.getByRole('button', { name: 'Open project' }).click()
+        await dialog.getByRole('button', { name: 'Open workflow' }).click()
         await expect(p.getByRole('heading', { level: 1, name })).toBeVisible()
-        const importedId = /\/projects\/([^/]+)$/.exec(p.url())?.[1] ?? ''
-        expect(importedId).not.toBe(projectId)
+        const importedId = /\/workflows\/([^/]+)$/.exec(p.url())?.[1] ?? ''
+        expect(importedId).not.toBe(workflowId)
         const imported = await stored(importedId)
         expect(imported.current_version).toBe(0)
-        expect(imported.draft).toEqual((await stored(projectId)).draft)
-        projectId = importedId
+        expect(imported.draft).toEqual((await stored(workflowId)).draft)
+        workflowId = importedId
     })
 
-    await test.step('validate, publish and run the imported project', async () => {
+    await test.step('validate, publish and run the imported workflow', async () => {
         await p.getByRole('link', { name: 'Open editor' }).click()
         await validateAndPublish(p, 1)
-        const rerun = await runTrigger(p, projectId)
+        const rerun = await runTrigger(p, workflowId)
         expect(rerun).not.toBe(executionId)
         await p.getByRole('tab', { name: 'Logs' }).click()
         await expect(
@@ -323,10 +325,10 @@ test('the V1 journey: build, publish, run, inspect, report, export, import, run 
         ).toBeVisible()
         const execution = (await (
             await api.get(`/api/v1/executions/${rerun}`)
-        ).json()) as { status: string; project_id: string }
+        ).json()) as { status: string; workflow_id: string }
         expect(execution).toMatchObject({
             status: 'completed',
-            project_id: projectId,
+            workflow_id: workflowId,
         })
     })
 

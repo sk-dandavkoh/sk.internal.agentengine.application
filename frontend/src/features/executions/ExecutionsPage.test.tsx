@@ -9,15 +9,15 @@ import { parseInput } from './format'
 // -- factories (valid by default) -------------------------------------------------
 
 const AT = '2026-10-02T08:00:00Z'
-const PID = 'proj_1'
+const PID = 'wf_1'
 const ACTIVE = ['created', 'queued', 'running', 'paused', 'waiting']
 
 function execution(id: string, status = 'completed', overrides: object = {}) {
     const finished = !ACTIVE.includes(status)
     return {
         id,
-        project_id: PID,
-        project_name: 'Lead scoring',
+        workflow_id: PID,
+        workflow_name: 'Lead scoring',
         version: 2,
         status,
         trigger_type: 'manual',
@@ -50,7 +50,7 @@ function report(status = 'completed', overrides: object = {}) {
     return {
         schema_version: 1,
         execution_id: 'exec_1',
-        project: {
+        workflow: {
             id: PID,
             name: 'Lead scoring',
             version: 2,
@@ -162,16 +162,16 @@ describe('Executions list', () => {
         rows.forEach((row, i) => {
             expect(within(row).getByText(labels[i] ?? '')).toBeInTheDocument()
         })
-        // Project name, version link and execution link per row.
+        // Workflow name, version link and execution link per row.
         const first = within(rows[0] ?? document.body)
-        // The listing itself names the project: no per-project lookups.
+        // The listing itself names the workflow: no per-workflow lookups.
         expect(first.getByText('Lead scoring')).toHaveAttribute('title', PID)
         expect(
-            requests.filter((u) => u.pathname.endsWith('/projects')),
+            requests.filter((u) => u.pathname.endsWith('/workflows')),
         ).toEqual([])
         expect(first.getByRole('link', { name: 'v2' })).toHaveAttribute(
             'href',
-            `/projects/${PID}/versions/2`,
+            `/workflows/${PID}/versions/2`,
         )
         expect(
             first.getByRole('link', { name: 'exec_created' }),
@@ -218,7 +218,7 @@ describe('Executions list', () => {
             await screen.findByRole('heading', { name: 'No executions yet' }),
         ).toBeInTheDocument()
         expect(
-            screen.getByRole('link', { name: 'Go to projects' }),
+            screen.getByRole('link', { name: 'Go to workflows' }),
         ).toBeInTheDocument()
     })
 
@@ -331,7 +331,7 @@ describe('Execution detail', () => {
         expect(details.getByText('corr_1')).toBeInTheDocument()
         expect(
             await details.findByRole('link', { name: 'Lead scoring' }),
-        ).toHaveAttribute('href', `/projects/${PID}`)
+        ).toHaveAttribute('href', `/workflows/${PID}`)
         expect(await screen.findByText(/1,500|1500/)).toBeInTheDocument()
         expect(screen.getByText('0.0125 USD')).toBeInTheDocument()
         // Finished: nothing to cancel.
@@ -396,8 +396,8 @@ function liveEvent(
         schema_version: 1,
         position,
         occurred_at: AT,
-        project_id: PID,
-        project_version: 2,
+        workflow_id: PID,
+        workflow_version: 2,
         execution_id: 'exec_1',
         node_id,
         correlation_id: 'corr_1',

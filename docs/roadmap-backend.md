@@ -56,7 +56,7 @@ If relevant, also read:
 /docs/domain-model.md
 /docs/node-system.md
 /docs/execution-engine.md
-/docs/project-format.md
+/docs/workflow-format.md
 /docs/plugin-system.md
 /docs/sdk.md
 ```
@@ -179,7 +179,7 @@ Node Contract
         │
         ▼
 Phase 04
-Project Graph + Validation
+Workflow Graph + Validation
         │
         ▼
 Phase 05
@@ -187,7 +187,7 @@ Persistence
         │
         ▼
 Phase 06
-Project Application Services
+Workflow Application Services
         │
         ▼
 Phase 07
@@ -235,7 +235,7 @@ Plugin System
         │
         ▼
 Phase 18
-Project Import / Export
+Workflow Import / Export
         │
         ▼
 Phase 19
@@ -432,9 +432,9 @@ Implement the fundamental domain objects.
 Implement:
 
 ```text
-Project
-ProjectDraft
-ProjectVersion
+Workflow
+WorkflowDraft
+WorkflowVersion
 Graph
 NodeInstance
 Edge
@@ -549,11 +549,11 @@ A Node can be defined independently from the runtime and later executed through 
 
 ----------
 
-# 8. Phase 04 — Project Graph + Validation
+# 8. Phase 04 — Workflow Graph + Validation
 
 ## Goal
 
-Make Projects structurally validatable.
+Make Workflows structurally validatable.
 
 ## Scope
 
@@ -606,7 +606,7 @@ merge
 
 ## Acceptance Criteria
 
-A Project Draft can be fully validated without executing it.
+A Workflow Draft can be fully validated without executing it.
 
 ----------
 
@@ -633,8 +633,8 @@ transactions
 Persist at minimum:
 
 ```text
-projects
-project_versions
+workflows
+workflow_versions
 nodes / graph data
 triggers
 ```
@@ -646,8 +646,8 @@ Execution persistence may be introduced in this phase only if required by the re
 Implement:
 
 ```text
-ProjectRepository
-ProjectVersionRepository
+WorkflowRepository
+WorkflowVersionRepository
 ```
 
 The application layer must depend on interfaces.
@@ -670,35 +670,35 @@ Test:
     
 -   migrations
     
--   project version persistence
+-   workflow version persistence
     
 
 ## Acceptance Criteria
 
-Project data survives backend restart.
+Workflow data survives backend restart.
 
 ----------
 
-# 10. Phase 06 — Project Application Services
+# 10. Phase 06 — Workflow Application Services
 
 ## Goal
 
-Expose the Project lifecycle through application services.
+Expose the Workflow lifecycle through application services.
 
 ## Scope
 
 Implement:
 
 ```text
-CreateProject
-GetProject
-UpdateProjectDraft
-DeleteProject
-ValidateProject
-PublishProject
-GetProjectVersion
-ListProjects
-ListProjectVersions
+CreateWorkflow
+GetWorkflow
+UpdateWorkflowDraft
+DeleteWorkflow
+ValidateWorkflow
+PublishWorkflow
+GetWorkflowVersion
+ListWorkflows
+ListWorkflowVersions
 ```
 
 Implement the lifecycle:
@@ -720,18 +720,18 @@ Published versions must not be mutable.
 Implement:
 
 ```text
-/api/v1/projects
-/api/v1/projects/{id}
-/api/v1/projects/{id}/validate
-/api/v1/projects/{id}/publish
-/api/v1/projects/{id}/versions
+/api/v1/workflows
+/api/v1/workflows/{id}
+/api/v1/workflows/{id}/validate
+/api/v1/workflows/{id}/publish
+/api/v1/workflows/{id}/versions
 ```
 
 ## Tests
 
 Test:
 
--   project creation
+-   workflow creation
     
 -   draft updates
     
@@ -746,7 +746,7 @@ Test:
 
 ## Acceptance Criteria
 
-A user can create and publish a valid Project through the API.
+A user can create and publish a valid Workflow through the API.
 
 ----------
 
@@ -865,7 +865,7 @@ Parallel execution
 
 ## Acceptance Criteria
 
-A published Project Version can be executed from start to finish.
+A published Workflow Version can be executed from start to finish.
 
 ----------
 
@@ -1112,7 +1112,7 @@ provider credentials
 generic secret values
 ```
 
-Project configuration must contain references rather than raw secrets.
+Workflow configuration must contain references rather than raw secrets.
 
 ## Tests
 
@@ -1133,7 +1133,7 @@ Test:
 
 ## Acceptance Criteria
 
-Secrets never appear in Project JSON, normal API responses, logs or execution reports.
+Secrets never appear in Workflow JSON, normal API responses, logs or execution reports.
 
 ----------
 
@@ -1230,7 +1230,7 @@ structured output
 
 ## Acceptance Criteria
 
-An LLM Node can be placed into a Project and executed through the normal runtime.
+An LLM Node can be placed into a Workflow and executed through the normal runtime.
 
 ----------
 
@@ -1344,21 +1344,21 @@ without changing Engine core.
 
 ----------
 
-# 22. Phase 18 — Project Import / Export
+# 22. Phase 18 — Workflow Import / Export
 
 ## Goal
 
-Make Projects portable.
+Make Workflows portable.
 
 ## Scope
 
 Implement:
 
 ```text
-ProjectPackage
-ProjectManifest
-ProjectExporter
-ProjectImporter
+WorkflowPackage
+WorkflowManifest
+WorkflowExporter
+WorkflowImporter
 SchemaValidator
 DependencyValidator
 ```
@@ -1367,7 +1367,7 @@ Package contents:
 
 ```text
 manifest
-project
+workflow
 graph
 node configuration
 prompts
@@ -1394,7 +1394,7 @@ secret exclusion
 
 ## Acceptance Criteria
 
-A Project can be exported and imported into another compatible installation.
+A Workflow can be exported and imported into another compatible installation.
 
 ----------
 
@@ -1417,8 +1417,8 @@ ReportGenerator
 Reports should contain:
 
 ```text
-project
-project version
+workflow
+workflow version
 execution status
 duration
 nodes
@@ -1477,7 +1477,7 @@ Implement basic authorization boundaries without building full enterprise RBAC.
 Protect:
 
 ```text
-projects
+workflows
 executions
 credentials
 plugins
@@ -1515,12 +1515,12 @@ Provide operational and developer CLI access.
 Implement:
 
 ```text
-project create
-project validate
-project publish
-project run
-project import
-project export
+workflow create
+workflow validate
+workflow publish
+workflow run
+workflow import
+workflow export
 
 node list
 node validate
@@ -1604,7 +1604,7 @@ Test:
 
 ## Acceptance Criteria
 
-Long-running Projects do not depend on an open HTTP request.
+Long-running Workflows do not depend on an open HTTP request.
 
 ----------
 
@@ -1690,7 +1690,7 @@ Test that every relevant limit is enforced.
 
 ## Acceptance Criteria
 
-A malformed or badly configured Project cannot trivially consume unlimited resources.
+A malformed or badly configured Workflow cannot trivially consume unlimited resources.
 
 ----------
 
@@ -1789,7 +1789,7 @@ Validate the complete backend as one coherent system.
 Run the complete end-to-end flow:
 
 ```text
-Create Project
+Create Workflow
       ↓
 Add Nodes
       ↓
@@ -1809,14 +1809,14 @@ Inspect
       ↓
 Generate Report
       ↓
-Export Project
+Export Workflow
       ↓
-Import Project
+Import Workflow
       ↓
-Execute Imported Project
+Execute Imported Workflow
 ```
 
-Use the official example Projects.
+Use the official example Workflows.
 
 At minimum:
 
@@ -2169,9 +2169,9 @@ Read the required project documentation and inspect all existing backend code.
 Implement ONLY Phase 02.
 
 Create the core domain objects:
-- Project
-- ProjectDraft
-- ProjectVersion
+- Workflow
+- WorkflowDraft
+- WorkflowVersion
 - Graph
 - NodeInstance
 - Edge
@@ -2239,7 +2239,7 @@ Stop after Phase 03.
 ## Phase 04 Prompt
 
 ```text
-Implement Backend Roadmap Phase 04 — Project Graph + Validation.
+Implement Backend Roadmap Phase 04 — Workflow Graph + Validation.
 
 Read the project documentation and inspect all current domain and Node code.
 
@@ -2287,7 +2287,7 @@ Introduce PostgreSQL persistence with:
 - PostgreSQL repository implementations
 - transactions
 
-Persist Projects and Project Versions and their graph data.
+Persist Workflows and Workflow Versions and their graph data.
 
 Keep persistence concerns outside the domain layer.
 
@@ -2307,26 +2307,26 @@ Stop after Phase 05.
 ## Phase 06 Prompt
 
 ```text
-Implement Backend Roadmap Phase 06 — Project Application Services.
+Implement Backend Roadmap Phase 06 — Workflow Application Services.
 
 Read all relevant documentation and inspect the existing backend.
 
 Implement ONLY Phase 06.
 
 Implement:
-- CreateProject
-- GetProject
-- UpdateProjectDraft
-- DeleteProject
-- ValidateProject
-- PublishProject
-- GetProjectVersion
-- ListProjects
-- ListProjectVersions
+- CreateWorkflow
+- GetWorkflow
+- UpdateWorkflowDraft
+- DeleteWorkflow
+- ValidateWorkflow
+- PublishWorkflow
+- GetWorkflowVersion
+- ListWorkflows
+- ListWorkflowVersions
 
-Implement immutable Project Versions.
+Implement immutable Workflow Versions.
 
-Expose the required /api/v1/projects endpoints.
+Expose the required /api/v1/workflows endpoints.
 
 Create API and application tests.
 
@@ -2555,7 +2555,7 @@ Implement:
 - secure access
 
 Ensure raw secrets never appear in:
-- Project configuration
+- Workflow configuration
 - normal API responses
 - logs
 - reports
@@ -2709,9 +2709,9 @@ Stop after Phase 17.
 ## Phase 18 Prompt
 
 ```text
-Implement Backend Roadmap Phase 18 — Project Import / Export.
+Implement Backend Roadmap Phase 18 — Workflow Import / Export.
 
-Read the project format requirements and inspect the current Project model.
+Read the workflow format requirements and inspect the current Workflow model.
 
 Implement ONLY Phase 18.
 
@@ -2780,7 +2780,7 @@ Do not build enterprise SSO or complex RBAC.
 
 Create security-focused tests.
 
-Verify credentials and project data cannot be accessed by unauthorized users.
+Verify credentials and workflow data cannot be accessed by unauthorized users.
 
 Stop after Phase 20.
 ```
@@ -2796,7 +2796,7 @@ Read the architecture and inspect the existing application services.
 
 Implement ONLY Phase 21.
 
-Create the CLI for the roadmap-defined project, node, plugin, execution, backup and restore operations.
+Create the CLI for the roadmap-defined workflow, node, plugin, execution, backup and restore operations.
 
 Reuse application services instead of duplicating business logic.
 
@@ -2974,7 +2974,7 @@ Do NOT start new major architectural features.
 Validate the complete Version 1 backend.
 
 Execute the complete flow:
-- create Project
+- create Workflow
 - configure graph
 - validate
 - publish
@@ -2985,7 +2985,7 @@ Execute the complete flow:
 - report
 - export
 - import
-- execute imported Project
+- execute imported Workflow
 
 Run all available:
 - unit tests
@@ -3016,10 +3016,10 @@ The backend is considered Version 1 complete when all of the following work:
 [ ] Backend starts reproducibly
 [ ] Database migrations work
 [ ] Authentication works
-[ ] Projects can be created
+[ ] Workflows can be created
 [ ] Drafts can be edited
-[ ] Projects can be validated
-[ ] Projects can be published
+[ ] Workflows can be validated
+[ ] Workflows can be published
 [ ] Published versions are immutable
 [ ] Nodes have stable contracts
 [ ] Nodes can be registered
@@ -3043,8 +3043,8 @@ The backend is considered Version 1 complete when all of the following work:
 [ ] Token usage is tracked
 [ ] Cost estimates are tracked
 [ ] Reports work
-[ ] Projects can be exported
-[ ] Projects can be imported
+[ ] Workflows can be exported
+[ ] Workflows can be imported
 [ ] CLI works
 [ ] Long-running execution is decoupled from HTTP
 [ ] Retry works
@@ -3055,7 +3055,7 @@ The backend is considered Version 1 complete when all of the following work:
 [ ] Security tests pass
 [ ] Docker deployment works
 [ ] Backup/restore works
-[ ] Example Projects work
+[ ] Example Workflows work
 [ ] Full E2E flow works
 ```
 
@@ -3093,7 +3093,7 @@ User adds Node
 Configure Node
        │
        ▼
-Project Draft
+Workflow Draft
        │
        ▼
 Validate
@@ -3102,7 +3102,7 @@ Validate
 Publish
        │
        ▼
-Project Version
+Workflow Version
        │
        ▼
 Trigger
@@ -3129,7 +3129,7 @@ Execution Persistence
 Report
        │
        ▼
-Project Export
+Workflow Export
 ```
 
 This flow is the ultimate backend integration target.

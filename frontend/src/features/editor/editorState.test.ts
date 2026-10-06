@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { Graph, NodeInstance } from '../../api/projects'
+import type { Graph, NodeInstance } from '../../api/workflows'
 import {
     editorReducer,
     HISTORY_LIMIT,

@@ -2,8 +2,8 @@ import { useQuery } from '@tanstack/react-query'
 import { useId, useState, type SubmitEvent } from 'react'
 import { useApiClient } from '../../api/context'
 import { errorMessage } from '../../api/errors'
-import type { Project, Trigger, TriggerType } from '../../api/projects'
-import { projectQueries } from '../../api/queries'
+import type { Workflow, Trigger, TriggerType } from '../../api/workflows'
+import { workflowQueries } from '../../api/queries'
 import type { JsonObject } from '../../api/schemas'
 import {
     Alert,
@@ -26,8 +26,8 @@ import {
 } from './triggerTypes'
 
 interface TriggerFormDialogProps {
-    /** The project the trigger belongs to. */
-    project: Project
+    /** The workflow the trigger belongs to. */
+    workflow: Workflow
     open: boolean
     onClose: () => void
     /** Absent: create. Present: edit (its type is fixed). */
@@ -38,7 +38,7 @@ interface TriggerFormDialogProps {
 }
 
 export function TriggerFormDialog({
-    project,
+    workflow,
     open,
     onClose,
     trigger,
@@ -77,7 +77,7 @@ export function TriggerFormDialog({
         >
             {/* Remounted per open, so the form starts from `trigger`. */}
             <TriggerForm
-                project={project}
+                workflow={workflow}
                 formId={formId}
                 trigger={trigger}
                 pending={pending}
@@ -94,7 +94,7 @@ const text = (config: JsonObject, key: string) => {
 }
 
 function TriggerForm({
-    project,
+    workflow,
     formId,
     trigger,
     pending,
@@ -114,7 +114,7 @@ function TriggerForm({
     const [event, setEvent] = useState(
         text(initial, 'event') || 'execution.completed',
     )
-    // '' = this project.
+    // '' = this workflow.
     const [source, setSource] = useState(text(initial, EVENT_SOURCE_FIELD))
     const [secret, setSecret] = useState<unknown>(initial[WEBHOOK_SECRET_FIELD])
     const [secretMissing, setSecretMissing] = useState(false)
@@ -133,7 +133,7 @@ function TriggerForm({
                 break
             case 'event':
                 config['event'] = event
-                if (source === '') delete config['source_project_id']
+                if (source === '') delete config['source_workflow_id']
                 else config[EVENT_SOURCE_FIELD] = source
                 break
             case 'webhook':
@@ -229,7 +229,7 @@ function TriggerForm({
             )}
             {type === 'event' && (
                 <EventFields
-                    project={project}
+                    workflow={workflow}
                     event={event}
                     source={source}
                     onEvent={setEvent}
@@ -267,26 +267,26 @@ function TriggerForm({
 }
 
 function EventFields({
-    project,
+    workflow,
     event,
     source,
     onEvent,
     onSource,
 }: {
-    project: Project
+    workflow: Workflow
     event: string
     source: string
     onEvent: (event: string) => void
     onSource: (source: string) => void
 }) {
     const client = useApiClient()
-    const projects = useQuery(
-        projectQueries.list(client, { limit: 100, sort: 'name' }),
+    const workflows = useQuery(
+        workflowQueries.list(client, { limit: 100, sort: 'name' }),
     )
-    // The projects the caller may access (all for an admin). The backend
-    // fires only if the trigger project's owner may access the source too.
-    const sources = (projects.data?.items ?? []).filter(
-        (p) => p.id !== project.id,
+    // The workflows the caller may access (all for an admin). The backend
+    // fires only if the trigger workflow's owner may access the source too.
+    const sources = (workflows.data?.items ?? []).filter(
+        (p) => p.id !== workflow.id,
     )
     const unknownSource = source !== '' && !sources.some((p) => p.id === source)
     return (
@@ -309,25 +309,27 @@ function EventFields({
                 )}
             </Select>
             <Select
-                label="Source project"
+                label="Source workflow"
                 value={source}
                 description={
-                    projects.isError
-                        ? `Could not load your projects: ${errorMessage(projects.error)}`
-                        : 'Whose events start this trigger. It fires only if this project’s owner can access the source project: an admin any project, a member only their own.'
+                    workflows.isError
+                        ? `Could not load your workflows: ${errorMessage(workflows.error)}`
+                        : 'Whose events start this trigger. It fires only if this workflow’s owner can access the source workflow: an admin any workflow, a member only their own.'
                 }
                 onChange={(e) => {
                     onSource(e.target.value)
                 }}
             >
-                <option value="">This project</option>
+                <option value="">This workflow</option>
                 {sources.map((p) => (
                     <option key={p.id} value={p.id}>
                         {p.name}
                     </option>
                 ))}
                 {unknownSource && (
-                    <option value={source}>Unavailable project {source}</option>
+                    <option value={source}>
+                        Unavailable workflow {source}
+                    </option>
                 )}
             </Select>
         </>

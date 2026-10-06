@@ -10,15 +10,15 @@ This repository contains a self-hosted AI Agent Orchestration Engine.
 The system allows users to:
 
 - create modular AI workflows
-- compose Nodes into Projects
+- compose Nodes into Workflows
 - configure and connect Nodes visually
-- publish immutable Project Versions
-- execute Projects through a runtime
+- publish immutable Workflow Versions
+- execute Workflows through a runtime
 - monitor executions
 - inspect logs, events, metrics and errors
 - manage credentials and plugins
 - create custom Python Nodes
-- import and export Projects
+- import and export Workflows
 - integrate different LLM providers
 - operate the complete system in a self-hosted environment
 
@@ -158,7 +158,7 @@ The following must not be independently reimplemented in the frontend:
 
 * graph validity
 * execution state transitions
-* project publication rules
+* workflow publication rules
 * credential authorization
 * Node compatibility rules
 * runtime scheduling
@@ -224,9 +224,9 @@ The fundamental concepts are:
 
 ```text
 Engine
-Project
-ProjectDraft
-ProjectVersion
+Workflow
+WorkflowDraft
+WorkflowVersion
 Graph
 Node
 NodeInstance
@@ -244,11 +244,11 @@ Do not introduce duplicate concepts with overlapping responsibilities.
 For example, do not create:
 
 ```text
-Workflow
+Project
 Pipeline
 Flow
 GraphDefinition
-ProjectGraph
+WorkflowGraph
 ```
 
 if they are merely alternate names for the same domain concept.
@@ -257,16 +257,16 @@ Prefer one explicit domain concept with clear semantics.
 
 ---
 
-# 7. Project Drafts and Published Versions
+# 7. Workflow Drafts and Published Versions
 
-A Project Draft is mutable.
+A Workflow Draft is mutable.
 
-A published Project Version is immutable.
+A published Workflow Version is immutable.
 
 The expected lifecycle is:
 
 ```text
-Project
+Workflow
   ↓
 Draft
   ↓
@@ -274,14 +274,14 @@ Validate
   ↓
 Publish
   ↓
-Immutable Project Version
+Immutable Workflow Version
   ↓
 Execution Snapshot
 ```
 
 An Execution must never accidentally execute a later modified Draft.
 
-Execution must operate against a deterministic project/version snapshot.
+Execution must operate against a deterministic workflow/version snapshot.
 
 ---
 
@@ -334,8 +334,8 @@ Examples:
 
 ```text
 ValidationError
-ProjectNotFoundError
-ProjectVersionNotFoundError
+WorkflowNotFoundError
+WorkflowVersionNotFoundError
 NodeNotFoundError
 NodeConfigurationError
 ExecutionNotFoundError
@@ -421,7 +421,7 @@ Examples:
 * state transitions
 * retry classification
 * resource limit calculations
-* project versioning
+* workflow versioning
 * expression parsing
 * configuration validation
 * Node contract validation
@@ -497,7 +497,7 @@ SMTP test server
 OpenSearch
 ```
 
-depending on actual project requirements.
+depending on actual workflow requirements.
 
 Tests should create their infrastructure dynamically.
 
@@ -646,7 +646,7 @@ Test:
 * nested application operations where relevant
 * concurrent access where relevant
 
-If a Project publish operation must be atomic, there should be an integration test proving that a failure cannot leave an invalid half-published state.
+If a Workflow publish operation must be atomic, there should be an integration test proving that a failure cannot leave an invalid half-published state.
 
 ---
 
@@ -1071,7 +1071,7 @@ Secrets must never be:
 * committed to Git
 * printed in logs
 * included in reports
-* included in Project exports
+* included in Workflow exports
 * included in exception messages
 * included in telemetry
 * returned through normal API responses
@@ -1099,7 +1099,7 @@ The exact redaction format may differ, but plaintext secrets must never escape.
 
 # 36. Credential References
 
-Project configuration should contain references, not plaintext secrets.
+Workflow configuration should contain references, not plaintext secrets.
 
 Example:
 
@@ -1117,7 +1117,7 @@ not:
 }
 ```
 
-Tests must ensure Project export cannot accidentally contain secret material.
+Tests must ensure Workflow export cannot accidentally contain secret material.
 
 ---
 
@@ -1187,7 +1187,7 @@ environment
 request_id
 correlation_id
 execution_id
-project_id
+workflow_id
 node_id
 event_type
 message
@@ -1494,7 +1494,7 @@ Before adding a dependency:
 2. evaluate maintenance quality
 3. evaluate security
 4. evaluate license compatibility
-5. evaluate project activity
+5. evaluate workflow activity
 6. evaluate package size
 7. evaluate whether the dependency creates architectural coupling
 
@@ -1669,7 +1669,7 @@ It must respect:
 * Node Contracts
 * Ports
 * Data Types
-* Project Draft semantics
+* Workflow Draft semantics
 * Backend validation
 * Node versions
 * execution state
@@ -1860,12 +1860,12 @@ Uninstallation
 
 # 71. Import/Export Testing
 
-Project packages must be tested extensively.
+Workflow packages must be tested extensively.
 
 At minimum:
 
 ```text
-create project
+create workflow
 → export
 → import
 → validate
@@ -1896,7 +1896,7 @@ Where possible, operations should be deterministic.
 Examples:
 
 * graph serialization
-* project exports
+* workflow exports
 * validation errors
 * migrations
 * configuration parsing
@@ -1919,8 +1919,8 @@ An execution should record enough information to understand what happened.
 Relevant metadata may include:
 
 ```text
-project_id
-project_version
+workflow_id
+workflow_version
 node_versions
 plugin_versions
 engine_version
@@ -1942,7 +1942,7 @@ Large collections must not be returned unbounded.
 
 Apply pagination to:
 
-* Projects
+* Workflows
 * Executions
 * Events
 * Logs
@@ -2144,7 +2144,7 @@ Use optimistic updates only when rollback is reliable.
 For destructive or complex operations such as:
 
 * publishing
-* deleting projects
+* deleting workflows
 * credential changes
 * plugin installation
 
@@ -2168,7 +2168,7 @@ Breaking changes require:
 
 # 87. Backward Compatibility
 
-Project packages and persisted data may outlive application versions.
+Workflow packages and persisted data may outlive application versions.
 
 When changing schemas:
 
@@ -2452,7 +2452,7 @@ create data
 → destroy environment
 → restore
 → verify data
-→ execute restored project
+→ execute restored workflow
 ```
 
 ---
@@ -2481,7 +2481,7 @@ Prefer factories/builders over large static fixture blobs.
 Example:
 
 ```python
-project = ProjectFactory.create(...)
+workflow = WorkflowFactory.create(...)
 ```
 
 Factories should generate valid domain objects by default.
@@ -2499,14 +2499,14 @@ Potential candidates:
 * graph validation
 * graph serialization/deserialization
 * expression parsing
-* project import/export
+* workflow import/export
 * state transitions
 * configuration validation
 
 Examples of useful properties:
 
 ```text
-export(import(project)) ≈ project
+export(import(workflow)) ≈ workflow
 ```
 
 and:
@@ -2525,7 +2525,7 @@ Security-sensitive parsers should be candidates for fuzzing.
 
 Potential targets:
 
-* Project package parser
+* Workflow package parser
 * manifest parser
 * expression parser
 * API payload validation
@@ -2717,7 +2717,7 @@ uv run ruff format --check .
 uv run mypy .
 ```
 
-Use the actual project commands if they differ.
+Use the actual workflow commands if they differ.
 
 For frontend:
 
@@ -2875,7 +2875,7 @@ The same applies to React.
 Avoid:
 
 ```text
-ProjectEditor.tsx
+WorkflowEditor.tsx
 ```
 
 becoming a 3,000-line component.
@@ -2888,7 +2888,7 @@ NodeLibrary
 NodeInspector
 ValidationPanel
 Toolbar
-ProjectHeader
+WorkflowHeader
 ExecutionOverlay
 ```
 

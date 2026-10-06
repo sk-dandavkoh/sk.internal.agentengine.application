@@ -7,7 +7,7 @@ operator-facing call needs on top:
 - one lock per process, so concurrent install/enable/update/remove calls
   (REST and MCP alike) never interleave: the registry is not locked
   itself, and ``prepare`` runs in a thread;
-- dependency-aware removal and update: a project needs a plugin when its
+- dependency-aware removal and update: a workflow needs a plugin when its
   draft or any published version uses one of the plugin's node types or
   declares a plugin dependency on it. Published versions count too: they
   are retained history that executions may still run.
@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from akasha.application.projects import ProjectService
+from akasha.application.workflows import WorkflowService
 from akasha.domain.plugin import PluginMetadata
 from akasha.errors import AkashaError, ConfigurationError
 from akasha.plugins.archive import unpack_package
@@ -58,15 +58,15 @@ class PluginTestFailedError(AkashaError):
 
 async def remove_plugin(
     registry: PluginRegistry,
-    projects: ProjectService,
+    workflows: WorkflowService,
     plugin_id: str,
     *,
     force: bool = False,
 ) -> Sequence[str]:
-    """Remove ``plugin_id`` unless projects need it; ``force`` removes it
+    """Remove ``plugin_id`` unless workflows need it; ``force`` removes it
     anyway (the explicit confirmation §143 asks for). Returns the ids of
-    the projects that needed it (empty unless forced)."""
-    users = await _users(registry, projects, plugin_id, force=force, action="remove")
+    the workflows that needed it (empty unless forced)."""
+    users = await _users(registry, workflows, plugin_id, force=force, action="remove")
     registry.remove(plugin_id)
     _warn_forced("plugin_removed_in_use", plugin_id, users)
     return users
@@ -74,7 +74,7 @@ async def remove_plugin(
 
 async def _users(
     registry: PluginRegistry,
-    projects: ProjectService,
+    workflows: WorkflowService,
     plugin_id: str,
     *,
     force: bool,
@@ -82,11 +82,11 @@ async def _users(
 ) -> Sequence[str]:
     metadata = registry.get(plugin_id).metadata
     node_types = [] if metadata is None else [n.node_id for n in metadata.nodes]
-    users = await projects.projects_using_plugin(plugin_id, node_types)
+    users = await workflows.workflows_using_plugin(plugin_id, node_types)
     if users and not force:
         raise PluginInUseError(
-            f"Projects use this plugin; {action} it with force to proceed.",
-            details={"plugin_id": plugin_id, "projects": list(users)},
+            f"Workflows use this plugin; {action} it with force to proceed.",
+            details={"plugin_id": plugin_id, "workflows": list(users)},
         )
     return users
 
@@ -95,7 +95,11 @@ def _warn_forced(event: str, plugin_id: str, users: Sequence[str]) -> None:
     if users:
         logger.warning(
             event,
-            extra={"event": event, "plugin_id": plugin_id, "project_count": len(users)},
+            extra={
+                "event": event,
+                "plugin_id": plugin_id,
+                "workflow_count": len(users),
+            },
         )
 
 
@@ -170,19 +174,19 @@ class PluginService:
     """Serialized plugin lifecycle over one ``PluginRegistry``."""
 
     def __init__(
-        self, registry: PluginRegistry, projects: ProjectService | None
+        self, registry: PluginRegistry, workflows: WorkflowService | None
     ) -> None:
-        """Without ``projects`` (no database) removal and update are
-        unavailable: they could not see which projects need the plugin."""
+        """Without ``workflows`` (no database) removal and update are
+        unavailable: they could not see which workflows need the plugin."""
         self.registry = registry
-        self._project_service = projects
+        self._workflow_service = workflows
         self._lock = asyncio.Lock()
 
     @property
-    def _projects(self) -> ProjectService:
-        if self._project_service is None:
+    def _workflows(self) -> WorkflowService:
+        if self._workflow_service is None:
             raise ConfigurationError("Plugin removal and update need the database.")
-        return self._project_service
+        return self._workflow_service
 
     def list(self) -> list[PluginRecord]:
         return self.registry.list_plugins()
@@ -235,16 +239,16 @@ class PluginService:
         self, data: bytes, *, force: bool = False
     ) -> tuple[PluginRecord, Sequence[str]]:
         """Replace an installed plugin with the package ZIP ``data``. Like
-        removal, refused while projects use it unless ``force``: their
+        removal, refused while workflows use it unless ``force``: their
         published versions stay pinned to the old version and stop running
-        until it is back. Returns the record and the affected projects."""
+        until it is back. Returns the record and the affected workflows."""
         async with self._lock:
             with tempfile.TemporaryDirectory(prefix="akasha-plugin-") as tmp:
                 package = unpack_package(data, Path(tmp))
                 plugin_id = read_manifest(package).plugin_id
                 users = await _users(
                     self.registry,
-                    self._projects,
+                    self._workflows,
                     plugin_id,
                     force=force,
                     action="update",
@@ -267,7 +271,7 @@ class PluginService:
     async def remove(self, plugin_id: str, *, force: bool = False) -> Sequence[str]:
         async with self._lock:
             return await remove_plugin(
-                self.registry, self._projects, plugin_id, force=force
+                self.registry, self._workflows, plugin_id, force=force
             )
 
     async def test_archive(

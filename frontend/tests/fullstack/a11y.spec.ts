@@ -35,31 +35,31 @@ test.beforeAll(async ({ baseURL }) => {
         extraHTTPHeaders: { Authorization: `Bearer ${token}` },
     })
 
-    // A published, executed project, a credential and a trigger, so lists,
+    // A published, executed workflow, a credential and a trigger, so lists,
     // details, graphs and reports have content.
     const example = JSON.parse(
         readFileSync(
             new URL(
-                '../../../backend/examples/projects/hello-world.json',
+                '../../../backend/examples/workflows/hello-world.json',
                 import.meta.url,
             ),
             'utf8',
         ),
     ) as { graph: unknown; triggers: unknown; dependencies: unknown }
-    const created = await api.post('/api/v1/projects', {
+    const created = await api.post('/api/v1/workflows', {
         data: { name: `A11y sweep ${randomUUID().slice(0, 8)}` },
     })
-    const project = (await created.json()) as {
+    const workflow = (await created.json()) as {
         id: string
         name: string
         revision: number
     }
     expect(
         (
-            await api.put(`/api/v1/projects/${project.id}`, {
+            await api.put(`/api/v1/workflows/${workflow.id}`, {
                 data: {
-                    expected_revision: project.revision,
-                    name: project.name,
+                    expected_revision: workflow.revision,
+                    name: workflow.name,
                     draft: {
                         graph: example.graph,
                         triggers: example.triggers,
@@ -70,10 +70,10 @@ test.beforeAll(async ({ baseURL }) => {
         ).status(),
     ).toBe(200)
     expect(
-        (await api.post(`/api/v1/projects/${project.id}/publish`)).status(),
+        (await api.post(`/api/v1/workflows/${workflow.id}/publish`)).status(),
     ).toBe(201)
     const run = await api.post(
-        `/api/v1/projects/${project.id}/versions/1/execute`,
+        `/api/v1/workflows/${workflow.id}/versions/1/execute`,
         { data: { name: 'World' } },
     )
     const execution = (await run.json()) as { id: string }
@@ -98,11 +98,11 @@ test.beforeAll(async ({ baseURL }) => {
         ).status(),
     ).toBe(201)
 
-    const p = `/projects/${project.id}`
+    const p = `/workflows/${workflow.id}`
     const e = execution.id
     routes = [
         '/dashboard',
-        '/projects',
+        '/workflows',
         p,
         `${p}/editor`,
         `${p}/versions`,

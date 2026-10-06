@@ -9,7 +9,7 @@ attempt owns the whole loop, so timeouts, cancellation, retries, credential
 scoping, redaction and persistence are the runtime's ordinary ones.
 
 Tools are registered nodes (architecture §135/§136): each tool entry names a
-node type and a fixed config written by the project author; the model
+node type and a fixed config written by the workflow author; the model
 supplies only the node's *input ports* as arguments, derived into the tool's
 JSON Schema from the port declarations. So the model can choose what to
 search for or which page to read, but never which host core.http targets,
@@ -442,7 +442,7 @@ class AgentNode(Node):
             raise _error(
                 exc.message, NodeErrorKind.VALIDATION, "AGENT_TOOL_INPUT_INVALID"
             ) from None
-        # Same execution and project as the agent; credentials narrowed to
+        # Same execution and workflow as the agent; credentials narrowed to
         # the tool's own config.
         child = replace(
             context,

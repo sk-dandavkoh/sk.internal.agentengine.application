@@ -17,12 +17,12 @@ from akasha.domain.execution import (
 from akasha.domain.graph import Edge, Graph, NodeInstance
 from akasha.domain.node import NodeErrorKind
 from akasha.domain.primitives import new_id
-from akasha.domain.project import ProjectDraft
 from akasha.domain.trigger import TriggerType
+from akasha.domain.workflow import WorkflowDraft
 from akasha.errors import DomainValidationError, InvalidStateTransitionError
 
 T0 = datetime(2100, 1, 1, tzinfo=UTC)
-PROJECT = new_id("proj")
+WORKFLOW = new_id("wf")
 EXEC = new_id("exec")
 NODE = new_id("node")
 
@@ -36,7 +36,7 @@ def event(kind: EventType, **overrides: Any) -> Event:
     fields: dict[str, Any] = {
         "event_type": kind,
         "occurred_at": T0,
-        "project_id": PROJECT,
+        "workflow_id": WORKFLOW,
         "execution_id": EXEC if scope in ("execution", "node") else None,
         "node_id": NODE if scope == "node" else None,
         "payload": dict.fromkeys(PAYLOAD_KEYS[kind], "x"),
@@ -80,13 +80,13 @@ def test_event_is_immutable_and_copies_its_payload() -> None:
 @pytest.mark.parametrize(
     ("event_type", "overrides"),
     [
-        # execution/node events need an execution; project events must not
+        # execution/node events need an execution; workflow events must not
         (EventType.EXECUTION_STARTED, {"execution_id": None}),
-        (EventType.PROJECT_PUBLISHED, {"execution_id": EXEC}),
+        (EventType.WORKFLOW_PUBLISHED, {"execution_id": EXEC}),
         # node events need a node; nothing else may carry one
         (EventType.NODE_SKIPPED, {"node_id": None}),
         (EventType.EXECUTION_STARTED, {"node_id": NODE}),
-        (EventType.PROJECT_PUBLISHED, {"node_id": NODE}),
+        (EventType.WORKFLOW_PUBLISHED, {"node_id": NODE}),
     ],
 )
 def test_scope_ids_must_match_the_event_type(
@@ -116,7 +116,7 @@ def test_payload_is_closed_and_scalar(payload: dict[str, Any]) -> None:
     "overrides",
     [
         {"occurred_at": datetime(2100, 1, 1)},  # naive
-        {"project_id": "not-an-id"},
+        {"workflow_id": "not-an-id"},
         {"event_id": "evt-1"},
         {"node_id": "bad"},
         {"schema_version": 0},
@@ -141,9 +141,9 @@ def chain(*labels: str) -> tuple[Execution, dict[str, str]]:
         ids[label] = instance.id
     for a, b in pairwise(labels):
         graph.add_edge(Edge(ids[a], "out", ids[b], "in"))
-    version = ProjectDraft(graph=graph).publish(version=3)
+    version = WorkflowDraft(graph=graph).publish(version=3)
     execution = Execution.create(
-        PROJECT,
+        WORKFLOW,
         version,
         metadata=ExecutionMetadata(
             trigger_type=TriggerType.API, correlation_id="corr-42"
@@ -163,7 +163,7 @@ def test_create_records_execution_created_with_context() -> None:
     assert created.event_type is EventType.EXECUTION_CREATED
     assert created.occurred_at == T0
     assert created.execution_id == execution.id
-    assert created.project_id == PROJECT and created.project_version == 3
+    assert created.workflow_id == WORKFLOW and created.workflow_version == 3
     assert created.correlation_id == "corr-42"
     assert created.payload == {"trigger_type": "api", "trigger_id": None}
 
@@ -288,8 +288,8 @@ def test_rehydrated_execution_records_nothing() -> None:
     execution, _ = chain("A")
     rehydrated = Execution(
         id=execution.id,
-        project_id=execution.project_id,
-        project_version=execution.project_version,
+        workflow_id=execution.workflow_id,
+        workflow_version=execution.workflow_version,
         node_executions=execution.node_executions,
     )
     assert rehydrated.pending_events == ()

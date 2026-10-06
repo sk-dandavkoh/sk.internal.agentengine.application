@@ -12,9 +12,9 @@ import {
 // -- factories (valid by default) -------------------------------------------------
 
 const AT = '2026-10-02T08:00:00Z'
-const PID = 'proj_1'
+const PID = 'wf_1'
 
-function project(overrides: object = {}) {
+function workflow(overrides: object = {}) {
     return {
         id: PID,
         name: 'Lead scoring',
@@ -37,7 +37,7 @@ function project(overrides: object = {}) {
 
 function summary(version: number, overrides: object = {}) {
     return {
-        id: `pver_${String(version)}`,
+        id: `wfver_${String(version)}`,
         version,
         description: `Release ${String(version)}`,
         schema_version: 1,
@@ -71,8 +71,8 @@ function version(n: number, nodes = [node('a')]) {
 function execution(id: string, n: number, status = 'completed') {
     return {
         id,
-        project_id: PID,
-        project_name: 'Lead scoring',
+        workflow_id: PID,
+        workflow_name: 'Lead scoring',
         version: n,
         status,
         trigger_type: 'manual',
@@ -99,10 +99,10 @@ async function card(name: string) {
 }
 
 const routes = {
-    project: `GET /projects/${PID}`,
-    versions: `GET /projects/${PID}/versions`,
-    version: (n: number) => `GET /projects/${PID}/versions/${String(n)}`,
-    executions: `GET /projects/${PID}/executions`,
+    workflow: `GET /workflows/${PID}`,
+    versions: `GET /workflows/${PID}/versions`,
+    version: (n: number) => `GET /workflows/${PID}/versions/${String(n)}`,
+    executions: `GET /workflows/${PID}/executions`,
 }
 
 // -- list ---------------------------------------------------------------------------
@@ -110,11 +110,11 @@ const routes = {
 describe('Versions list', () => {
     it('shows each published version with its metadata, latest marked', async () => {
         stubBackend({
-            [routes.project]: () => ok(project()),
+            [routes.workflow]: () => ok(workflow()),
             [routes.versions]: () =>
                 ok(page([summary(1, { published_by: null }), summary(2)])),
         })
-        renderRoute(`/projects/${PID}/versions`)
+        renderRoute(`/workflows/${PID}/versions`)
 
         const table = await screen.findByRole('table', {
             name: 'Published versions',
@@ -126,7 +126,7 @@ describe('Versions list', () => {
             throw new Error('expected two version rows')
         expect(first.getByRole('link', { name: 'v1' })).toHaveAttribute(
             'href',
-            `/projects/${PID}/versions/1`,
+            `/workflows/${PID}/versions/1`,
         )
         expect(first.getByText('Not recorded')).toBeInTheDocument()
         expect(first.queryByText('Latest')).not.toBeInTheDocument()
@@ -144,15 +144,15 @@ describe('Versions list', () => {
 
     it('keeps the draft apart and marks versions immutable', async () => {
         stubBackend({
-            [routes.project]: () => ok(project()),
+            [routes.workflow]: () => ok(workflow()),
             [routes.versions]: () => ok(page([summary(1)])),
         })
-        renderRoute(`/projects/${PID}/versions`)
+        renderRoute(`/workflows/${PID}/versions`)
 
         const draft = await card('Draft')
         expect(
             within(draft).getByRole('link', { name: 'Open draft in editor' }),
-        ).toHaveAttribute('href', `/projects/${PID}/editor`)
+        ).toHaveAttribute('href', `/workflows/${PID}/editor`)
         expect(within(draft).getByText('5')).toBeInTheDocument() // revision
         const published = await card('Published versions')
         expect(within(published).getByText('Immutable')).toBeInTheDocument()
@@ -164,11 +164,11 @@ describe('Versions list', () => {
 
     it('says when nothing is published yet', async () => {
         stubBackend({
-            [routes.project]: () =>
-                ok(project({ current_version: 0, status: 'draft' })),
+            [routes.workflow]: () =>
+                ok(workflow({ current_version: 0, status: 'draft' })),
             [routes.versions]: () => ok(page([])),
         })
-        renderRoute(`/projects/${PID}/versions`)
+        renderRoute(`/workflows/${PID}/versions`)
 
         expect(
             await screen.findByRole('heading', { name: 'Not published yet' }),
@@ -178,13 +178,13 @@ describe('Versions list', () => {
 
     it('pages through versions', async () => {
         const requests = stubBackend({
-            [routes.project]: () => ok(project({ current_version: 51 })),
+            [routes.workflow]: () => ok(workflow({ current_version: 51 })),
             [routes.versions]: (url) =>
                 url.searchParams.get('offset') === '50'
                     ? ok(page([summary(51)]))
                     : ok(page([summary(1)], true)),
         })
-        renderRoute(`/projects/${PID}/versions`)
+        renderRoute(`/workflows/${PID}/versions`)
 
         fireEvent.click(await screen.findByRole('button', { name: 'Next' }))
         expect(
@@ -205,13 +205,13 @@ describe('Versions list', () => {
     it('reports a failed load and retries', async () => {
         let calls = 0
         stubBackend({
-            [routes.project]: () => ok(project()),
+            [routes.workflow]: () => ok(workflow()),
             [routes.versions]: () =>
                 ++calls === 1
                     ? apiError(500, 'INTERNAL_ERROR', 'Internal error.')
                     : ok(page([summary(1)])),
         })
-        renderRoute(`/projects/${PID}/versions`)
+        renderRoute(`/workflows/${PID}/versions`)
 
         const alert = await screen.findByRole('alert')
         expect(
@@ -223,16 +223,16 @@ describe('Versions list', () => {
         ).toBeInTheDocument()
     })
 
-    it('shows a missing project as not found', async () => {
+    it('shows a missing workflow as not found', async () => {
         stubBackend({
-            [routes.project]: () =>
-                apiError(404, 'PROJECT_NOT_FOUND', 'Project not found.'),
+            [routes.workflow]: () =>
+                apiError(404, 'WORKFLOW_NOT_FOUND', 'Workflow not found.'),
         })
-        renderRoute(`/projects/${PID}/versions`)
+        renderRoute(`/workflows/${PID}/versions`)
 
         expect(
             await screen.findByRole('heading', {
-                name: 'Project not found',
+                name: 'Workflow not found',
                 level: 1,
             }),
         ).toBeInTheDocument()
@@ -244,13 +244,13 @@ describe('Versions list', () => {
 describe('Version details', () => {
     it('presents the snapshot as read-only, with its metadata', async () => {
         stubBackend({
-            [routes.project]: () => ok(project()),
+            [routes.workflow]: () => ok(workflow()),
             [routes.version(2)]: () =>
                 ok(version(2, [node('a', { level: 'info' })])),
             [routes.version(1)]: pending,
             [routes.executions]: () => ok(page([])),
         })
-        renderRoute(`/projects/${PID}/versions/2`)
+        renderRoute(`/workflows/${PID}/versions/2`)
 
         expect(
             await screen.findByRole('heading', {
@@ -263,7 +263,7 @@ describe('Version details', () => {
         expect(
             screen.getByText('Published versions are read-only'),
         ).toBeInTheDocument()
-        expect(screen.getByText('pver_2')).toBeInTheDocument()
+        expect(screen.getByText('wfver_2')).toBeInTheDocument()
         expect(screen.getByText('v2 (latest)')).toBeInTheDocument()
 
         const nodes = screen.getByRole('table', { name: 'Nodes' })
@@ -295,7 +295,7 @@ describe('Version details', () => {
 
     it('compares with another version, the previous one first', async () => {
         stubBackend({
-            [routes.project]: () => ok(project({ current_version: 3 })),
+            [routes.workflow]: () => ok(workflow({ current_version: 3 })),
             [routes.version(1)]: () => ok(version(1, [node('a')])),
             [routes.version(2)]: () =>
                 ok(version(2, [node('a', { level: 'debug' }), node('b')])),
@@ -303,7 +303,7 @@ describe('Version details', () => {
                 ok(version(3, [node('a', { level: 'debug' })])),
             [routes.executions]: () => ok(page([])),
         })
-        renderRoute(`/projects/${PID}/versions/2`)
+        renderRoute(`/workflows/${PID}/versions/2`)
 
         const select = await screen.findByRole('combobox', {
             name: 'Compare with',
@@ -335,9 +335,9 @@ describe('Version details', () => {
 
     it('compares the only version with the current draft', async () => {
         stubBackend({
-            [routes.project]: () =>
+            [routes.workflow]: () =>
                 ok(
-                    project({
+                    workflow({
                         current_version: 1,
                         draft: {
                             graph: { nodes: [node('a'), node('z')], edges: [] },
@@ -349,7 +349,7 @@ describe('Version details', () => {
             [routes.version(1)]: () => ok(version(1, [node('a')])),
             [routes.executions]: () => ok(page([])),
         })
-        renderRoute(`/projects/${PID}/versions/1`)
+        renderRoute(`/workflows/${PID}/versions/1`)
 
         const select = await screen.findByRole('combobox', {
             name: 'Compare with',
@@ -370,13 +370,13 @@ describe('Version details', () => {
 
     it('lists only the executions of this version', async () => {
         const requests = stubBackend({
-            [routes.project]: () => ok(project()),
+            [routes.workflow]: () => ok(workflow()),
             [routes.version(1)]: pending,
             [routes.version(2)]: () => ok(version(2)),
             [routes.executions]: () =>
                 ok(page([execution('exec_1', 2, 'failed')])),
         })
-        renderRoute(`/projects/${PID}/versions/2`)
+        renderRoute(`/workflows/${PID}/versions/2`)
 
         const runs = await card('Executions of this version')
         expect(await within(runs).findByText('exec_1')).toBeInTheDocument()
@@ -389,12 +389,12 @@ describe('Version details', () => {
 
     it('says when a version never ran', async () => {
         stubBackend({
-            [routes.project]: () => ok(project()),
+            [routes.workflow]: () => ok(workflow()),
             [routes.version(1)]: pending,
             [routes.version(2)]: () => ok(version(2)),
             [routes.executions]: () => ok(page([])),
         })
-        renderRoute(`/projects/${PID}/versions/2`)
+        renderRoute(`/workflows/${PID}/versions/2`)
 
         expect(
             await screen.findByRole('heading', { name: 'Not run yet' }),
@@ -405,15 +405,15 @@ describe('Version details', () => {
         'shows version "%s" as not found',
         async (param) => {
             stubBackend({
-                [routes.project]: () => ok(project()),
+                [routes.workflow]: () => ok(workflow()),
                 [routes.version(9)]: () =>
                     apiError(
                         404,
-                        'PROJECT_VERSION_NOT_FOUND',
-                        'Project version not found.',
+                        'WORKFLOW_VERSION_NOT_FOUND',
+                        'Workflow version not found.',
                     ),
             })
-            renderRoute(`/projects/${PID}/versions/${param}`)
+            renderRoute(`/workflows/${PID}/versions/${param}`)
 
             expect(
                 await screen.findByRole('heading', {
@@ -423,17 +423,17 @@ describe('Version details', () => {
             ).toBeInTheDocument()
             expect(
                 screen.getByRole('link', { name: 'All versions' }),
-            ).toHaveAttribute('href', `/projects/${PID}/versions`)
+            ).toHaveAttribute('href', `/workflows/${PID}/versions`)
         },
     )
 
     it('reports a failed version load', async () => {
         stubBackend({
-            [routes.project]: () => ok(project()),
+            [routes.workflow]: () => ok(workflow()),
             [routes.version(2)]: () =>
                 apiError(500, 'INTERNAL_ERROR', 'Internal error.'),
         })
-        renderRoute(`/projects/${PID}/versions/2`)
+        renderRoute(`/workflows/${PID}/versions/2`)
 
         expect(
             await screen.findByRole('heading', {
@@ -461,13 +461,13 @@ describe('Restore and clone', () => {
         const bodies: unknown[] = []
         stubBackend({
             ...base,
-            [routes.project]: () => ok(project()),
-            [`POST /projects/${PID}/versions/2/restore`]: (_url, init) => {
+            [routes.workflow]: () => ok(workflow()),
+            [`POST /workflows/${PID}/versions/2/restore`]: (_url, init) => {
                 bodies.push(jsonBody(init))
-                return ok(project({ revision: 6 }))
+                return ok(workflow({ revision: 6 }))
             },
         })
-        const { router } = renderRoute(`/projects/${PID}/versions/2`)
+        const { router } = renderRoute(`/workflows/${PID}/versions/2`)
 
         fireEvent.click(
             await screen.findByRole('button', { name: 'Restore to draft…' }),
@@ -486,7 +486,7 @@ describe('Restore and clone', () => {
         expect(bodies).toEqual([{ expected_revision: 5 }])
         await waitFor(() => {
             expect(router.state.location.pathname).toBe(
-                `/projects/${PID}/editor`,
+                `/workflows/${PID}/editor`,
             )
         })
     })
@@ -495,18 +495,18 @@ describe('Restore and clone', () => {
         let loads = 0
         stubBackend({
             ...base,
-            [routes.project]: () => {
+            [routes.workflow]: () => {
                 loads += 1
-                return ok(project({ revision: loads === 1 ? 5 : 7 }))
+                return ok(workflow({ revision: loads === 1 ? 5 : 7 }))
             },
-            [`POST /projects/${PID}/versions/2/restore`]: () =>
+            [`POST /workflows/${PID}/versions/2/restore`]: () =>
                 apiError(
                     409,
                     'CONCURRENT_MODIFICATION',
-                    'The project was modified since it was read; reload and retry.',
+                    'The workflow was modified since it was read; reload and retry.',
                 ),
         })
-        renderRoute(`/projects/${PID}/versions/2`)
+        renderRoute(`/workflows/${PID}/versions/2`)
 
         fireEvent.click(
             await screen.findByRole('button', { name: 'Restore to draft…' }),
@@ -525,47 +525,47 @@ describe('Restore and clone', () => {
         ).toBeInTheDocument()
     })
 
-    it('clones a version as a new project', async () => {
+    it('clones a version as a new workflow', async () => {
         const bodies: unknown[] = []
         stubBackend({
             ...base,
-            [routes.project]: () => ok(project()),
-            [`POST /projects/${PID}/duplicate`]: (_url, init): Reply => {
+            [routes.workflow]: () => ok(workflow()),
+            [`POST /workflows/${PID}/duplicate`]: (_url, init): Reply => {
                 bodies.push(jsonBody(init))
                 return {
                     status: 201,
-                    body: project({
-                        id: 'proj_copy',
+                    body: workflow({
+                        id: 'wf_copy',
                         name: 'Copy',
                         current_version: 0,
                     }),
                 }
             },
-            'GET /projects/proj_copy': pending,
+            'GET /workflows/wf_copy': pending,
         })
-        const { router } = renderRoute(`/projects/${PID}/versions/2`)
+        const { router } = renderRoute(`/workflows/${PID}/versions/2`)
 
         fireEvent.click(
             await screen.findByRole('button', {
-                name: 'Clone as new project…',
+                name: 'Clone as new workflow…',
             }),
         )
         const dialog = screen.getByRole('dialog', {
-            name: 'Clone v2 as a new project',
+            name: 'Clone v2 as a new workflow',
         })
         expect(
             within(dialog).getByRole('textbox', { name: /name/i }),
         ).toHaveValue('Lead scoring (v2)')
         fireEvent.click(
-            within(dialog).getByRole('button', { name: 'Create project' }),
+            within(dialog).getByRole('button', { name: 'Create workflow' }),
         )
 
         expect(
-            await screen.findByText('Project “Copy” created'),
+            await screen.findByText('Workflow “Copy” created'),
         ).toBeInTheDocument()
         expect(bodies).toEqual([{ name: 'Lead scoring (v2)', version: 2 }])
         await waitFor(() => {
-            expect(router.state.location.pathname).toBe('/projects/proj_copy')
+            expect(router.state.location.pathname).toBe('/workflows/wf_copy')
         })
     })
 
@@ -577,15 +577,15 @@ describe('Restore and clone', () => {
         }
         stubBackend({
             ...base,
-            [routes.project]: () => ok(project()),
-            [`POST /projects/${PID}/versions/2/execute`]: (_url, init) => {
+            [routes.workflow]: () => ok(workflow()),
+            [`POST /workflows/${PID}/versions/2/execute`]: (_url, init) => {
                 bodies.push(jsonBody(init))
                 return { status: 201, body: queued }
             },
             'GET /executions/exec_new': () => ok(queued),
             'GET /reports/executions/exec_new': pending,
         })
-        const { router } = renderRoute(`/projects/${PID}/versions/2`)
+        const { router } = renderRoute(`/workflows/${PID}/versions/2`)
 
         fireEvent.click(await screen.findByRole('button', { name: 'Run…' }))
         const dialog = screen.getByRole('dialog', { name: 'Run v2' })
@@ -621,15 +621,15 @@ describe('Restore and clone', () => {
     it('shows why the backend refused to start a run', async () => {
         stubBackend({
             ...base,
-            [routes.project]: () => ok(project()),
-            [`POST /projects/${PID}/versions/2/execute`]: () =>
+            [routes.workflow]: () => ok(workflow()),
+            [`POST /workflows/${PID}/versions/2/execute`]: () =>
                 apiError(
                     422,
                     'VALIDATION_ERROR',
                     'Input field "lead" is required.',
                 ),
         })
-        renderRoute(`/projects/${PID}/versions/2`)
+        renderRoute(`/workflows/${PID}/versions/2`)
 
         fireEvent.click(await screen.findByRole('button', { name: 'Run…' }))
         const dialog = screen.getByRole('dialog', { name: 'Run v2' })
@@ -645,19 +645,19 @@ describe('Restore and clone', () => {
 // -- navigation ---------------------------------------------------------------------
 
 describe('Version navigation', () => {
-    it('goes from the project to its versions and on to one version', async () => {
+    it('goes from the workflow to its versions and on to one version', async () => {
         stubBackend({
-            [routes.project]: () => ok(project()),
+            [routes.workflow]: () => ok(workflow()),
             [routes.versions]: () => ok(page([summary(1), summary(2)])),
             [routes.version(1)]: () => ok(version(1)),
             [routes.version(2)]: () => ok(version(2)),
             [routes.executions]: () => ok(page([])),
         })
-        const { router } = renderRoute(`/projects/${PID}`)
+        const { router } = renderRoute(`/workflows/${PID}`)
 
         expect(await screen.findByRole('link', { name: 'v2' })).toHaveAttribute(
             'href',
-            `/projects/${PID}/versions/2`,
+            `/workflows/${PID}/versions/2`,
         )
         fireEvent.click(screen.getByRole('link', { name: 'Versions' }))
         fireEvent.click(await screen.findByRole('link', { name: 'v1' }))
@@ -669,7 +669,7 @@ describe('Version navigation', () => {
             }),
         ).toBeInTheDocument()
         expect(router.state.location.pathname).toBe(
-            `/projects/${PID}/versions/1`,
+            `/workflows/${PID}/versions/1`,
         )
         expect(screen.getByText('v1 (latest is v2)')).toBeInTheDocument()
     })
@@ -678,12 +678,12 @@ describe('Version navigation', () => {
         stubBackend({
             'GET /executions': () => ok(page([execution('exec_1', 2)])),
             'GET /executions/status-counts': () => ok({ counts: {} }),
-            'GET /projects': () => ok(page([])),
+            'GET /workflows': () => ok(page([])),
             'GET /system/status': pending,
         })
         renderRoute('/dashboard')
 
         const [link] = await screen.findAllByRole('link', { name: 'v2' })
-        expect(link).toHaveAttribute('href', `/projects/${PID}/versions/2`)
+        expect(link).toHaveAttribute('href', `/workflows/${PID}/versions/2`)
     })
 })

@@ -332,7 +332,7 @@ class HttpNode(Node):
                 },
                 # Header name -> credential reference, e.g. Authorization ->
                 # "credential:crm-api" holding "Bearer ...". Secret headers
-                # never live in ``headers`` (project config is secret-free).
+                # never live in ``headers`` (workflow config is secret-free).
                 "header_credentials": {
                     "type": "object",
                     "additionalProperties": {

@@ -41,11 +41,11 @@ before the fix** (mutation check: the original module was restored from
 | Authentication | Client → API | brute force, enumeration, token theft | No new finding. scrypt, per-username throttle, constant-time unknown-user path, 256-bit opaque tokens hashed at rest, absolute expiry (Phase 20) | `test_auth_api.py`, `test_auth_units.py` |
 | Authorization | Session → resource | IDOR, privilege escalation | No new finding. Default-deny router, 404 for foreign resources, admin-only routers; OpenAPI walk asserts every non-public route needs a session | `test_every_non_public_route_requires_authentication` |
 | Webhooks | Internet → engine | unauthenticated execution, forged/tampered payloads | **F1**, **F4** | §3.1 |
-| Credentials | Store → node | exfiltration, plaintext in projects | No new finding. AES-256-GCM with name as AAD; references only; per-node resolution boundary. Webhook secrets reuse the same store | `test_credentials.py` (unit + integration) |
+| Credentials | Store → node | exfiltration, plaintext in workflows | No new finding. AES-256-GCM with name as AAD; references only; per-node resolution boundary. Webhook secrets reuse the same store | `test_credentials.py` (unit + integration) |
 | Secret handling / logging | Engine → logs, errors, API | secret echo | No new finding; webhook signature header is neither logged nor in the trigger context (allowlist) | `test_redaction.py`, `test_logging.py`, `test_request_observability.py` |
 | SSRF | Node config → network | internal services, cloud metadata, DNS rebinding | **F2**, **F3** | §3.2 |
 | SMTP | Node → mail server | credential sniffing | **F5** | §3.3 |
-| File access / path traversal | Package → engine | zip-slip, symlinks, bombs | No new finding: path regex, regular files only, declared and real size caps. One test was Windows-specific (fixed, §10) | `test_project_package.py`, `test_project_files.py` |
+| File access / path traversal | Package → engine | zip-slip, symlinks, bombs | No new finding: path regex, regular files only, declared and real size caps. One test was Windows-specific (fixed, §10) | `test_workflow_package.py`, `test_workflow_files.py` |
 | Plugins | Operator → engine | malicious code | Trusted-code model (§65) unchanged; install via CLI only, manifests validated, symlinks refused. Signature/hash verification remains deferred (§19) | `test_plugins.py` |
 | Expressions | User config → evaluator | code execution | No eval anywhere; templates resolve mapping/list keys only; conditions are declarative. **H2** makes this a standing guard | `test_llm_node.py` (dunder/`__import__` cases), `test_no_arbitrary_code_execution_primitives` |
 | API limits | Client → API | memory exhaustion | **H1**, **F4** | §3.4 |
@@ -60,7 +60,7 @@ before the fix** (mutation check: the original module was restored from
 ### 3.1 Webhook authentication (F1, F4)
 
 - `domain/trigger.py`: `WEBHOOK_SIGNING_FIELD = "secret_credential"`.
-- `domain/project.py` `validate_triggers`: a WEBHOOK trigger without a
+- `domain/workflow.py` `validate_triggers`: a WEBHOOK trigger without a
   credential reference there is the new issue `WEBHOOK_SECRET_REQUIRED`
   (blocks validate/publish). A plaintext value under the key is already
   `PLAINTEXT_SECRET` (sensitive-key rule).
@@ -118,16 +118,16 @@ before the fix** (mutation check: the original module was restored from
 
 ## 4. Files Changed
 
-Source: `api/app.py`, `api/projects.py`, `api/schemas.py`,
+Source: `api/app.py`, `api/workflows.py`, `api/schemas.py`,
 `api/triggers.py`, `application/triggers.py`, `config.py`,
-`domain/credentials.py`, `domain/graph_validation.py`, `domain/project.py`,
+`domain/credentials.py`, `domain/graph_validation.py`, `domain/workflow.py`,
 `domain/trigger.py`, `nodes/http.py`, `nodes/smtp.py`,
 `security/network.py`.
 Tests: `tests/integration/test_triggers_api.py`,
 `tests/integration/test_auth_api.py`, `tests/nodes/test_http_node.py`,
-`tests/nodes/test_smtp_node.py`, `tests/domain/test_project.py`,
+`tests/nodes/test_smtp_node.py`, `tests/domain/test_workflow.py`,
 `tests/test_architecture.py`, `tests/test_request_observability.py`,
-`tests/application/test_project_package.py`.
+`tests/application/test_workflow_package.py`.
 Dependencies: `pyproject.toml`, `uv.lock`.
 Docs: `docs/architecture.md` (§60, §63, §107, §108, §127), this report.
 
@@ -135,7 +135,7 @@ Docs: `docs/architecture.md` (§60, §63, §107, §108, §127), this report.
 
 ## 7. API / Contract Changes (breaking)
 
-- **Webhooks require a signature.** `POST /api/v1/webhooks/{project_id}/{trigger_id}`
+- **Webhooks require a signature.** `POST /api/v1/webhooks/{workflow_id}/{trigger_id}`
   needs `X-Akasha-Signature: sha256=<hex HMAC-SHA256(secret, raw body)>`,
   else 401 `WEBHOOK_SIGNATURE_INVALID`. The OpenAPI document lists 401.
 - **Publishing a WEBHOOK trigger requires** `config.secret_credential =
@@ -227,9 +227,9 @@ Run in `backend/` on Windows 11 (Python 3.14, uv), after the final change:
 | Item | Reason | Target |
 |---|---|---|
 | Webhook replay protection (signed timestamp) | needs a caller-side scheme change | future trigger work |
-| Request-rate limiting (webhooks/API) | reverse proxy is the V1 control point; per-project active-execution cap bounds load | Phase 26 (deployment guide) |
+| Request-rate limiting (webhooks/API) | reverse proxy is the V1 control point; per-workflow active-execution cap bounds load | Phase 26 (deployment guide) |
 | Plugin package hash/signature verification | V1 trusted-code model (§65) | future plugin work |
-| Owner-aware credential resolution | members' projects may use any credential by name (Phase 20) | future authorization work |
+| Owner-aware credential resolution | members' workflows may use any credential by name (Phase 20) | future authorization work |
 | Restore input size cap | operator-supplied file (Phase 21 open issue) | Phase 26 |
 
 ---
@@ -262,7 +262,7 @@ Run in `backend/` on Windows 11 (Python 3.14, uv), after the final change:
 - **HMAC over a bearer secret.** The secret never travels, and the body
   cannot be altered in transit or by an intermediary that logs it.
 - **The signing secret lives in the Credential Store,** referenced like any
-  other secret: projects stay secret-free and portable (§32/§36).
+  other secret: workflows stay secret-free and portable (§32/§36).
 - **Pinning at the connection layer** (network backend), not by rewriting
   URLs: redirects, Host, SNI and certificate checks keep working unchanged.
 

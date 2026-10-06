@@ -7,7 +7,7 @@ the backend for self-hosted usage". It names `User`, `Session`,
 `AuthenticationService` and `AuthorizationService`. It requires:
 - local authentication;
 - basic authorization boundaries, explicitly not full enterprise RBAC;
-- protection of projects, executions, credentials, plugins and settings;
+- protection of workflows, executions, credentials, plugins and settings;
 - tests for login, logout, invalid credentials, session handling,
   unauthorized access, authorized access and credential protection.
 
@@ -27,7 +27,7 @@ The session request added:
   stored.
 - **Use cases:** `AuthenticationService`, `UserService`,
   `AuthorizationService` and `LoginThrottle`, in `akasha.application.auth`.
-- **Project ownership:** a new `projects.owner_id`, via migration
+- **Workflow ownership:** a new `workflows.owner_id`, via migration
   `0008_auth`.
 - **HTTP layer:** default-deny guards and the `/auth` and `/users` routers,
   in `akasha.api.auth`. All non-public `/api/v1` routes are grouped under
@@ -43,10 +43,10 @@ The session request added:
   - `/health` and `/ready`;
   - the OpenAPI documents;
   - `POST /api/v1/auth/setup` and `POST /api/v1/auth/login`;
-  - `POST /api/v1/webhooks/{project_id}/{trigger_id}`.
+  - `POST /api/v1/webhooks/{workflow_id}/{trigger_id}`.
 - Every other route answers 401 `AUTHENTICATION_REQUIRED`. A test walks the
   OpenAPI document and verifies this for every route.
-- Members see only their own projects and those projects' versions,
+- Members see only their own workflows and those workflows' versions,
   executions, exports and reports. Anything else answers 404.
 - Credentials and user management are admin-only.
 
@@ -70,7 +70,7 @@ Roadmap §24 (verbatim goal): "Secure the backend for self-hosted usage."
 - `User`, `Session`, `AuthenticationService`, `AuthorizationService`;
 - local authentication for Version 1;
 - "basic authorization boundaries without building full enterprise RBAC";
-- protection of projects, executions, credentials, plugins and settings.
+- protection of workflows, executions, credentials, plugins and settings.
 
 **Architecture constraints** (§59/§60, `vision.md` §49/§50):
 - authentication must be separated from authorization;
@@ -102,9 +102,9 @@ Roadmap §24 (verbatim goal): "Secure the backend for self-hosted usage."
   - `Identity` (frozen): `user` plus `session`;
   - `validate_username`: `^[a-z0-9][a-z0-9._-]{2,63}$`;
   - `validate_password`: length 12–256, no composition rules;
-  - `may_access_project(user, owner_id)`.
-- `akasha/domain/project.py`: `Project` gains `owner_id: str | None`,
-  validated as a domain id. `Project.create(..., owner_id=None)`.
+  - `may_access_workflow(user, owner_id)`.
+- `akasha/domain/workflow.py`: `Workflow` gains `owner_id: str | None`,
+  validated as a domain id. `Workflow.create(..., owner_id=None)`.
 
 ### Security
 - `akasha/security/passwords.py` (new): the `PasswordHasher` dataclass.
@@ -123,7 +123,7 @@ Roadmap §24 (verbatim goal): "Secure the backend for self-hosted usage."
     `hasher`, `throttle` and `session_ttl`.
   - `UserService`: `create_user`, `list_users`, `update_user`
     (`disabled` and/or password reset). Every method is admin-only.
-  - `AuthorizationService`: `require_project`, `require_execution`,
+  - `AuthorizationService`: `require_workflow`, `require_execution`,
     `owner_filter`.
   - `LoginThrottle`: per-key sliding-window counter.
   - `require_admin(identity)`.
@@ -136,22 +136,22 @@ Roadmap §24 (verbatim goal): "Secure the backend for self-hosted usage."
 - `akasha/application/persistence.py`:
   - new ports `UserRepository` and `SessionRepository`;
   - `UnitOfWork` gains `users` and `sessions`;
-  - `ProjectRepository.list` gains `owner_id`.
-- `akasha/application/projects.py`: `create_project(..., owner_id=None)`
-  and `list_projects(..., owner_id=None)`.
-- `akasha/application/packages.py`: `import_project(data, *, owner_id=None)`.
+  - `WorkflowRepository.list` gains `owner_id`.
+- `akasha/application/workflows.py`: `create_workflow(..., owner_id=None)`
+  and `list_workflows(..., owner_id=None)`.
+- `akasha/application/packages.py`: `import_workflow(data, *, owner_id=None)`.
 
 ### Persistence
 - `akasha/infrastructure/db_models.py`:
   - new tables `users` and `sessions`;
-  - `projects.owner_id`, a foreign key to `users.id` with `ON DELETE
-    RESTRICT`, plus the index `ix_projects_owner_id`.
+  - `workflows.owner_id`, a foreign key to `users.id` with `ON DELETE
+    RESTRICT`, plus the index `ix_workflows_owner_id`.
 - `akasha/infrastructure/persistence.py`:
   - `SqlAlchemyUserRepository`: `get`, `get_with_password`, `add`,
     `add_first`, `update`, `lock_active_admins`, `list`;
   - `SqlAlchemySessionRepository`: `add`, `get_active`, `delete`,
     `delete_for_user`, `delete_expired`;
-  - the project repository persists `owner_id` on insert only and filters
+  - the workflow repository persists `owner_id` on insert only and filters
     `list` by owner.
 - `migrations/versions/0008_auth.py` (new), with a reversible downgrade.
 
@@ -175,11 +175,11 @@ Roadmap §24 (verbatim goal): "Secure the backend for self-hosted usage."
   - the module docstring holds the access policy.
 - `akasha/api/triggers.py`: the webhook route moved into a new
   `create_webhooks_router()` so it can stay public.
-- `akasha/api/projects.py`:
-  - `create_project` and `import_project` pass `owner_id=identity.user.id`;
-  - `list_projects` passes `AuthorizationService.owner_filter(identity)`.
-- `akasha/api/project_schemas.py`: `ProjectSummary` (and therefore
-  `ProjectDetail`) gains `owner_id`.
+- `akasha/api/workflows.py`:
+  - `create_workflow` and `import_workflow` pass `owner_id=identity.user.id`;
+  - `list_workflows` passes `AuthorizationService.owner_filter(identity)`.
+- `akasha/api/workflow_schemas.py`: `WorkflowSummary` (and therefore
+  `WorkflowDetail`) gains `owner_id`.
 - `akasha/api/app.py`:
   - 401 responses carry `WWW-Authenticate: Bearer`;
   - errors with `details.retry_after_seconds` carry `Retry-After`;
@@ -195,7 +195,7 @@ Roadmap §24 (verbatim goal): "Secure the backend for self-hosted usage."
 ### Testing
 - New: `tests/test_auth_units.py` (31 tests).
 - New: `tests/integration/test_auth_api.py` (49 tests).
-- New: `test_0008_upgrade_leaves_existing_projects_ownerless` in
+- New: `test_0008_upgrade_leaves_existing_workflows_ownerless` in
   `tests/integration/test_persistence.py`.
 - New helpers in `tests/integration/conftest.py`:
   - `AuthKit`, `make_auth_kit` and the `auth_kit` fixture;
@@ -212,17 +212,17 @@ Roadmap §24 (verbatim goal): "Secure the backend for self-hosted usage."
 | `backend/src/akasha/security/passwords.py` | Created | scrypt `PasswordHasher` |
 | `backend/src/akasha/application/auth.py` | Created | Authentication, user, authorization use cases; throttle; errors |
 | `backend/src/akasha/api/auth.py` | Created | Guards, `/auth` and `/users` routers, schemas |
-| `backend/migrations/versions/0008_auth.py` | Created | `users`, `sessions`, `projects.owner_id` |
-| `backend/src/akasha/domain/project.py` | Modified | `owner_id` on `Project` |
+| `backend/migrations/versions/0008_auth.py` | Created | `users`, `sessions`, `workflows.owner_id` |
+| `backend/src/akasha/domain/workflow.py` | Modified | `owner_id` on `Workflow` |
 | `backend/src/akasha/application/persistence.py` | Modified | `UserRepository`, `SessionRepository`, UoW attributes, owner filter |
-| `backend/src/akasha/application/projects.py` | Modified | owner on create, owner filter on list |
+| `backend/src/akasha/application/workflows.py` | Modified | owner on create, owner filter on list |
 | `backend/src/akasha/application/packages.py` | Modified | owner on import |
 | `backend/src/akasha/infrastructure/db_models.py` | Modified | new tables, owner column |
 | `backend/src/akasha/infrastructure/persistence.py` | Modified | new repositories, owner persistence |
 | `backend/src/akasha/api/routes.py` | Modified | protected / public / admin-only composition; `/metrics` guard |
 | `backend/src/akasha/api/triggers.py` | Modified | webhook split into a public router |
-| `backend/src/akasha/api/projects.py` | Modified | identity-scoped create/list/import; docstring |
-| `backend/src/akasha/api/project_schemas.py` | Modified | `owner_id` in responses |
+| `backend/src/akasha/api/workflows.py` | Modified | identity-scoped create/list/import; docstring |
+| `backend/src/akasha/api/workflow_schemas.py` | Modified | `owner_id` in responses |
 | `backend/src/akasha/api/app.py` | Modified | `WWW-Authenticate`, `Retry-After`, `user_id` in access log |
 | `backend/src/akasha/config.py` | Modified | `session_ttl_seconds`, `metrics_token` |
 | `backend/src/akasha/bootstrap.py` | Modified | wiring of auth services |
@@ -231,12 +231,12 @@ Roadmap §24 (verbatim goal): "Secure the backend for self-hosted usage."
 | `backend/tests/integration/test_auth_api.py` | Created | API/security tests on PostgreSQL |
 | `backend/tests/integration/conftest.py` | Modified | `AuthKit`, fast hasher, truncation of auth tables |
 | `backend/tests/integration/test_persistence.py` | Modified | head `0008_auth`, table assertions, 0008 upgrade test |
-| `backend/tests/integration/test_projects_api.py` | Modified | authenticated fixture; 404 code expectation; outage test with auth |
-| `backend/tests/integration/test_triggers_api.py` | Modified | authenticated fixture; unknown-project expectation |
+| `backend/tests/integration/test_workflows_api.py` | Modified | authenticated fixture; 404 code expectation; outage test with auth |
+| `backend/tests/integration/test_triggers_api.py` | Modified | authenticated fixture; unknown-workflow expectation |
 | `backend/tests/integration/test_credentials.py` | Modified | authenticated fixture |
-| `backend/tests/integration/test_project_packages_api.py` | Modified | authenticated fixture |
+| `backend/tests/integration/test_workflow_packages_api.py` | Modified | authenticated fixture |
 | `backend/tests/integration/test_reports.py` | Modified | authenticated fixture |
-| `backend/tests/application/test_trigger_service.py` | Modified | `FakeUow` / `FakeProjects` follow the extended protocols |
+| `backend/tests/application/test_trigger_service.py` | Modified | `FakeUow` / `FakeWorkflows` follow the extended protocols |
 | `backend/tests/test_errors.py` | Modified | `dependency_overrides[current_identity]` for the validation test |
 | `backend/tests/test_request_observability.py` | Modified | `/metrics` test uses `metrics_token` |
 | `backend/README.md` | Modified | auth settings and first-run instructions |
@@ -289,17 +289,17 @@ The CLI (Phase 21) also needs a header-based scheme.
 
 **Decision.** Authentication and authorization are FastAPI dependencies on
 a single `protected` router, not per-handler calls. `authorize_path` checks
-access whenever the matched route has a `project_id` or `execution_id` path
+access whenever the matched route has a `workflow_id` or `execution_id` path
 parameter.
 
 **Context.**
 - The Phase 06 and Phase 13 routers anticipated "a single router-level
-  dependency" (docstrings in `api/projects.py` and `api/credentials.py`).
+  dependency" (docstrings in `api/workflows.py` and `api/credentials.py`).
 - Per-handler checks can be forgotten on a new route.
 
 **Chosen Approach.**
 - `protected = APIRouter(dependencies=[Depends(current_identity),
-  Depends(authorize_path)])` holds projects, triggers, reports,
+  Depends(authorize_path)])` holds workflows, triggers, reports,
   credentials (plus `require_admin`) and users (plus `require_admin`).
 - Public routes (auth, webhooks) are included separately.
 
@@ -324,12 +324,12 @@ one place. The test
   `version_id` alone) would not be ownership-checked automatically. It
   would still require authentication.
 
-### 5.3 Two roles plus project ownership
+### 5.3 Two roles plus workflow ownership
 
 **Decision.**
-- `admin` manages users, credentials, all projects and `/metrics`.
-- `member` owns projects.
-- `projects.owner_id` is fixed at creation or import.
+- `admin` manages users, credentials, all workflows and `/metrics`.
+- `member` owns workflows.
+- `workflows.owner_id` is fixed at creation or import.
 
 **Context.** Architecture §60 requires ownership information for future
 authorization, without RBAC.
@@ -339,9 +339,9 @@ as RBAC scope.
 
 **Consequences.**
 - Executions, versions, triggers, exports and reports inherit access from
-  their project.
-- `may_access_project` is the single rule to extend later, for example
-  with shared projects.
+  their workflow.
+- `may_access_workflow` is the single rule to extend later, for example
+  with shared workflows.
 
 ### 5.4 Credentials remain installation-scoped and admin-managed
 
@@ -354,13 +354,13 @@ have no owner.
   runtime, which is outside this phase.
 
 **Consequences.** A member cannot list, read, create or modify credentials
-through the API. However, a member's project can *use* any credential by
+through the API. However, a member's workflow can *use* any credential by
 name in a node, and so could send it to an endpoint the member controls.
 This is documented in architecture §60 and in §20 of this report.
 
 ### 5.5 Webhooks remain public
 
-**Decision.** `POST /api/v1/webhooks/{project_id}/{trigger_id}` needs no
+**Decision.** `POST /api/v1/webhooks/{workflow_id}/{trigger_id}` needs no
 session.
 
 **Reason.** Webhook callers are external systems.
@@ -378,7 +378,7 @@ session.
 - `Identity` (frozen dataclass);
 - the constants `MIN_PASSWORD_LENGTH = 12` and `MAX_PASSWORD_LENGTH = 256`.
 
-**Changed entity:** `Project.owner_id: str | None = None`. It is validated
+**Changed entity:** `Workflow.owner_id: str | None = None`. It is validated
 as a domain id when present.
 
 **The password hash is not part of `User`.** It crosses the repository
@@ -392,14 +392,14 @@ kept out of `Credential`.
 |---|---|
 | `users` | `id` PK, `username` UNIQUE NOT NULL, `password_hash` NOT NULL, `role` NOT NULL with `ck_users_role` (`admin`,`member`), `disabled` BOOLEAN default false, `created_at`, `updated_at` |
 | `sessions` | `token_hash` PK, `user_id` FK → `users.id` ON DELETE CASCADE, `created_at`, `expires_at`; indexes `ix_sessions_user_id`, `ix_sessions_expires_at` |
-| `projects.owner_id` | nullable VARCHAR, FK `fk_projects_owner_id` → `users.id` ON DELETE RESTRICT; index `ix_projects_owner_id` |
+| `workflows.owner_id` | nullable VARCHAR, FK `fk_workflows_owner_id` → `users.id` ON DELETE RESTRICT; index `ix_workflows_owner_id` |
 
 **Compatibility.**
-- Existing projects get `owner_id = NULL`, which makes them admin-only.
-  This is verified by `test_0008_upgrade_leaves_existing_projects_ownerless`.
+- Existing workflows get `owner_id = NULL`, which makes them admin-only.
+  This is verified by `test_0008_upgrade_leaves_existing_workflows_ownerless`.
 - The downgrade drops the index, the foreign key, the column and both
   tables. It was verified by the upgrade/downgrade/upgrade test.
-- Users cannot be deleted while they own projects, because of RESTRICT. No
+- Users cannot be deleted while they own workflows, because of RESTRICT. No
   delete endpoint exists.
 
 ---
@@ -430,30 +430,30 @@ webhooks:
 - **Authentication.** They now require `Authorization: Bearer <token>`.
   Without it they answer 401 `AUTHENTICATION_REQUIRED` with
   `WWW-Authenticate: Bearer`.
-- **Project and execution access.** Routes with `{project_id}` or
-  `{execution_id}` answer 404 `PROJECT_NOT_FOUND` / `EXECUTION_NOT_FOUND`
+- **Workflow and execution access.** Routes with `{workflow_id}` or
+  `{execution_id}` answer 404 `WORKFLOW_NOT_FOUND` / `EXECUTION_NOT_FOUND`
   when the caller may not access the resource. The access check runs
-  before the handler, so a nonexistent project now yields
-  `PROJECT_NOT_FOUND` on routes that previously answered with a different
+  before the handler, so a nonexistent workflow now yields
+  `WORKFLOW_NOT_FOUND` on routes that previously answered with a different
   code:
-  - `GET /projects/{id}/versions/{n}` previously gave
-    `PROJECT_VERSION_NOT_FOUND`;
-  - `POST /projects/{id}/triggers/{t}/invoke` previously gave
+  - `GET /workflows/{id}/versions/{n}` previously gave
+    `WORKFLOW_VERSION_NOT_FOUND`;
+  - `POST /workflows/{id}/triggers/{t}/invoke` previously gave
     `TRIGGER_NOT_FOUND`;
-  - `POST /projects/{id}/versions/{n}/execute` previously gave
-    `PROJECT_VERSION_NOT_FOUND`.
+  - `POST /workflows/{id}/versions/{n}/execute` previously gave
+    `WORKFLOW_VERSION_NOT_FOUND`.
 - **Admin-only.** `/credentials/*` is admin-only (403 for members).
-- **Project listing.** `GET /projects` returns only the caller's projects
-  for members, and all projects for admins.
-- **Ownership.** `POST /projects` and `POST /projects/import` set
+- **Workflow listing.** `GET /workflows` returns only the caller's workflows
+  for members, and all workflows for admins.
+- **Ownership.** `POST /workflows` and `POST /workflows/import` set
   `owner_id` to the caller.
-- **Response field.** `ProjectSummary` and `ProjectDetail` gain
+- **Response field.** `WorkflowSummary` and `WorkflowDetail` gain
   `owner_id: string | null`. This is an additive change.
 - **`GET /metrics`** requires `Bearer <AKASHA_METRICS_TOKEN>` or an admin
   session. Previously it was unauthenticated.
 
 **Unchanged and public:** `/health`, `/ready`, `/openapi.json`, `/docs`,
-`/redoc`, and `POST /api/v1/webhooks/{project_id}/{trigger_id}`.
+`/redoc`, and `POST /api/v1/webhooks/{workflow_id}/{trigger_id}`.
 
 **Error body format:** unchanged (`code`, `message`, `details`,
 `request_id`).
@@ -476,9 +476,9 @@ must integrate with the real endpoints in its own Phase 21.
    No match raises `AuthenticationRequiredError`.
 3. `request.state.user_id` is set for the access log.
 4. `authorize_path` inspects `request.path_params` and calls
-   `AuthorizationService.require_project` or `require_execution`.
-   - These load the project (or the execution, then its project) and apply
-     `may_access_project`.
+   `AuthorizationService.require_workflow` or `require_execution`.
+   - These load the workflow (or the execution, then its workflow) and apply
+     `may_access_workflow`.
    - A denial raises the same not-found error that an unknown id would.
 5. For the credentials and users routers, `require_admin` raises
    `PermissionDeniedError` for members.
@@ -555,15 +555,15 @@ explicitly, because that route has `include_in_schema=False`. A future
 route with `include_in_schema=False` would not be covered by that test
 automatically.
 
-### Finding: The access check changes 404 codes for nonexistent projects
+### Finding: The access check changes 404 codes for nonexistent workflows
 **Impact:** LOW
 **Resolution:** FIXED (tests updated to the new, more precise behavior)
 **Notes:**
-- Previously, `GET /projects/{unknown}/versions/1` answered
-  `PROJECT_VERSION_NOT_FOUND`, and invoking a trigger on an unknown project
+- Previously, `GET /workflows/{unknown}/versions/1` answered
+  `WORKFLOW_VERSION_NOT_FOUND`, and invoking a trigger on an unknown workflow
   answered `TRIGGER_NOT_FOUND`.
-- Now both answer `PROJECT_NOT_FOUND`.
-- Affected tests: `test_unknown_project_is_structured_404_with_request_id`
+- Now both answer `WORKFLOW_NOT_FOUND`.
+- Affected tests: `test_unknown_workflow_is_structured_404_with_request_id`
   and `test_invoke_unknown_or_foreign_type_is_404`.
 
 ### Finding: The webhook route shared a router with authenticated trigger routes
@@ -621,7 +621,7 @@ was moved to `create_webhooks_router()` without changing its behavior.
   - one was the `/metrics` test.
 - `mypy .` over the tests then reported 5 errors:
   - `FakeUow` was missing `users` / `sessions`;
-  - the `FakeProjects.list` signature needed `owner_id`;
+  - the `FakeWorkflows.list` signature needed `owner_id`;
   - `metrics_token` was passed as `str` instead of `SecretStr`;
   - one `Any` return.
 - All were fixed.
@@ -667,8 +667,8 @@ No pre-existing bugs were discovered.
   - 8 malformed stored hashes never match (bad scheme, bad number, bad
     base64, n not a power of two, n requiring 1 TiB, a missing field).
 - **Validation:** 5 valid and 8 invalid usernames; password length bounds.
-- **Access rule:** `may_access_project` for owner, other member, admin and
-  an ownerless project.
+- **Access rule:** `may_access_workflow` for owner, other member, admin and
+  an ownerless workflow.
 - **Token hash:** `token_hash` is stable and 64 hex characters.
 - **Throttle** (fixed timestamps): blocking with an exact `Retry-After`,
   per-key isolation, window expiry, refused attempts not being counted,
@@ -732,24 +732,24 @@ These run against real PostgreSQL 17.2 (Testcontainers) through
   - no token or a wrong token gives 401;
   - the scrape token is not a user session.
 - **Ownership:**
-  - 13 project-, execution- and report-scoped operations by another member
-    all give 404 with the correct code and no project name in the body;
+  - 13 workflow-, execution- and report-scoped operations by another member
+    all give 404 with the correct code and no workflow name in the body;
   - the listing is empty;
   - the database is unchanged (`revision`, `current_version`, execution
     count);
   - the owner and an admin have access;
   - the admin listing shows `owner_id`;
-  - an imported project belongs to the importer;
-  - an ownerless project is admin-only;
+  - an imported workflow belongs to the importer;
+  - an ownerless workflow is admin-only;
   - the webhook stays public (202).
 
 ### Infrastructure / Migration Tests (PASS)
 - `test_migrations_upgrade_downgrade_upgrade_on_empty_database`: head
   `0008_auth`; `users` and `sessions` are present after upgrade and absent
   after downgrade.
-- `test_0008_upgrade_leaves_existing_projects_ownerless`:
+- `test_0008_upgrade_leaves_existing_workflows_ownerless`:
   - a row written under 0007 loads with `owner_id is None`;
-  - saving a project whose owner does not exist raises `IntegrityError`
+  - saving a workflow whose owner does not exist raises `IntegrityError`
     (the foreign key is enforced).
 
 ### Regression
@@ -794,7 +794,7 @@ protected areas, which are evaluated here as well.
 | Acceptance Criterion | Status | Evidence |
 |---|---|---|
 | Unauthenticated clients cannot access protected application functionality | PASS | `test_every_non_public_route_requires_authentication` (all non-public routes give 401); `test_missing_or_invalid_token_is_401`; `test_metrics_access` |
-| Protect projects | PASS | `test_members_cannot_see_or_touch_other_members_projects`, `test_ownerless_projects_are_admin_only` |
+| Protect workflows | PASS | `test_members_cannot_see_or_touch_other_members_workflows`, `test_ownerless_workflows_are_admin_only` |
 | Protect executions | PASS | same test: `/executions/{id}` and `/reports/executions/{id}` give 404 `EXECUTION_NOT_FOUND`; the execute and invoke routes are blocked and the execution count is unchanged |
 | Protect credentials | PASS | `test_members_cannot_reach_admin_areas` (5 credential operations give 403, no secret echoed); unauthenticated access gives 401 |
 | Protect plugins | PASS (vacuous) | No HTTP plugin endpoints exist (architecture §36: install is CLI-only by design). Nothing to protect over HTTP |
@@ -840,7 +840,7 @@ protected areas, which are evaluated here as well.
   - server-side, default-deny, and checked before handlers run;
   - 404 for foreign resources, so existence is not leaked;
   - 403 only for role checks;
-  - ownerless projects are admin-only (fail-closed upgrade).
+  - ownerless workflows are admin-only (fail-closed upgrade).
 - **CSRF:** there are no cookies, so there is no ambient credential.
 - **Secrets in logs and errors:**
   - request passwords are `SecretStr`;
@@ -864,10 +864,10 @@ protected areas, which are evaluated here as well.
 - **Per-request cost:** each authenticated request adds one indexed
   primary-key lookup on `sessions`, joined with `users`.
 - **Access checks:**
-  - routes with `project_id` add one project load;
+  - routes with `workflow_id` add one workflow load;
   - routes with `execution_id` add an execution aggregate load plus a
-    project load;
-  - `require_project` loads the full project row, including the draft
+    workflow load;
+  - `require_workflow` loads the full workflow row, including the draft
     graph JSONB, where only `owner_id` is needed.
   - This was not measured. If it shows up in profiles, the next step is a
     dedicated owner-only repository query.
@@ -933,7 +933,7 @@ protected areas, which are evaluated here as well.
 | Persisted, immutable audit records (§61) | Not in the Phase 20 roadmap scope; structured log events exist | not scheduled | No |
 | CLI user management / bootstrap admin | CLI phase | 21 | No |
 | Setup-status endpoint (`setup_required`) | Not required by the backend acceptance criteria; the frontend can react to 409 | frontend Phase 21 if needed | No |
-| Role change, user deletion, self-registration | Not required; RESTRICT on owned projects | not scheduled | No |
+| Role change, user deletion, self-registration | Not required; RESTRICT on owned workflows | not scheduled | No |
 | Password hash re-hashing when defaults change | Parameters are stored per hash, so old hashes keep verifying | not scheduled | No |
 | Recording the triggering user on executions | Reproducibility metadata; not in scope | not scheduled | No |
 
@@ -945,7 +945,7 @@ protected areas, which are evaluated here as well.
   anyone who can reach the API can call `POST /auth/setup` and become
   admin. Documented in the README ("complete it before exposing the engine
   to a network").
-- **Webhooks are unauthenticated.** Anyone who knows a project id and a
+- **Webhooks are unauthenticated.** Anyone who knows a workflow id and a
   webhook trigger id can create executions.
 - **Credential use.** A member cannot read credentials via the API, but
   can reference any credential name in a node configuration, and the
@@ -957,11 +957,11 @@ protected areas, which are evaluated here as well.
   by an attacker.
 - **Coverage gaps in the automatic checks.**
   - Automatic ownership checks apply only to path parameters named
-    `project_id` or `execution_id`.
+    `workflow_id` or `execution_id`.
   - The default-deny test covers only routes that appear in the OpenAPI
     document, plus `/metrics`.
-- **Operator-created projects.** Services called without an owner (future
-  CLI) create admin-only projects.
+- **Operator-created workflows.** Services called without an owner (future
+  CLI) create admin-only workflows.
 - **Concurrent mutual disabling.** When two admins disable each other
   concurrently, the losing request may answer 401 instead of 409, because
   its own session was revoked first. Either way, exactly one admin stays
@@ -975,7 +975,7 @@ protected areas, which are evaluated here as well.
 | Issue | Impact | Severity | Area | Recommended next action | Target |
 |---|---|---|---|---|---|
 | Public webhooks | Execution creation by anyone knowing two ids | MEDIUM | triggers API | Per-trigger secret or HMAC signature | Phase 25 |
-| Credentials usable by any member's project | Credential exfiltration by a malicious member through a node | MEDIUM | runtime / credentials | Owner-aware credential resolution or credential grants | future authorization work |
+| Credentials usable by any member's workflow | Credential exfiltration by a malicious member through a node | MEDIUM | runtime / credentials | Owner-aware credential resolution or credential grants | future authorization work |
 | First-run setup race window | Takeover of a freshly deployed, network-exposed engine | MEDIUM | auth | Operator bootstrap via CLI or env and an option to disable HTTP setup | Phase 21 / 26 |
 | In-process throttle | Weaker brute-force protection with several API processes | LOW | auth | Move counters to Redis | Phase 22 |
 | `/metrics` now requires a token | Existing Prometheus scrapes get 401 after upgrade | LOW | operations | Document in the deployment guide | Phase 26 |
@@ -985,11 +985,11 @@ protected areas, which are evaluated here as well.
 ## 22. Architectural / Product Decisions
 
 - **Enforcement point.** Authorization is enforced by router dependencies
-  keyed on the path parameter names `project_id` and `execution_id`. New
+  keyed on the path parameter names `workflow_id` and `execution_id`. New
   routes must keep these names, or add their own check, to stay covered.
 - **404 vs 403.** Foreign resources answer 404 so ids cannot be probed.
   403 is only for role checks.
-- **Ownerless projects are admin-only.** This makes the migration
+- **Ownerless workflows are admin-only.** This makes the migration
   fail-closed and gives the CLI a safe default.
 - **The password hash is outside `User`.** This keeps credential material
   out of entity reprs and API mapping, mirroring how credential ciphertext
@@ -1035,9 +1035,9 @@ protected areas, which are evaluated here as well.
 - Setup, login, logout, me and password change.
 - Admin user management with last-admin protection.
 - Login throttle.
-- Project ownership and a migration.
+- Workflow ownership and a migration.
 - Default-deny protection of all non-public routes.
-- Ownership checks for project, execution and report routes.
+- Ownership checks for workflow, execution and report routes.
 - Admin-only credentials and users.
 - A protected `/metrics` endpoint.
 - Audit log events.
@@ -1074,9 +1074,9 @@ protected areas, which are evaluated here as well.
 **Phase 21 (CLI) can assume:**
 - Application services are principal-free, except `UserService`, which
   requires an admin `Identity`.
-- `ProjectService.create_project(..., owner_id=None)` and
-  `ProjectPackageService.import_project(..., owner_id=None)` create
-  admin-only projects when no owner is given.
+- `WorkflowService.create_workflow(..., owner_id=None)` and
+  `WorkflowPackageService.import_workflow(..., owner_id=None)` create
+  admin-only workflows when no owner is given.
 - `AuthenticationService.setup(username, password)` is the bootstrap path
   a CLI command can reuse. It works only on an empty user table.
 - The services are available on `Container.auth`, `Container.authorization`
@@ -1085,7 +1085,7 @@ protected areas, which are evaluated here as well.
 **Contracts now available:**
 - `/api/v1/auth/{setup,login,logout,me,password}` and `/api/v1/users`.
 - Bearer auth on all other `/api/v1` routes except webhooks.
-- `owner_id` on project responses.
+- `owner_id` on workflow responses.
 - Error codes `AUTHENTICATION_REQUIRED`, `INVALID_CREDENTIALS`,
   `LOGIN_THROTTLED`, `PERMISSION_DENIED`, `SETUP_ALREADY_COMPLETED`,
   `USERNAME_TAKEN`, `USER_NOT_FOUND`, `LAST_ADMIN`.
@@ -1093,12 +1093,12 @@ protected areas, which are evaluated here as well.
 **Must not be changed casually:**
 - The `protected` router composition in `api/routes.py`. New business
   routers belong inside it.
-- The path parameter names `project_id` and `execution_id`, which the
+- The path parameter names `workflow_id` and `execution_id`, which the
   access check relies on.
 - `PUBLIC_ROUTES` in `tests/integration/test_auth_api.py`. Adding to it is
   a security decision.
 - Storing only token hashes and never the password inside `User`.
-- `may_access_project` as the single project access rule.
+- `may_access_workflow` as the single workflow access rule.
 
 **Constraints for Phase 22 (workers):** the login throttle is per process
 and should move to Redis once several API processes exist.

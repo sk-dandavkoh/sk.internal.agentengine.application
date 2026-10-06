@@ -241,7 +241,7 @@ These counts are the results of the runs in this session.
   - All 9 failures and 5 errors are outside this change. 5 failures and
     3 errors reproduce on clean `HEAD` with the change stashed. They come
     from Windows symlink privileges and POSIX-only process groups in the
-    command and file node tests, and from three example projects.
+    command and file node tests, and from three example workflows.
   - The remaining 4 MCP failures and 2 example errors pass when their
     files are run alone with this change applied (40 passed). They are
     caused by the local `.env` (see §13).
@@ -335,6 +335,6 @@ sleeps.
 - SSO, OAuth, LDAP, SCIM
 - invitations, email verification, self-service reset
 - groups, teams, organizations, RBAC beyond the two roles
-- user deletion (users are disabled; projects reference their owners)
+- user deletion (users are disabled; workflows reference their owners)
 - persisted audit log
 - user-management tools over MCP

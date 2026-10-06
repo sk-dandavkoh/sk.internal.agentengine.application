@@ -1,20 +1,20 @@
 import { useQuery } from '@tanstack/react-query'
 import { useApiClient } from '../../api/context'
 import type { ExecutionListParams, ExecutionStatus } from '../../api/executions'
-import { projectStatusSchema, type ProjectStatus } from '../../api/projects'
+import { workflowStatusSchema, type WorkflowStatus } from '../../api/workflows'
 import {
     executionQueries,
-    projectQueries,
+    workflowQueries,
     systemQueries,
 } from '../../api/queries'
 import { Badge, Card, EmptyState, TextLink } from '../../components/ui'
-import { ACTIVE_STATUSES, FAILURE_STATUSES, PROJECT_SAMPLE } from './format'
-import { projectStatusLabels } from '../projects/status'
+import { ACTIVE_STATUSES, FAILURE_STATUSES, WORKFLOW_SAMPLE } from './format'
+import { workflowStatusLabels } from '../workflows/status'
 import { ExecutionTable } from '../executions/shared'
 import { QuerySection } from '../../components/QuerySection'
 
-function useProjects() {
-    return useQuery(projectQueries.list(useApiClient(), PROJECT_SAMPLE))
+function useWorkflows() {
+    return useQuery(workflowQueries.list(useApiClient(), WORKFLOW_SAMPLE))
 }
 
 function ViewAll({ to, label }: { to: string; label: string }) {
@@ -110,7 +110,7 @@ export function ExecutionCountsCard({ className }: { className?: string }) {
                             <EmptyState
                                 title="No executions yet"
                                 titleAs="h3"
-                                description="Runs of published projects appear here."
+                                description="Runs of published workflows appear here."
                             />
                         )
                     return (
@@ -185,34 +185,34 @@ export function SystemStatusCard() {
     )
 }
 
-// -- projects ----------------------------------------------------------------------
+// -- workflows ----------------------------------------------------------------------
 
-export function ProjectsCard({ className }: { className?: string }) {
-    const query = useProjects()
+export function WorkflowsCard({ className }: { className?: string }) {
+    const query = useWorkflows()
     return (
         <Card
-            title="Projects"
-            description="Projects you can access, by status."
-            actions={<ViewAll to="/projects" label="All projects" />}
+            title="Workflows"
+            description="Workflows you can access, by status."
+            actions={<ViewAll to="/workflows" label="All workflows" />}
             className={className}
         >
-            <QuerySection query={query} subject="projects">
+            <QuerySection query={query} subject="workflows">
                 {({ items, page }) => {
                     if (items.length === 0)
                         return (
                             <EmptyState
-                                title="No projects yet"
+                                title="No workflows yet"
                                 titleAs="h3"
-                                description="Create a project to build and run a workflow."
+                                description="Create a workflow to build and run it."
                                 action={
                                     <ViewAll
-                                        to="/projects"
-                                        label="Go to Projects"
+                                        to="/workflows"
+                                        label="Go to Workflows"
                                     />
                                 }
                             />
                         )
-                    const byStatus = new Map<ProjectStatus, number>()
+                    const byStatus = new Map<WorkflowStatus, number>()
                     for (const p of items)
                         byStatus.set(
                             p.status,
@@ -226,12 +226,12 @@ export function ProjectsCard({ className }: { className?: string }) {
                                     {String(items.length)}
                                     {page.has_more && '+'}
                                 </dd>
-                                {projectStatusSchema.options.map((status) => {
+                                {workflowStatusSchema.options.map((status) => {
                                     const n = byStatus.get(status)
                                     return n === undefined ? null : (
                                         <div key={status} className="contents">
                                             <dt className="text-muted">
-                                                {projectStatusLabels[status]}
+                                                {workflowStatusLabels[status]}
                                             </dt>
                                             <dd className="text-right tabular-nums">
                                                 {String(n)}
@@ -243,7 +243,7 @@ export function ProjectsCard({ className }: { className?: string }) {
                             {page.has_more && (
                                 <p className="mt-3 text-sm text-muted">
                                     Status counts cover the first{' '}
-                                    {String(items.length)} projects.
+                                    {String(items.length)} workflows.
                                 </p>
                             )}
                         </>

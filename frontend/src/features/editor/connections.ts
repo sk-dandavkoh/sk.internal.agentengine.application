@@ -1,5 +1,5 @@
 import type { NodeCatalog, NodeDefinition } from '../../api/nodes'
-import type { Edge, Graph } from '../../api/projects'
+import type { Edge, Graph } from '../../api/workflows'
 import { graphIndex, nodeTitle, portSignature, sameEdge } from './graphView'
 
 // Whether an edge may be drawn, from the backend's node contracts and its

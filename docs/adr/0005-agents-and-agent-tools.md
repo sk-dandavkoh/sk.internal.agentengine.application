@@ -29,7 +29,7 @@ except for the plugin installer.
    prompt templates, model config and provider error mapping with
    `core.llm`.
 2. **Tools are registered nodes.** The node registry's live catalog is the
-   tool registry, so built-ins and plugin nodes are tools alike. The project
+   tool registry, so built-ins and plugin nodes are tools alike. The workflow
    author fixes each tool's node type and config. The model supplies only
    input-port values, offered as a JSON Schema derived from the port
    declarations. The model can therefore choose a search query, but never
@@ -45,13 +45,13 @@ except for the plugin installer.
      `core.http` (SSRF check on every redirect hop), readable text from
      HTML via the stdlib parser.
    - `core.file_read`/`core.file_write`/`core.file_list`: inside
-     `AKASHA_WORKSPACE_DIR/<project_id>`, paths confined by
+     `AKASHA_WORKSPACE_DIR/<workflow_id>`, paths confined by
      `security.paths.Workspace`, UTF-8 text, size-capped.
    - `core.command`: runs one program the operator allowlists
      (`AKASHA_COMMAND_ALLOWED`, empty by default, so the node is off). It
      runs argv via `asyncio.create_subprocess_exec`, never a shell. The
      environment is minimal (no engine variables, so no database URL or
-     key). The working directory is inside the project workspace. It has a
+     key). The working directory is inside the workflow workspace. It has a
      time limit, an output cap with the rest drained, and its own process
      group, which is killed on timeout or cancellation. The architecture
      test now also detects asyncio process creation and allows it only
@@ -80,7 +80,7 @@ except for the plugin installer.
   engine's OS user with that user's file and network access. Allowing an
   interpreter (`python3`, `bash`, `node`) or anything that executes its
   arguments (`find -exec`, `git -c core.sshCommand=…`) allows arbitrary code
-  in every project. Operators must allowlist accordingly.
+  in every workflow. Operators must allowlist accordingly.
 - A tool call is not a node execution: it is not persisted as its own
   record, cannot be retried on its own, and is not covered by recovery. An
   interrupted agent is not re-run blindly, because it declares
@@ -88,7 +88,7 @@ except for the plugin installer.
   agent's own metrics count calls and errors.
 - Tool node types are checked when the agent starts, before the first
   model call, not at publish. They are not recorded in
-  `metadata.node_versions` or in project dependencies. The upgrade path is
+  `metadata.node_versions` or in workflow dependencies. The upgrade path is
   to let node definitions declare the node types they reference.
 - Workspace files are not part of database backups. Back up the
   `workspace` volume separately.

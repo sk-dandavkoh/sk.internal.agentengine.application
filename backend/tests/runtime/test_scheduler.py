@@ -17,7 +17,7 @@ from akasha.domain.trigger import Trigger, TriggerContext, TriggerType
 from akasha.runtime.scheduler import TriggerScheduler
 
 START = datetime(2026, 1, 5, 12, 0, 30, tzinfo=UTC)  # half past a minute
-PROJECT = "proj_" + "a" * 32
+WORKFLOW = "wf_" + "a" * 32
 
 
 class FakeClock:
@@ -55,8 +55,8 @@ class FakeService(TriggerService):
         return cast(Execution, None)  # never read: the scheduler only counts
 
 
-def scheduled(trigger: Trigger, project_id: str = PROJECT) -> ResolvedTrigger:
-    return ResolvedTrigger(project_id, 1, trigger)
+def scheduled(trigger: Trigger, workflow_id: str = WORKFLOW) -> ResolvedTrigger:
+    return ResolvedTrigger(workflow_id, 1, trigger)
 
 
 def cron_trigger(expr: str = "*/2 * * * *") -> Trigger:
@@ -142,7 +142,7 @@ class TestLifecycleOfSchedules:
         scheduler = TriggerScheduler(registry, service, clock=clock)
 
         await scheduler.tick()
-        assert (PROJECT, trigger.id) in scheduler._due
+        assert (WORKFLOW, trigger.id) in scheduler._due
 
         registry.schedules.clear()  # unpublished / disabled / deleted
         await scheduler.tick()
@@ -269,16 +269,16 @@ class TestIsolation:
         assert await scheduler.tick() == 1
         assert service.fires[0][1].trigger_type is TriggerType.INTERVAL
 
-    async def test_same_trigger_id_in_two_projects_fires_both(self) -> None:
+    async def test_same_trigger_id_in_two_workflows_fires_both(self) -> None:
         clock = FakeClock()
         tid = new_id("trig")
-        other_project = "proj_" + "b" * 32
+        other_workflow = "wf_" + "b" * 32
         config = {"interval_seconds": 30}
         registry = FakeRegistry(
             [
                 scheduled(Trigger(tid, TriggerType.INTERVAL, dict(config))),
                 scheduled(
-                    Trigger(tid, TriggerType.INTERVAL, dict(config)), other_project
+                    Trigger(tid, TriggerType.INTERVAL, dict(config)), other_workflow
                 ),
             ]
         )
@@ -288,9 +288,9 @@ class TestIsolation:
         await scheduler.tick()
         clock.advance(seconds=30)
         assert await scheduler.tick() == 2
-        assert sorted(r.project_id for r, _ in service.fires) == [
-            PROJECT,
-            other_project,
+        assert sorted(r.workflow_id for r, _ in service.fires) == [
+            WORKFLOW,
+            other_workflow,
         ]
 
 

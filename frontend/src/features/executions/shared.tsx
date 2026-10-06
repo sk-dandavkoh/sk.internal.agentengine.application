@@ -76,15 +76,15 @@ export function ExecutionTable({
             cell: (e) => <ExecutionLink id={e.id} />,
         },
         {
-            key: 'project',
-            header: 'Project',
-            cell: (e) => <span title={e.project_id}>{e.project_name}</span>,
+            key: 'workflow',
+            header: 'Workflow',
+            cell: (e) => <span title={e.workflow_id}>{e.workflow_name}</span>,
         },
         {
             key: 'version',
             header: 'Version',
             cell: (e) => (
-                <VersionLink projectId={e.project_id} version={e.version} />
+                <VersionLink workflowId={e.workflow_id} version={e.version} />
             ),
         },
         {

@@ -10,7 +10,7 @@
 - controlled prompt rendering;
 - token usage and cost estimation.
 
-Acceptance: an LLM Node can be placed into a Project and executed through the normal runtime.
+Acceptance: an LLM Node can be placed into a Workflow and executed through the normal runtime.
 
 **What was implemented.**
 - **Built-in node** `core.llm` (`akasha.nodes.llm.LlmNode`). It is registered in the Node Registry, validated at publish through its closed config schema, and executed by the unchanged `ExecutionRuntime`.
@@ -22,7 +22,7 @@ Acceptance: an LLM Node can be placed into a Project and executed through the no
 - **Token usage and cost:** reported in the node's `metadata` output, which the runtime persists.
 
 **Resulting system state.**
-- A Project graph `core.input → core.llm → core.output` publishes and executes against PostgreSQL. The key comes from the encrypted Credential Store and the node calls the real LiteLLM adapter against a loopback OpenAI-compatible server (integration test).
+- A Workflow graph `core.input → core.llm → core.output` publishes and executes against PostgreSQL. The key comes from the encrypted Credential Store and the node calls the real LiteLLM adapter against a loopback OpenAI-compatible server (integration test).
 - The same node ran live against OpenRouter in the opt-in smoke tests.
 - Quality gates: 1205 tests pass, 5 are skipped (all opt-in external tests), and ruff, ruff format and strict mypy pass.
 
@@ -38,7 +38,7 @@ Roadmap §19 (Phase 15 — LLM Node):
 - **Goal:** "Implement the production LLM Node."
 - **Scope:** provider, model, system prompt, user prompt, variables, temperature, max tokens, structured output where supported, tool calls where supported. Also prompt rendering, token usage and cost estimation.
 - **Tests:** prompt rendering, variable substitution, missing variables, provider errors, token usage, cost calculation, structured output.
-- **Acceptance:** "An LLM Node can be placed into a Project and executed through the normal runtime."
+- **Acceptance:** "An LLM Node can be placed into a Workflow and executed through the normal runtime."
 
 The phase prompt adds four requirements:
 - use deterministic fake providers;
@@ -134,7 +134,7 @@ The phase prompt adds four requirements:
 | `backend/src/akasha/nodes/builtins.py` | Modified (+7) | `llm` parameter, `core.llm` registration |
 | `backend/src/akasha/bootstrap.py` | Modified (+11) | `AIService` built before the registry and injected; `create_node_registry(llm=)` |
 | `backend/tests/nodes/test_llm_node.py` | Created (72 tests) | Fake-provider component tests, security tests |
-| `backend/tests/integration/test_llm_node_runtime.py` | Created (4 tests) | Project → publish → runtime → PostgreSQL → loopback provider |
+| `backend/tests/integration/test_llm_node_runtime.py` | Created (4 tests) | Workflow → publish → runtime → PostgreSQL → loopback provider |
 | `backend/tests/providers/test_litellm_adapter.py` | Modified (+4 tests) | `response_format`, cost estimate (priced, unpriced, custom endpoint), cost-map env guard |
 | `backend/tests/domain/test_ai.py` | Modified (+2 cases) | Invalid `response_schema` rejected |
 | `backend/tests/nodes/test_builtin_contract.py` | Modified (+2 tests) | `core.llm` in `ROADMAP_NODES` and the cancellation set; container wiring |
@@ -278,7 +278,7 @@ The documented chain (architecture §27: *LLM Node → AI Application Service �
 - **Publish-time grammar:** `^(?:[^{]|\{(?!\{)|\{\{\s*PATH\s*\}\})*$`. Single braces (JSON examples in prompts) are allowed. The three alternatives are disjoint on their first characters, so matching is linear.
 
 **Validation layering:**
-- The config schema runs at publish (`ProjectService`) and in the `run_node` test harness.
+- The config schema runs at publish (`WorkflowService`) and in the `run_node` test harness.
 - Nested `required` inside `tools` items is **not** enforced by the schema subset, so `_tool` checks `name`/`parameters` at run time.
 
 **Dependency injection:** `LlmNode(llm)` receives the client through the registry factory, like `HttpNode(policy)`. A fresh instance is created per attempt, and the client is shared.
@@ -319,10 +319,10 @@ The documented chain (architecture §27: *LLM Node → AI Application Service �
 - **Resolution:** FIXED (in this phase's code)
 - **Notes:** with a string, `validate_config` performs a substring test for `required` and then fails with `AttributeError`. `_structured` checks `isinstance(value, dict)` before validating, so a JSON string or list reply yields `LLM_STRUCTURED_OUTPUT_INVALID`. Covered by the test cases `'["a list"]'` and `'"score"'`.
 
-### F5 — Project validation flags credential-shaped text in prompts
+### F5 — Workflow validation flags credential-shaped text in prompts
 - **Impact:** LOW (desired behavior)
 - **Resolution:** verified
-- **Notes:** `plaintext_secret_paths` reports `.system_prompt` when the prompt contains `sk-…` (test `test_plaintext_keys_in_prompts_are_caught_by_project_validation`). A prompt that legitimately discusses such strings would be rejected at save.
+- **Notes:** `plaintext_secret_paths` reports `.system_prompt` when the prompt contains `sk-…` (test `test_plaintext_keys_in_prompts_are_caught_by_workflow_validation`). A prompt that legitimately discusses such strings would be rejected at save.
 
 ### F6 — Free-tier upstream rate limits on OpenRouter
 - **Impact:** LOW
@@ -409,7 +409,7 @@ All in `tests/nodes/test_llm_node.py`. **Result:** 72/72 PASS. Coverage:
 - **Result:** PASS.
 
 ### Integration tests (PostgreSQL 17.2 via Testcontainers)
-- **`tests/integration/test_llm_node_runtime.py`:** `ProjectService` publish → `ExecutionService` → `ExecutionRuntime(credentials=CredentialService)` → `core.llm` → `AIService` → `LiteLLMAdapter` → `LocalHttpServer`.
+- **`tests/integration/test_llm_node_runtime.py`:** `WorkflowService` publish → `ExecutionService` → `ExecutionRuntime(credentials=CredentialService)` → `core.llm` → `AIService` → `LiteLLMAdapter` → `LocalHttpServer`.
   1. The persisted execution is COMPLETED, with:
      - `structured` propagated to `core.output`;
      - usage `12/3/15` persisted and `cost: null`;
@@ -418,7 +418,7 @@ All in `tests/nodes/test_llm_node.py`. **Result:** 72/72 PASS. Coverage:
      - the key only in the `Authorization` header and absent from the request body and the execution.
   2. A missing variable leaves the execution FAILED with `PROMPT_VARIABLE_MISSING`/VALIDATION and zero provider requests.
   3. Provider 429 with the key echoed → `PROVIDER_RATE_LIMIT`/TRANSIENT persisted, key absent from the message.
-  4. A malicious template raises `ProjectValidationFailedError` at publish, with zero provider requests.
+  4. A malicious template raises `WorkflowValidationFailedError` at publish, with zero provider requests.
 - **Result:** 4/4 PASS.
 
 ### Security tests
@@ -464,7 +464,7 @@ All in `tests/nodes/test_llm_node.py`. **Result:** PASS.
 
 | Acceptance Criterion | Status | Evidence |
 |---|---|---|
-| An LLM Node can be placed into a Project and executed through the normal runtime | PASS | `tests/integration/test_llm_node_runtime.py::test_llm_node_runs_through_the_runtime`: the graph is published through `ProjectService` and executed by the unmodified `ExecutionRuntime` against PostgreSQL; the persisted execution is COMPLETED with the `core.llm` outputs propagated |
+| An LLM Node can be placed into a Workflow and executed through the normal runtime | PASS | `tests/integration/test_llm_node_runtime.py::test_llm_node_runs_through_the_runtime`: the graph is published through `WorkflowService` and executed by the unmodified `ExecutionRuntime` against PostgreSQL; the persisted execution is COMPLETED with the `core.llm` outputs propagated |
 
 Roadmap scope items, checked individually:
 
@@ -494,7 +494,7 @@ Required tests: prompt rendering, variable substitution, missing variables, prov
   - Malicious inputs (`__import__`, calls, operators, subscripts, filters) are rejected at publish and at render.
   - Dunder segments can only match dictionary keys.
 - **Secrets and credentials:**
-  - The config holds only `credential:` references (schema pattern, plus `LLMRequest` validation, plus project-level `plaintext_secret_paths`).
+  - The config holds only `credential:` references (schema pattern, plus `LLMRequest` validation, plus workflow-level `plaintext_secret_paths`).
   - Resolution happens inside `AIService` through the node's own `NodeCredentials`, so references arriving via `variables` are refused.
   - Resolved keys are registered for known-value redaction. A key echoed in model output or provider errors is masked by the existing executor redaction (tested).
 - **Logging:** the node does not log prompts, variables or completions. `AIService` logs counts and identifiers only (AGENTS §76).

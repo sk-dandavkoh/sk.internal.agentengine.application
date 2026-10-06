@@ -9,15 +9,15 @@ without leaking database concerns into the domain layer. The phase delivered:
 - hand-written SQLAlchemy Core table definitions (`akasha.infrastructure.db_models`)
 - Alembic migration system with one tested initial migration (`0001_initial`)
 - application-owned repository + Unit-of-Work protocols (`akasha.application.persistence`)
-- PostgreSQL implementations of `ProjectRepository` and `ProjectVersionRepository`
+- PostgreSQL implementations of `WorkflowRepository` and `WorkflowVersionRepository`
 - explicit JSON serialization for graph/trigger/dependency documents
 - database readiness integration into the composition root and `/ready`
 - 14 real-PostgreSQL integration tests (Testcontainers, `postgres:17.2`) plus
   6 fast codec round-trip tests
 
-Resulting state: Projects (identity + mutable draft) and immutable published
-Project Versions survive process restarts and are fully protected by database
-constraints (unique version number per project, RESTRICT on delete while
+Resulting state: Workflows (identity + mutable draft) and immutable published
+Workflow Versions survive process restarts and are fully protected by database
+constraints (unique version number per workflow, RESTRICT on delete while
 versions exist). The domain layer has zero new dependencies and passes the
 existing static dependency-direction test.
 
@@ -32,10 +32,10 @@ evidence (section 14).
 
 Roadmap §9 (Phase 05): "Persist the domain." Introduce PostgreSQL with
 database configuration, connection management, migrations, repositories and
-transactions. Persist at minimum: projects, project_versions,
-nodes/graph data, triggers. Provide `ProjectRepository` and
-`ProjectVersionRepository` interfaces; the application layer must depend on
-interfaces. Acceptance criterion: "Project data survives backend restart."
+transactions. Persist at minimum: workflows, workflow_versions,
+nodes/graph data, triggers. Provide `WorkflowRepository` and
+`WorkflowVersionRepository` interfaces; the application layer must depend on
+interfaces. Acceptance criterion: "Workflow data survives backend restart."
 
 Explicitly NOT in scope (roadmap and phase prompt):
 
@@ -54,23 +54,23 @@ Explicitly NOT in scope (roadmap and phase prompt):
 - URL handling: `normalize_async_url()` maps `postgresql://` →
   `postgresql+asyncpg://`; `normalize_sync_url()` maps to `postgresql+psycopg://`
   for synchronous Alembic
-- SQLAlchemy **Core** `Table` definitions: `projects` (id PK, name,
+- SQLAlchemy **Core** `Table` definitions: `workflows` (id PK, name,
   description, status, draft_graph/draft_triggers/draft_dependencies JSONB,
-  created_at/updated_at timestamptz) and `project_versions` (id PK,
-  project_id FK → projects RESTRICT, version int, schema_version int,
+  created_at/updated_at timestamptz) and `workflow_versions` (id PK,
+  workflow_id FK → workflows RESTRICT, version int, schema_version int,
   graph/triggers/dependencies JSONB, description, published_at timestamptz;
-  unique index `(project_id, version)`, index on `project_id`)
-- `SqlAlchemyProjectRepository` (get/save-delete/list with deterministic
+  unique index `(workflow_id, version)`, index on `workflow_id`)
+- `SqlAlchemyWorkflowRepository` (get/save-delete/list with deterministic
   ordering `created_at, id` and offset/limit pagination)
-- `SqlAlchemyProjectVersionRepository` — deliberately **insert-only**; a
-  second row with the same `(project_id, version)` violates the unique
+- `SqlAlchemyWorkflowVersionRepository` — deliberately **insert-only**; a
+  second row with the same `(workflow_id, version)` violates the unique
   constraint (DB as last line of defence for §3.7 immutability)
 - `SqlAlchemyUnitOfWork`: one session = one transaction, explicit
   `commit()`, `__aexit__` rolls back on exception, always closes the session
 
 ### Application layer (interfaces only)
-- `application/persistence.py`: `ProjectRepository`,
-  `ProjectVersionRepository`, `UnitOfWork` protocols. The version repository
+- `application/persistence.py`: `WorkflowRepository`,
+  `WorkflowVersionRepository`, `UnitOfWork` protocols. The version repository
   has no `update`/`delete` by design (architecture §3.7)
 
 ### Serialization
@@ -90,7 +90,7 @@ Explicitly NOT in scope (roadmap and phase prompt):
 ### Testing
 - `tests/integration/conftest.py`: session-scoped `postgres:17.2`
   Testcontainer, session event loop (pytest-asyncio), per-test
-  `TRUNCATE project_versions, projects CASCADE`, UoW factory fixture,
+  `TRUNCATE workflow_versions, workflows CASCADE`, UoW factory fixture,
   Docker-availability probe that **skips** instead of hanging/failing when
   no daemon exists (AGENTS §117)
 - `tests/integration/test_persistence.py`: 14 integration tests
@@ -168,11 +168,11 @@ New database objects (details in §3):
 
 | Object | Type | Constraints / Indexes |
 |---|---|---|
-| `projects` | table | PK `id`; `description` server_default `''` |
-| `project_versions` | table | PK `id`; FK `project_id → projects.id ON DELETE RESTRICT`; UNIQUE `(project_id, version)`; index `ix_project_versions_project_id` |
+| `workflows` | table | PK `id`; `description` server_default `''` |
+| `workflow_versions` | table | PK `id`; FK `workflow_id → workflows.id ON DELETE RESTRICT`; UNIQUE `(workflow_id, version)`; index `ix_workflow_versions_workflow_id` |
 
 Compatibility: greenfield schema (first migration); the unique
-`(project_id, version)` constraint is the enforcement point for version
+`(workflow_id, version)` constraint is the enforcement point for version
 immutability referenced by all later publish logic.
 
 ---
@@ -185,8 +185,8 @@ No new endpoints. One behavioral change to an existing endpoint:
 |---|---|---|
 | `GET /ready` | reports `database` readiness failure (503 with `{"status":"not_ready","failures":{"database": "..."}}`) **when** `AKASHA_DATABASE_URL` is configured; without a URL the behavior is unchanged | backward compatible; new optional failure key in the existing `failures` map |
 
-Internal contracts introduced (not HTTP): `ProjectRepository`,
-`ProjectVersionRepository`, `UnitOfWork` protocols; lifecycle wiring
+Internal contracts introduced (not HTTP): `WorkflowRepository`,
+`WorkflowVersionRepository`, `UnitOfWork` protocols; lifecycle wiring
 (`Container.shutdown()` from FastAPI lifespan).
 
 ---
@@ -197,7 +197,7 @@ Internal contracts introduced (not HTTP): `ProjectRepository`,
   commit; `SqlAlchemyUnitOfWork.__aexit__` rolls back only on exception and
   always closes the session. SQLAlchemy auto-rollback on close is the safety
   net for non-committed success paths.
-- **Upsert:** `SqlAlchemyProjectRepository.save` does `get` → insert or
+- **Upsert:** `SqlAlchemyWorkflowRepository.save` does `get` → insert or
   update. Not race-safe under concurrent first-insert (documented in §20;
   harmless at the draft-frequency it serves, flagged for Phase 06 ownership).
 - **IntegrityError timing:** with asyncpg, constraint violations raise at
@@ -208,7 +208,7 @@ Internal contracts introduced (not HTTP): `ProjectRepository`,
   `alembic.ini` never contains a URL (no credentials in VCS).
 - **Timestamps:** asyncpg returns naive datetimes for `timestamptz` reads;
   `_ensure_utc()` normalizes to aware UTC before constructing domain objects
-  (`Timestamps`/`ProjectVersion` expect aware datetimes).
+  (`Timestamps`/`WorkflowVersion` expect aware datetimes).
 - **Determinism:** `serialize_graph` sorts nodes by id; list queries have
   explicit `ORDER BY`.
 - **Test isolation:** one container per pytest session, migrated once, every
@@ -255,8 +255,8 @@ stopped (started via `open -a Docker`; not a code issue).
    "akasha_migration_check"`. Fix: `rpartition("/")` on the path segment
    only. Regression test: the migration test itself now exercises it.
 2. **Test bug:** duplicate-version test reused the same snapshot object → PK
-   violation instead of the intended `(project_id, version)` unique
-   violation. Fix: construct a *different* `ProjectVersion` (new id, same
+   violation instead of the intended `(workflow_id, version)` unique
+   violation. Fix: construct a *different* `WorkflowVersion` (new id, same
    version) so the tested constraint is the unique index. Regression test:
    `test_duplicate_version_number_rejected_by_unique_constraint`.
 3. **Test bug:** `_docker_available()` used `socket.create_connection(path)`,
@@ -275,7 +275,7 @@ stopped (started via `open -a Docker`; not a code issue).
 | Symptom | Root cause | Fix | Verification |
 |---|---|---|---|
 | psycopg password auth failure in migration test | naive string replace on URL | `rpartition("/")` path-only replacement | migration test passes |
-| wrong constraint exercised | same object saved twice (PK clash) | distinct `ProjectVersion`, same version number | unique-index test passes |
+| wrong constraint exercised | same object saved twice (PK clash) | distinct `WorkflowVersion`, same version number | unique-index test passes |
 | docker probe crash | TCP socket API on a unix socket path | `AF_UNIX` connect | skip/pass logic works both ways |
 | `alembic_version` KeyError 'formatters' | `fileConfig` without `[formatters]` | drop `fileConfig` from env.py | migrations run |
 | mypy duplicate module `conftest` | two conftest files, no package bases | `explicit_package_bases = true` | `mypy .` PASS |
@@ -299,7 +299,7 @@ full draft round-trip (nodes/edges/config/triggers/dependencies/unicode through
 JSONB), get-miss→None, in-place draft update, delete existing/missing,
 paginated + deterministically ordered list, publish-snapshot isolation from
 later draft edits, version list/lookup (+ unknown version), unique-version
-constraint, FK violation for orphan version, RESTRICT on project delete with
+constraint, FK violation for orphan version, RESTRICT on workflow delete with
 versions, rollback on exception, readiness OK/unreachable, and
 migrations upgrade→downgrade→upgrade on a scratch database including
 `alembic_version` content checks.
@@ -346,8 +346,8 @@ Roadmap Phase 05 criteria plus the session prompt's completion list:
 | Alembic migrations | PASS | `0001_initial`; upgrade/downgrade/upgrade test on scratch DB; `alembic_version` checked |
 | repository abstractions | PASS | protocols in application layer; dependency-guard test passes |
 | repository implementations | PASS | both repositories fully CRUD/listed/get tested via real PG |
-| Project persistence | PASS | round-trip test |
-| Project Version persistence | PASS | publish/snapshot-isolation/list tests |
+| Workflow persistence | PASS | round-trip test |
+| Workflow Version persistence | PASS | publish/snapshot-isolation/list tests |
 | graph persistence | PASS | nodes+edges+config round-trip through JSONB, exact equality asserted |
 | required related persistence (triggers, dependencies) | PASS | round-trip assertions in draft test; version test asserts triggers/dependencies tuples |
 | Draft vs Published Version semantics | PASS | snapshot isolation test; insert-only version repository; unique constraint test |
@@ -356,7 +356,7 @@ Roadmap Phase 05 criteria plus the session prompt's completion list:
 | no domain-to-database coupling | PASS | `test_architecture.py` PASS; domain package has zero new imports (`git diff backend/src/akasha/domain` empty) |
 | no unrelated application services | PASS | `application/` contains only interfaces |
 | quality gates pass | PASS | §13 |
-| Roadmap criterion "Project data survives backend restart" | PASS | proven by cross-session visibility: every read in the integration tests happens through a **new** UoW/session after commit; engine restart adds nothing beyond `Database` re-creation against the same URL |
+| Roadmap criterion "Workflow data survives backend restart" | PASS | proven by cross-session visibility: every read in the integration tests happens through a **new** UoW/session after commit; engine restart adds nothing beyond `Database` re-creation against the same URL |
 
 ---
 
@@ -432,19 +432,19 @@ external services.
 | Trigger as first-class table | triggers are currently documents inside draft/version; no scheduling exists | Phase 10 (revisit if trigger CRUD/scheduling needs row identity) | No |
 | Application services using the repositories | explicitly out of scope ("Do not implement unrelated application services") | Phase 06 | No |
 | CLI/startup invocation of migrations | no CLI yet; app startup migration policy is an operations decision | Phase 21/26 | No |
-| Concurrent-insert-safe upsert in `ProjectRepository.save` | draft-write frequency makes the window theoretical; Phase 06 owns draft mutation semantics (optimistic locking candidates) | Phase 06+ | No — recorded as limitation, §20 |
+| Concurrent-insert-safe upsert in `WorkflowRepository.save` | draft-write frequency makes the window theoretical; Phase 06 owns draft mutation semantics (optimistic locking candidates) | Phase 06+ | No — recorded as limitation, §20 |
 
 ---
 
 ## 20. Known Limitations
 
 - **`save()` read-then-write upsert is not race-safe** for concurrent
-  first-inserts of the same project id (both see "missing", both insert,
+  first-inserts of the same workflow id (both see "missing", both insert,
   second gets a PK `IntegrityError`). Acceptable now; publish and
   draft-update flows in Phase 06 must revisit (optimistic locking / `ON
   CONFLICT`) — this report (§19/§25) is the authoritative record.
 - **Graph not queryable via SQL** (by design, §5): any future need for
-  "find projects using node type X" requires a projection table.
+  "find workflows using node type X" requires a projection table.
 - **First-time Testcontainers image pull** can exceed minutes on slow
   networks (finding 2); without Docker the integration tests skip rather
   than fail (AGENTS §117-compliant).
@@ -472,8 +472,8 @@ Persistent knowledge from this phase:
    Any future repository must follow `SqlAlchemyUnitOfWork`'s model; do not
    add commit/rollback to repository methods.
 2. **Published versions are insert-only by protocol AND by constraint.** The
-   application-layer `ProjectVersionRepository` has no update/delete, and
-   the unique `(project_id, version)` index makes a duplicate logical
+   application-layer `WorkflowVersionRepository` has no update/delete, and
+   the unique `(workflow_id, version)` index makes a duplicate logical
    version a database error even if application code regresses.
 3. **Domain objects are never ORM-managed.** New persisted concepts get:
    Core `Table` in `db_models.py` + explicit codec + row→domain
@@ -535,7 +535,7 @@ None.
 
 ---
 
-## 25. Handoff to Next Phase (06 — Project Application Services)
+## 25. Handoff to Next Phase (06 — Workflow Application Services)
 
 Phase 06 can assume:
 
@@ -547,14 +547,14 @@ Phase 06 can assume:
 - Constraint violations surface as `sqlalchemy.exc.IntegrityError` at
   statement time — map them to domain/API errors (409 Conflict) in the
   service or error-mapping layer.
-- `Project.publish_draft()` already implements versioning semantics; persist
-  via `projects.save(project)` + `versions.save(project.id, version)` inside
+- `Workflow.publish_draft()` already implements versioning semantics; persist
+  via `workflows.save(workflow)` + `versions.save(workflow.id, version)` inside
   one UoW to keep the publish atomic (both writes must commit together —
   this is the transaction-critical path of Phase 06).
 - The upsert race on first insert (§20) and draft optimistic concurrency
-  need decisions when `UpdateProjectDraft` lands.
+  need decisions when `UpdateWorkflowDraft` lands.
 - Do **not** change: repository commit semantics, the insert-only version
-  protocol, JSONB graph documents, the unique `(project_id, version)`
+  protocol, JSONB graph documents, the unique `(workflow_id, version)`
   constraint, Alembic URL injection.
 - Prerequisite for running tests: Docker daemon running (integration tests
   skip otherwise); `docker pull postgres:17.2` once recommended.

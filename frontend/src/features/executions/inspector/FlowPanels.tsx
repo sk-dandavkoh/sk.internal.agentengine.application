@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useCallback, useMemo } from 'react'
 import { useApiClient } from '../../../api/context'
 import type { Execution } from '../../../api/executions'
-import { projectQueries } from '../../../api/queries'
+import { workflowQueries } from '../../../api/queries'
 import type { ExecutionReport, NodeExecution } from '../../../api/reports'
 import { QuerySection } from '../../../components/QuerySection'
 import { Button, Card, Table, type TableColumn } from '../../../components/ui'
@@ -26,9 +26,9 @@ export function GraphPanel({
     onInspect: (nodeId: string) => void
 }) {
     const version = useQuery(
-        projectQueries.version(
+        workflowQueries.version(
             useApiClient(),
-            execution.project_id,
+            execution.workflow_id,
             execution.version,
         ),
     )

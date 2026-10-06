@@ -16,15 +16,15 @@ import { ApiError } from './errors'
 import {
     useCancelExecution,
     useCreateCredential,
-    useDeleteProject,
-    useDuplicateProject,
-    useExecuteProjectVersion,
-    usePublishProject,
-    useUpdateProject,
+    useDeleteWorkflow,
+    useDuplicateWorkflow,
+    useExecuteWorkflowVersion,
+    usePublishWorkflow,
+    useUpdateWorkflow,
 } from './mutations'
 import {
     executionQueries,
-    projectQueries,
+    workflowQueries,
     queryKeys,
     credentialQueries,
 } from './queries'
@@ -64,7 +64,7 @@ afterEach(() => {
 })
 
 const ok = (body: unknown, status = 200): Reply => ({ status, body })
-const notFound = (): Reply => error(404, 'PROJECT_NOT_FOUND', 'Not found.')
+const notFound = (): Reply => error(404, 'WORKFLOW_NOT_FOUND', 'Not found.')
 function error(status: number, code: string, message: string): Reply {
     return { status, body: { code, message, details: {}, request_id: 'r' } }
 }
@@ -74,9 +74,9 @@ const count = (key: string) => calls.filter((c) => c === key).length
 
 const AT = '2026-10-02T08:00:00Z'
 
-function projectJson(overrides: Record<string, unknown> = {}) {
+function workflowJson(overrides: Record<string, unknown> = {}) {
     return {
-        id: 'proj_1',
+        id: 'wf_1',
         name: 'Digest',
         description: '',
         status: 'draft',
@@ -114,8 +114,8 @@ function versionJson(version = 1) {
 function executionJson(overrides: Record<string, unknown> = {}) {
     return {
         id: 'exec_1',
-        project_id: 'proj_1',
-        project_name: 'Lead scoring',
+        workflow_id: 'wf_1',
+        workflow_name: 'Lead scoring',
         version: 1,
         status: 'queued',
         trigger_type: 'manual',
@@ -158,19 +158,19 @@ afterEach(() => {
 })
 
 const render = <T,>(hook: () => T) => renderHook(hook, { wrapper })
-const useProject = (id = 'proj_1') =>
-    useQuery(projectQueries.detail(useApiClient(), id))
-const useProjects = () => useQuery(projectQueries.list(useApiClient()))
+const useWorkflow = (id = 'wf_1') =>
+    useQuery(workflowQueries.detail(useApiClient(), id))
+const useWorkflows = () => useQuery(workflowQueries.list(useApiClient()))
 
 // -- queries ------------------------------------------------------------------------
 
 describe('queries', () => {
     it('load, then expose the parsed response', async () => {
-        routes['GET /projects/proj_1'] = () =>
+        routes['GET /workflows/wf_1'] = () =>
             // The backend may omit fields that have defaults.
-            ok(projectJson({ draft: {} }))
+            ok(workflowJson({ draft: {} }))
 
-        const { result } = render(useProject)
+        const { result } = render(useWorkflow)
 
         expect(result.current.isPending).toBe(true)
         await waitFor(() => {
@@ -184,20 +184,20 @@ describe('queries', () => {
     })
 
     it('share one request between observers of the same key', async () => {
-        routes['GET /projects/proj_1'] = () => ok(projectJson())
+        routes['GET /workflows/wf_1'] = () => ok(workflowJson())
 
-        const a = render(useProject)
-        const b = render(useProject)
+        const a = render(useWorkflow)
+        const b = render(useWorkflow)
 
         await waitFor(() => {
             expect(a.result.current.isSuccess).toBe(true)
             expect(b.result.current.isSuccess).toBe(true)
         })
-        expect(count('GET /projects/proj_1')).toBe(1)
+        expect(count('GET /workflows/wf_1')).toBe(1)
     })
 
     it('surface backend errors as ApiError, without retrying them', async () => {
-        const { result } = render(useProject)
+        const { result } = render(useWorkflow)
 
         await waitFor(() => {
             expect(result.current.isError).toBe(true)
@@ -205,17 +205,17 @@ describe('queries', () => {
         expect(result.current.error).toBeInstanceOf(ApiError)
         expect(result.current.error).toMatchObject({
             kind: 'not_found',
-            code: 'PROJECT_NOT_FOUND',
+            code: 'WORKFLOW_NOT_FOUND',
             message: 'Not found.',
         })
-        expect(count('GET /projects/proj_1')).toBe(1)
+        expect(count('GET /workflows/wf_1')).toBe(1)
     })
 
     it('reject responses that break the contract', async () => {
-        routes['GET /projects/proj_1'] = () =>
-            ok(projectJson({ status: 'deleted' }))
+        routes['GET /workflows/wf_1'] = () =>
+            ok(workflowJson({ status: 'deleted' }))
 
-        const { result } = render(useProject)
+        const { result } = render(useWorkflow)
 
         await waitFor(() => {
             expect(result.current.error).toMatchObject({
@@ -227,28 +227,28 @@ describe('queries', () => {
 
     it('show stale data while refetching it on the next mount', async () => {
         let name = 'Old'
-        routes['GET /projects/proj_1'] = () => ok(projectJson({ name }))
-        const first = render(useProject)
+        routes['GET /workflows/wf_1'] = () => ok(workflowJson({ name }))
+        const first = render(useWorkflow)
         await waitFor(() => {
             expect(first.result.current.isSuccess).toBe(true)
         })
         first.unmount()
         name = 'New'
 
-        const second = render(useProject)
+        const second = render(useWorkflow)
 
         expect(second.result.current.data?.name).toBe('Old')
         expect(second.result.current.isFetching).toBe(true)
         await waitFor(() => {
             expect(second.result.current.data?.name).toBe('New')
         })
-        expect(count('GET /projects/proj_1')).toBe(2)
+        expect(count('GET /workflows/wf_1')).toBe(2)
     })
 
     it('never refetch an immutable published version', async () => {
-        routes['GET /projects/proj_1/versions/1'] = () => ok(versionJson())
+        routes['GET /workflows/wf_1/versions/1'] = () => ok(versionJson())
         const useVersion = () =>
-            useQuery(projectQueries.version(useApiClient(), 'proj_1', 1))
+            useQuery(workflowQueries.version(useApiClient(), 'wf_1', 1))
         const first = render(useVersion)
         await waitFor(() => {
             expect(first.result.current.isSuccess).toBe(true)
@@ -259,7 +259,7 @@ describe('queries', () => {
 
         expect(second.result.current.isStale).toBe(false)
         expect(second.result.current.isFetching).toBe(false)
-        expect(count('GET /projects/proj_1/versions/1')).toBe(1)
+        expect(count('GET /workflows/wf_1/versions/1')).toBe(1)
     })
 })
 
@@ -276,53 +276,53 @@ describe('mutations', () => {
         return rendered
     }
 
-    it('save a draft: cache the saved project, refetch the lists', async () => {
-        routes['GET /projects/proj_1'] = () => ok(projectJson())
-        routes['GET /projects'] = () => ok(page([projectJson()]))
-        routes['PUT /projects/proj_1'] = () =>
-            ok(projectJson({ name: 'Renamed', revision: 2 }))
-        const project = await loaded(useProject)
-        await loaded(useProjects)
-        const update = render(useUpdateProject)
+    it('save a draft: cache the saved workflow, refetch the lists', async () => {
+        routes['GET /workflows/wf_1'] = () => ok(workflowJson())
+        routes['GET /workflows'] = () => ok(page([workflowJson()]))
+        routes['PUT /workflows/wf_1'] = () =>
+            ok(workflowJson({ name: 'Renamed', revision: 2 }))
+        const workflow = await loaded(useWorkflow)
+        await loaded(useWorkflows)
+        const update = render(useUpdateWorkflow)
 
         await act(() =>
             update.result.current.mutateAsync({
-                projectId: 'proj_1',
+                workflowId: 'wf_1',
                 input: {
                     name: 'Renamed',
                     description: '',
-                    draft: projectJson().draft,
+                    draft: workflowJson().draft,
                     expected_revision: 1,
                 },
             }),
         )
 
         await waitFor(() => {
-            expect(project.result.current.data).toMatchObject({
+            expect(workflow.result.current.data).toMatchObject({
                 name: 'Renamed',
                 revision: 2,
             })
         })
-        expect(count('GET /projects/proj_1')).toBe(1) // set, not refetched
-        expect(count('GET /projects')).toBe(2)
+        expect(count('GET /workflows/wf_1')).toBe(1) // set, not refetched
+        expect(count('GET /workflows')).toBe(2)
     })
 
     it('a failed write leaves the cache untouched and is not retried', async () => {
-        routes['GET /projects/proj_1'] = () => ok(projectJson())
-        routes['GET /projects'] = () => ok(page([projectJson()]))
-        routes['PUT /projects/proj_1'] = () =>
+        routes['GET /workflows/wf_1'] = () => ok(workflowJson())
+        routes['GET /workflows'] = () => ok(page([workflowJson()]))
+        routes['PUT /workflows/wf_1'] = () =>
             error(409, 'CONCURRENT_MODIFICATION', 'The draft changed.')
-        const project = await loaded(useProject)
-        await loaded(useProjects)
-        const update = render(useUpdateProject)
+        const workflow = await loaded(useWorkflow)
+        await loaded(useWorkflows)
+        const update = render(useUpdateWorkflow)
 
         act(() => {
             update.result.current.mutate({
-                projectId: 'proj_1',
+                workflowId: 'wf_1',
                 input: {
                     name: 'Renamed',
                     description: '',
-                    draft: projectJson().draft,
+                    draft: workflowJson().draft,
                     expected_revision: 0,
                 },
             })
@@ -335,28 +335,27 @@ describe('mutations', () => {
             kind: 'conflict',
             code: 'CONCURRENT_MODIFICATION',
         })
-        expect(project.result.current.data?.name).toBe('Digest')
-        expect(count('PUT /projects/proj_1')).toBe(1)
-        expect(count('GET /projects')).toBe(1)
+        expect(workflow.result.current.data?.name).toBe('Digest')
+        expect(count('PUT /workflows/wf_1')).toBe(1)
+        expect(count('GET /workflows')).toBe(1)
     })
 
-    it('publish refetches the project and its versions, not other projects', async () => {
-        routes['GET /projects/proj_1'] = () => ok(projectJson())
-        routes['GET /projects/proj_2'] = () => ok(projectJson({ id: 'proj_2' }))
-        routes['GET /projects/proj_1/versions'] = () => ok(page([]))
-        routes['POST /projects/proj_1/publish'] = () => ok(versionJson(), 201)
-        await loaded(useProject)
-        await loaded(() => useProject('proj_2'))
+    it('publish refetches the workflow and its versions, not other workflows', async () => {
+        routes['GET /workflows/wf_1'] = () => ok(workflowJson())
+        routes['GET /workflows/wf_2'] = () => ok(workflowJson({ id: 'wf_2' }))
+        routes['GET /workflows/wf_1/versions'] = () => ok(page([]))
+        routes['POST /workflows/wf_1/publish'] = () => ok(versionJson(), 201)
+        await loaded(useWorkflow)
+        await loaded(() => useWorkflow('wf_2'))
         const versions = await loaded(() =>
-            useQuery(projectQueries.versions(useApiClient(), 'proj_1')),
+            useQuery(workflowQueries.versions(useApiClient(), 'wf_1')),
         )
-        routes['GET /projects/proj_1/versions'] = () =>
-            ok(page([versionJson()]))
-        const publish = render(usePublishProject)
+        routes['GET /workflows/wf_1/versions'] = () => ok(page([versionJson()]))
+        const publish = render(usePublishWorkflow)
 
         await act(() =>
             publish.result.current.mutateAsync({
-                projectId: 'proj_1',
+                workflowId: 'wf_1',
                 expectedRevision: 1,
             }),
         )
@@ -364,53 +363,53 @@ describe('mutations', () => {
         await waitFor(() => {
             expect(versions.result.current.data?.items).toHaveLength(1)
         })
-        expect(count('GET /projects/proj_1')).toBe(2)
-        expect(count('GET /projects/proj_2')).toBe(1)
+        expect(count('GET /workflows/wf_1')).toBe(2)
+        expect(count('GET /workflows/wf_2')).toBe(1)
     })
 
-    it('delete drops every cached query of the project', async () => {
-        routes['GET /projects/proj_1'] = () => ok(projectJson())
-        routes['DELETE /projects/proj_1'] = () => ({ status: 204 })
-        const project = await loaded(useProject)
-        project.unmount()
-        const remove = render(useDeleteProject)
+    it('delete drops every cached query of the workflow', async () => {
+        routes['GET /workflows/wf_1'] = () => ok(workflowJson())
+        routes['DELETE /workflows/wf_1'] = () => ({ status: 204 })
+        const workflow = await loaded(useWorkflow)
+        workflow.unmount()
+        const remove = render(useDeleteWorkflow)
 
-        await act(() => remove.result.current.mutateAsync('proj_1'))
+        await act(() => remove.result.current.mutateAsync('wf_1'))
 
         expect(
-            queryClient.getQueryData(queryKeys.projects.detail('proj_1')),
+            queryClient.getQueryData(queryKeys.workflows.detail('wf_1')),
         ).toBeUndefined()
     })
 
     it('duplicate refetches the lists and leaves the source untouched', async () => {
-        routes['GET /projects/proj_1'] = () => ok(projectJson())
-        routes['GET /projects'] = () => ok(page([projectJson()]))
-        routes['POST /projects/proj_1/duplicate'] = () =>
-            ok(projectJson({ id: 'proj_2', name: 'Copy' }), 201)
-        await loaded(useProject)
-        await loaded(useProjects)
-        const duplicate = render(useDuplicateProject)
+        routes['GET /workflows/wf_1'] = () => ok(workflowJson())
+        routes['GET /workflows'] = () => ok(page([workflowJson()]))
+        routes['POST /workflows/wf_1/duplicate'] = () =>
+            ok(workflowJson({ id: 'wf_2', name: 'Copy' }), 201)
+        await loaded(useWorkflow)
+        await loaded(useWorkflows)
+        const duplicate = render(useDuplicateWorkflow)
 
         const copy = await act(() =>
             duplicate.result.current.mutateAsync({
-                projectId: 'proj_1',
+                workflowId: 'wf_1',
                 name: 'Copy',
             }),
         )
 
-        expect(copy.id).toBe('proj_2')
-        expect(count('GET /projects')).toBe(2)
-        expect(count('GET /projects/proj_1')).toBe(1)
+        expect(copy.id).toBe('wf_2')
+        expect(count('GET /workflows')).toBe(2)
+        expect(count('GET /workflows/wf_1')).toBe(1)
     })
 
     it('starting and cancelling executions refetch what they change', async () => {
-        routes['GET /projects/proj_1/executions'] = () => ok(page([]))
+        routes['GET /workflows/wf_1/executions'] = () => ok(page([]))
         routes['GET /executions/exec_1'] = () => ok(executionJson())
-        routes['POST /projects/proj_1/versions/1/execute'] = () =>
+        routes['POST /workflows/wf_1/versions/1/execute'] = () =>
             ok(executionJson(), 201)
         routes['POST /executions/exec_1/cancel'] = () =>
             ok(executionJson({ status: 'running' }), 202)
-        // The dashboard's cross-project views.
+        // The dashboard's cross-workflow views.
         routes['GET /executions'] = () => ok(page([]))
         routes['GET /executions/status-counts'] = () =>
             ok({
@@ -425,22 +424,22 @@ describe('mutations', () => {
             useQuery(executionQueries.statusCounts(useApiClient())),
         )
         await loaded(() =>
-            useQuery(projectQueries.executions(useApiClient(), 'proj_1')),
+            useQuery(workflowQueries.executions(useApiClient(), 'wf_1')),
         )
         const execution = await loaded(() =>
             useQuery(executionQueries.detail(useApiClient(), 'exec_1')),
         )
-        const execute = render(useExecuteProjectVersion)
+        const execute = render(useExecuteWorkflowVersion)
         const cancel = render(useCancelExecution)
 
         await act(() =>
             execute.result.current.mutateAsync({
-                projectId: 'proj_1',
+                workflowId: 'wf_1',
                 version: 1,
                 input: { topic: 'news' },
             }),
         )
-        expect(count('GET /projects/proj_1/executions')).toBe(2)
+        expect(count('GET /workflows/wf_1/executions')).toBe(2)
         expect(count('GET /executions')).toBe(2)
         expect(count('GET /executions/status-counts')).toBe(2)
 
@@ -452,7 +451,7 @@ describe('mutations', () => {
         await waitFor(() => {
             expect(execution.result.current.data?.status).toBe('cancelled')
         })
-        expect(count('GET /projects/proj_1/executions')).toBe(3)
+        expect(count('GET /workflows/wf_1/executions')).toBe(3)
         expect(count('GET /executions')).toBe(3)
         expect(count('GET /executions/status-counts')).toBe(3)
     })

@@ -1,6 +1,6 @@
 """ExecutionRuntime against real PostgreSQL (roadmap Phase 08).
 
-Every scenario runs published Project Versions through the real runtime,
+Every scenario runs published Workflow Versions through the real runtime,
 real Unit of Work and a real database, then asserts on the *persisted*
 state. Test nodes are deterministic; synchronization uses asyncio events
 and barriers, never sleeps. The only wall-clock waits are the timeout
@@ -21,7 +21,7 @@ from sqlalchemy import text
 
 from akasha.application.executions import ExecutionNotFoundError, ExecutionService
 from akasha.application.persistence import ConcurrentModificationError, UnitOfWork
-from akasha.application.projects import ProjectService, ProjectVersionNotFoundError
+from akasha.application.workflows import WorkflowService, WorkflowVersionNotFoundError
 from akasha.domain.execution import (
     Execution,
     ExecutionMetadata,
@@ -43,7 +43,7 @@ from akasha.domain.node import (
     NodeResult,
     PortType,
 )
-from akasha.domain.project import ProjectDraft
+from akasha.domain.workflow import WorkflowDraft
 from akasha.errors import InvalidStateTransitionError
 from akasha.infrastructure.database import Database
 from akasha.infrastructure.persistence import SqlAlchemyUnitOfWork
@@ -208,16 +208,16 @@ class Harness:
         return ExecutionService(self.uow)
 
     async def publish(self, catalog: NodeCatalog, graph: Graph) -> tuple[str, int]:
-        svc = ProjectService(self.uow, {t: c.definition for t, c in catalog.items()})
-        project = await svc.create_project("demo")
+        svc = WorkflowService(self.uow, {t: c.definition for t, c in catalog.items()})
+        workflow = await svc.create_workflow("demo")
         await svc.update_draft(
-            project.id,
-            expected_revision=project.revision,
+            workflow.id,
+            expected_revision=workflow.revision,
             name="demo",
-            draft=ProjectDraft(graph=graph),
+            draft=WorkflowDraft(graph=graph),
         )
-        version = await svc.publish_project(project.id)
-        return project.id, version.version
+        version = await svc.publish_workflow(workflow.id)
+        return workflow.id, version.version
 
     async def queue(
         self,
@@ -226,9 +226,9 @@ class Harness:
         *,
         timeout_policy: TimeoutPolicy | None = None,
     ) -> Execution:
-        project_id, version = await self.publish(catalog, graph)
+        workflow_id, version = await self.publish(catalog, graph)
         return await self.executions.create_execution(
-            project_id,
+            workflow_id,
             version,
             metadata=ExecutionMetadata(correlation_id="corr-1"),
             timeout_policy=timeout_policy,
@@ -1127,26 +1127,26 @@ async def test_execution_runs_its_pinned_version_not_later_drafts(
         {"A": ("test.emit", {"value": "v1"}), "B": ("test.append", {"suffix": "!"})},
         ["A.out>B.text"],
     )
-    project_id, version = await h.publish(catalog, graph)
-    queued = await h.executions.create_execution(project_id, version)
+    workflow_id, version = await h.publish(catalog, graph)
+    queued = await h.executions.create_execution(workflow_id, version)
 
-    svc = ProjectService(h.uow, {t: c.definition for t, c in catalog.items()})
-    project = await svc.get_project(project_id)
+    svc = WorkflowService(h.uow, {t: c.definition for t, c in catalog.items()})
+    workflow = await svc.get_workflow(workflow_id)
     graph2, _ = build(
         {"X": ("test.emit", {"value": "v2"}), "Y": ("test.append", {"suffix": "?"})},
         ["X.out>Y.text"],
     )
     await svc.update_draft(
-        project_id,
-        expected_revision=project.revision,
+        workflow_id,
+        expected_revision=workflow.revision,
         name="demo",
-        draft=ProjectDraft(graph=graph2),
+        draft=WorkflowDraft(graph=graph2),
     )
-    await svc.publish_project(project_id)
+    await svc.publish_workflow(workflow_id)
 
     await h.runtime(catalog).run(queued.id)
     loaded = await h.load(queued.id)
-    assert loaded.project_version.version == 1
+    assert loaded.workflow_version.version == 1
     assert set(loaded.node_executions) == set(ids.values())
     assert loaded.node(ids["B"]).outputs == {"out": "v1!"}
 
@@ -1172,13 +1172,13 @@ async def test_node_context_is_scoped_and_isolated(h: Harness) -> None:
     persisted = await h.load(queued.id)
     assert ctx.execution_id == queued.id
     assert ctx.node_execution_id == persisted.node(ids["B"]).id
-    assert (ctx.project_id, ctx.project_version) == (queued.project_id, "1")
+    assert (ctx.workflow_id, ctx.workflow_version) == (queued.workflow_id, "1")
     assert ctx.inputs == {"text": "a"}
     assert ctx.is_cancelled() is False
     assert ctx.runtime_metadata["attempt"] == 1
-    assert ctx.runtime_metadata["project_version_id"] == queued.project_version.id
+    assert ctx.runtime_metadata["workflow_version_id"] == queued.workflow_version.id
     # Node code cannot mutate the pinned snapshot through its config.
-    assert result.project_version.graph.nodes[ids["B"]].config == {"suffix": "x"}
+    assert result.workflow_version.graph.nodes[ids["B"]].config == {"suffix": "x"}
 
 
 async def test_object_outputs_are_isolated_between_branches(h: Harness) -> None:
@@ -1267,9 +1267,9 @@ async def test_create_execution_for_missing_version(h: Harness) -> None:
         {"A": ("test.emit", {"value": "a"}), "B": ("test.append", {"suffix": "b"})},
         ["A.out>B.text"],
     )
-    project_id, _ = await h.publish(catalog, graph)
-    with pytest.raises(ProjectVersionNotFoundError):
-        await h.executions.create_execution(project_id, 99)
+    workflow_id, _ = await h.publish(catalog, graph)
+    with pytest.raises(WorkflowVersionNotFoundError):
+        await h.executions.create_execution(workflow_id, 99)
 
 
 async def test_nul_in_node_output_or_error_never_crashes_the_run(h: Harness) -> None:

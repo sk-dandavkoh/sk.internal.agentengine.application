@@ -52,7 +52,7 @@ function definition(nodeType: string, schema: object) {
     }
 }
 
-function project(config: JsonObject, nodeType = 'acme.rich') {
+function workflow(config: JsonObject, nodeType = 'acme.rich') {
     return {
         id: 'p1',
         name: 'Leads',
@@ -102,7 +102,7 @@ function backend({
     const saved: JsonObject[] = []
     const validated: JsonObject[] = []
     const requests = stubBackend({
-        'GET /projects/p1': () => ok(project(config, nodeType)),
+        'GET /workflows/p1': () => ok(workflow(config, nodeType)),
         'GET /nodes': () =>
             ok({
                 items: [definition('acme.rich', schema)],
@@ -116,10 +116,10 @@ function backend({
             validated.push(body.config)
             return ok({ valid: true, issues: [] })
         },
-        'PUT /projects/p1': (_url, init) => {
+        'PUT /workflows/p1': (_url, init) => {
             const body = JSON.parse(init.body as string) as Saved
             saved.push(body.draft.graph.nodes[0]?.config ?? {})
-            return ok({ ...project(config, nodeType), revision: 2, ...body })
+            return ok({ ...workflow(config, nodeType), revision: 2, ...body })
         },
         ...handlers,
     })
@@ -129,7 +129,7 @@ function backend({
 const page = () => ({ offset: 0, limit: 100, has_more: false })
 
 async function openInspector() {
-    const view = renderRoute('/projects/p1/editor')
+    const view = renderRoute('/workflows/p1/editor')
     const list = await screen.findByRole('region', { name: /^Nodes/ })
     fireEvent.click(within(list).getByRole('button', { name: /Rich one/ }))
     const inspector = await screen.findByRole('region', {
@@ -487,7 +487,7 @@ describe('NodeInspector', () => {
     it('keeps the edits and says so when saving fails', async () => {
         backend({
             handlers: {
-                'PUT /projects/p1': () =>
+                'PUT /workflows/p1': () =>
                     apiError(500, 'INTERNAL_ERROR', 'Boom.'),
             },
         })

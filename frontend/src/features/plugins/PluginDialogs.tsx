@@ -28,7 +28,7 @@ const detailsSchema = z.object({
     fields: z.array(z.string()).optional(), // PLUGIN_MANIFEST_INVALID
     reason: z.string().optional(),
     dependents: z.array(z.string()).optional(), // PLUGIN_IN_USE (plugins)
-    projects: z.array(z.string()).optional(), // PLUGIN_IN_USE (projects)
+    workflows: z.array(z.string()).optional(), // PLUGIN_IN_USE (workflows)
     path: z.string().optional(), // PLUGIN_PACKAGE_INVALID
     output: z.string().optional(), // PLUGIN_DEPENDENCIES_FAILED: uv's explanation
     distributions: z.array(z.string()).optional(), // ... already loaded: restart
@@ -72,13 +72,15 @@ function PluginError({ error }: { error: unknown }) {
             )}
             {list('Libraries loaded in another version', d.distributions)}
             {list('Enabled plugins that depend on it', d.dependents)}
-            {d.projects && d.projects.length > 0 && (
+            {d.workflows && d.workflows.length > 0 && (
                 <div>
-                    <p className="font-medium">Projects that use it</p>
+                    <p className="font-medium">Workflows that use it</p>
                     <ul className="list-disc pl-5">
-                        {d.projects.map((id) => (
+                        {d.workflows.map((id) => (
                             <li key={id}>
-                                <TextLink to={`/projects/${id}`}>{id}</TextLink>
+                                <TextLink to={`/workflows/${id}`}>
+                                    {id}
+                                </TextLink>
                             </li>
                         ))}
                     </ul>
@@ -218,7 +220,7 @@ export function SetEnabledDialog({
         >
             {enable
                 ? `${TRUST_NOTICE} The engine checks compatibility again, then loads its code and registers its node types.`
-                : 'Its node types are unregistered. Projects that use them fail to validate, publish and run until it is enabled again.'}{' '}
+                : 'Its node types are unregistered. Workflows that use them fail to validate, publish and run until it is enabled again.'}{' '}
             Dedicated worker processes see the change after a restart.
             {mutation.error && (
                 <div className="mt-3">
@@ -239,12 +241,12 @@ export function RemovePluginDialog({
     const remove = useRemovePlugin()
     const toast = useToast()
     const label = pluginLabel(plugin)
-    // The backend refused because projects use the plugin; the next
+    // The backend refused because workflows use the plugin; the next
     // confirmation is the explicit "remove anyway".
     const inUse =
         remove.error instanceof ApiError &&
         remove.error.code === 'PLUGIN_IN_USE' &&
-        Array.isArray(remove.error.details['projects'])
+        Array.isArray(remove.error.details['workflows'])
     const close = () => {
         remove.reset()
         onClose()
@@ -261,12 +263,12 @@ export function RemovePluginDialog({
                 remove.mutate(
                     { pluginId: plugin.plugin_id, force: inUse },
                     {
-                        onSuccess: ({ affected_projects }) => {
+                        onSuccess: ({ affected_workflows }) => {
                             toast.notify({
                                 tone: 'success',
                                 title: `Plugin “${label}” removed`,
-                                ...(affected_projects.length > 0 && {
-                                    description: `${String(affected_projects.length)} project(s) now reference missing node types.`,
+                                ...(affected_workflows.length > 0 && {
+                                    description: `${String(affected_workflows.length)} workflow(s) now reference missing node types.`,
                                 }),
                             })
                             close()
@@ -276,9 +278,9 @@ export function RemovePluginDialog({
             }}
         >
             The installed package <code>{plugin.plugin_id}</code> is deleted
-            from the engine. Project data is kept.
+            from the engine. Workflow data is kept.
             {inUse &&
-                ' Removing it anyway breaks the projects below until it is installed again.'}
+                ' Removing it anyway breaks the workflows below until it is installed again.'}
             {remove.error && (
                 <div className="mt-3">
                     <PluginError error={remove.error} />

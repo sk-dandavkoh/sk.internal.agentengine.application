@@ -24,7 +24,7 @@ import type {
     Graph,
     NodeInstance,
     NodePosition,
-} from '../../api/projects'
+} from '../../api/workflows'
 import {
     connectionProblem,
     missingInputs,

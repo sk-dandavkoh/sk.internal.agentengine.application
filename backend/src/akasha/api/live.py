@@ -46,7 +46,7 @@ from akasha.api.auth import SESSION_COOKIE
 from akasha.api.executions import EventOut
 from akasha.application.auth import AuthenticationRequiredError
 from akasha.application.executions import ExecutionNotFoundError
-from akasha.application.projects import MAX_PAGE_SIZE
+from akasha.application.workflows import MAX_PAGE_SIZE
 from akasha.bootstrap import Container
 
 logger = logging.getLogger("akasha.api.live")

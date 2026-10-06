@@ -1,22 +1,22 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router'
 import { errorMessage } from '../../api/errors'
-import { useExecuteProjectVersion } from '../../api/mutations'
+import { useExecuteWorkflowVersion } from '../../api/mutations'
 import { Alert, Button, Dialog, Textarea, useToast } from '../../components/ui'
 import { executionPath, parseInput } from './format'
 
 /** Starts a manual run of one published version and opens it. */
 export function RunVersion({
-    projectId,
+    workflowId,
     version,
 }: {
-    projectId: string
+    workflowId: string
     version: number
 }) {
     const [open, setOpen] = useState(false)
     const [text, setText] = useState('{}')
     const [inputError, setInputError] = useState<string>()
-    const run = useExecuteProjectVersion()
+    const run = useExecuteWorkflowVersion()
     const navigate = useNavigate()
     const toast = useToast()
     const close = () => {
@@ -32,7 +32,7 @@ export function RunVersion({
         }
         setInputError(undefined)
         run.mutate(
-            { projectId, version, input },
+            { workflowId, version, input },
             {
                 onSuccess: (execution) => {
                     close()

@@ -351,10 +351,10 @@ describe('PluginsPage', () => {
                 if (force !== 'true')
                     return error(409, 'PLUGIN_IN_USE', {
                         plugin_id: 'acme',
-                        projects: ['p-1'],
+                        workflows: ['p-1'],
                     })
                 items = []
-                return ok({ plugin_id: 'acme', affected_projects: ['p-1'] })
+                return ok({ plugin_id: 'acme', affected_workflows: ['p-1'] })
             },
         })
         renderRoute('/plugins')
@@ -369,7 +369,7 @@ describe('PluginsPage', () => {
         const alert = await dialog.findByRole('alert')
         expect(
             within(alert).getByRole('link', { name: 'p-1' }),
-        ).toHaveAttribute('href', '/projects/p-1')
+        ).toHaveAttribute('href', '/workflows/p-1')
         // Still listed: the refused removal changed nothing.
         expect(
             screen.getByRole('heading', { name: 'Text Tools', level: 2 }),

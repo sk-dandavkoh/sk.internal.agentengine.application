@@ -12,59 +12,59 @@ import {
     listExecutionEvents,
     listExecutionLogs,
     listExecutions,
-    listProjectExecutions,
+    listWorkflowExecutions,
     type ExecutionListParams,
     type LogFilter,
     type LogPage,
-    type ProjectExecutionListParams,
+    type WorkflowExecutionListParams,
 } from './executions'
 import { listNodeDefinitions, validateNodeConfig } from './nodes'
 import { listPlugins } from './plugins'
 import {
-    getProject,
-    getProjectVersion,
-    listProjects,
-    listProjectVersions,
-    validateProject,
-    type ProjectListParams,
-} from './projects'
+    getWorkflow,
+    getWorkflowVersion,
+    listWorkflows,
+    listWorkflowVersions,
+    validateWorkflow,
+    type WorkflowListParams,
+} from './workflows'
 import { getMonitoringSummary, type MonitoringWindow } from './monitoring'
 import { getExecutionReport } from './reports'
 import type { JsonObject, PageParams } from './schemas'
-import { getProjectSharing } from './sharing'
+import { getWorkflowSharing } from './sharing'
 import { getSystemStatus } from './system'
 import { getUser, listUsers, type UserListParams } from './users'
 
 /**
  * Every server-state query key. Keys nest by ownership so invalidating a
- * prefix reaches everything below it: `projects.detail(id)` covers the
- * project's versions and executions, `executions.detail(id)` its events
+ * prefix reaches everything below it: `workflows.detail(id)` covers the
+ * workflow's versions and executions, `executions.detail(id)` its events
  * and report. Every execution write invalidates `executions.overview()`:
- * the cross-project listings and status counts.
+ * the cross-workflow listings and status counts.
  */
 export const queryKeys = {
-    projects: {
-        lists: () => ['projects', 'list'] as const,
-        list: (params: ProjectListParams) =>
-            ['projects', 'list', params] as const,
-        detail: (projectId: string) => ['projects', projectId] as const,
-        versions: (projectId: string, page: PageParams) =>
-            ['projects', projectId, 'versions', 'list', page] as const,
-        version: (projectId: string, version: number) =>
-            ['projects', projectId, 'versions', version] as const,
-        executions: (projectId: string) =>
-            ['projects', projectId, 'executions'] as const,
-        /** Owner, members and the caller's access (below the project, so
-         * a project refresh refreshes it too). */
-        sharing: (projectId: string) =>
-            ['projects', projectId, 'members'] as const,
+    workflows: {
+        lists: () => ['workflows', 'list'] as const,
+        list: (params: WorkflowListParams) =>
+            ['workflows', 'list', params] as const,
+        detail: (workflowId: string) => ['workflows', workflowId] as const,
+        versions: (workflowId: string, page: PageParams) =>
+            ['workflows', workflowId, 'versions', 'list', page] as const,
+        version: (workflowId: string, version: number) =>
+            ['workflows', workflowId, 'versions', version] as const,
+        executions: (workflowId: string) =>
+            ['workflows', workflowId, 'executions'] as const,
+        /** Owner, members and the caller's access (below the workflow, so
+         * a workflow refresh refreshes it too). */
+        sharing: (workflowId: string) =>
+            ['workflows', workflowId, 'members'] as const,
         /** The backend's verdict on one draft revision. */
-        validation: (projectId: string, revision: number) =>
-            ['projects', projectId, 'validation', revision] as const,
+        validation: (workflowId: string, revision: number) =>
+            ['workflows', workflowId, 'validation', revision] as const,
         executionList: (
-            projectId: string,
-            params: ProjectExecutionListParams,
-        ) => ['projects', projectId, 'executions', params] as const,
+            workflowId: string,
+            params: WorkflowExecutionListParams,
+        ) => ['workflows', workflowId, 'executions', params] as const,
     },
     executions: {
         overview: () => ['executions', 'overview'] as const,
@@ -117,62 +117,62 @@ export const INSTALLATION_STALE_TIME_MS = 5 * 60_000
  * route loaders (`queryClient.ensureQueryData`). Everything else keeps the
  * defaults of `createQueryClient`: stale immediately, refetched on mount.
  */
-export const projectQueries = {
-    list: (client: ApiClient, params: ProjectListParams = {}) =>
+export const workflowQueries = {
+    list: (client: ApiClient, params: WorkflowListParams = {}) =>
         queryOptions({
-            queryKey: queryKeys.projects.list(params),
-            queryFn: ({ signal }) => listProjects(client, params, signal),
+            queryKey: queryKeys.workflows.list(params),
+            queryFn: ({ signal }) => listWorkflows(client, params, signal),
         }),
-    detail: (client: ApiClient, projectId: string) =>
+    detail: (client: ApiClient, workflowId: string) =>
         queryOptions({
-            queryKey: queryKeys.projects.detail(projectId),
-            queryFn: ({ signal }) => getProject(client, projectId, signal),
+            queryKey: queryKeys.workflows.detail(workflowId),
+            queryFn: ({ signal }) => getWorkflow(client, workflowId, signal),
         }),
-    versions: (client: ApiClient, projectId: string, page: PageParams = {}) =>
+    versions: (client: ApiClient, workflowId: string, page: PageParams = {}) =>
         queryOptions({
-            queryKey: queryKeys.projects.versions(projectId, page),
+            queryKey: queryKeys.workflows.versions(workflowId, page),
             queryFn: ({ signal }) =>
-                listProjectVersions(client, projectId, page, signal),
+                listWorkflowVersions(client, workflowId, page, signal),
         }),
-    version: (client: ApiClient, projectId: string, version: number) =>
+    version: (client: ApiClient, workflowId: string, version: number) =>
         queryOptions({
-            queryKey: queryKeys.projects.version(projectId, version),
+            queryKey: queryKeys.workflows.version(workflowId, version),
             queryFn: ({ signal }) =>
-                getProjectVersion(client, projectId, version, signal),
+                getWorkflowVersion(client, workflowId, version, signal),
             // Published versions are immutable: never stale.
             staleTime: Infinity,
         }),
     /** Validates the stored draft at `revision` (a POST without side
      * effects); a draft changed since is a 409, never another draft's
      * verdict. */
-    validation: (client: ApiClient, projectId: string, revision: number) =>
+    validation: (client: ApiClient, workflowId: string, revision: number) =>
         queryOptions({
-            queryKey: queryKeys.projects.validation(projectId, revision),
-            queryFn: () => validateProject(client, projectId, revision),
+            queryKey: queryKeys.workflows.validation(workflowId, revision),
+            queryFn: () => validateWorkflow(client, workflowId, revision),
             // One revision's verdict changes only with the installed node
             // code, like a config verdict; not re-POSTed on every focus.
             staleTime: INSTALLATION_STALE_TIME_MS,
         }),
-    sharing: (client: ApiClient, projectId: string) =>
+    sharing: (client: ApiClient, workflowId: string) =>
         queryOptions({
-            queryKey: queryKeys.projects.sharing(projectId),
+            queryKey: queryKeys.workflows.sharing(workflowId),
             queryFn: ({ signal }) =>
-                getProjectSharing(client, projectId, signal),
+                getWorkflowSharing(client, workflowId, signal),
         }),
     executions: (
         client: ApiClient,
-        projectId: string,
-        params: ProjectExecutionListParams = {},
+        workflowId: string,
+        params: WorkflowExecutionListParams = {},
     ) =>
         queryOptions({
-            queryKey: queryKeys.projects.executionList(projectId, params),
+            queryKey: queryKeys.workflows.executionList(workflowId, params),
             queryFn: ({ signal }) =>
-                listProjectExecutions(client, projectId, params, signal),
+                listWorkflowExecutions(client, workflowId, params, signal),
         }),
 }
 
 export const executionQueries = {
-    /** Across projects, newest first (the caller's projects; all for an admin). */
+    /** Across workflows, newest first (the caller's workflows; all for an admin). */
     list: (client: ApiClient, params: ExecutionListParams = {}) =>
         queryOptions({
             queryKey: queryKeys.executions.list(params),

@@ -21,7 +21,7 @@ The session prompt added:
 The frontend API layer was also already in place (Phase 04): `api/credentials.ts`, `credentialQueries`, and `useCreate/Update/DeleteCredential` with `gcTime: 0`. Assignment by reference was in place too: the Phase 09 node inspector's credential-reference combobox stores only `credential:<name>`.
 
 Two items have no backend source:
-- **Usage information:** there is no endpoint that lists the projects referencing a credential.
+- **Usage information:** there is no endpoint that lists the workflows referencing a credential.
 - **Provider:** a credential has a `kind` (`api_key | smtp | provider | generic`), not a provider field. The provider is part of the LLM node config.
 
 Neither was invented (§19).
@@ -80,7 +80,7 @@ Roadmap §23:
   - States:
     - loading, error with retry, and stale-with-warning (shared `QuerySection`);
     - empty ("No credentials yet", with a create action);
-    - 403: an `ErrorState` "Admin access required", which explains that projects can still reference credentials by name.
+    - 403: an `ErrorState` "Admin access required", which explains that workflows can still reference credentials by name.
 - **`CredentialFormDialog`**, one dialog for both modes:
   - **Create:**
     - Name: required, `pattern` mirrors the backend name rule, `maxLength` 64, help text says the name is immutable.
@@ -199,7 +199,7 @@ Each mutation stays pending until its refetch finishes, so the dialog closes onl
 - **Notes:** "Implement missing backend APIs" required no work for list, create, update, delete or authorization.
 
 ### Finding 2 — No usage information source
-- **Finding:** No endpoint reports which projects or versions reference a credential.
+- **Finding:** No endpoint reports which workflows or versions reference a credential.
 - **Impact:** MEDIUM
 - **Resolution:** DEFERRED
 - **Notes:**
@@ -309,7 +309,7 @@ These use the real router, `ApiClient` and `QueryClient`, with `fetch` stubbed b
 None were added or run in this phase. The backend is unchanged. Its existing tests (`backend/tests/integration/test_credentials.py`, `test_auth_api.py::test_members_cannot_reach_admin_areas`) cover encryption, value-never-returned, no echo in 422 bodies, and member denial. They were inspected, not re-run.
 
 ### E2E Tests
-Not run. No Playwright spec covers `/credentials`. `tests/fullstack/projects.spec.ts` uses credential references in the node inspector only.
+Not run. No Playwright spec covers `/credentials`. `tests/fullstack/workflows.spec.ts` uses credential references in the node inspector only.
 
 ### Security Tests
 These are the component tests above: masking, storage, URL, logs, cache, accidental serialization, and the 403 path.
@@ -388,13 +388,13 @@ None. There are no new or changed dependencies, environment variables, Docker or
 
 | What | Why deferred | Intended phase | Dependency | Affects completion |
 |---|---|---|---|---|
-| Credential usage information (which projects reference a name) | No backend source; the roadmap makes it conditional; inventing data is forbidden | Not assigned | Backend read model or query over drafts and versions | No |
+| Credential usage information (which workflows reference a name) | No backend source; the roadmap makes it conditional; inventing data is forbidden | Not assigned | Backend read model or query over drafts and versions | No |
 | Separate confirmation for rotation (Finding 4) | Product judgement under `frontend/AGENTS.md` §49; not a roadmap criterion | Phase 23 or 24 (hardening/UX), or on request | None | No |
 | Playwright coverage of `/credentials` | Not part of this phase's test plan | Phase 26 (E2E Testing) | Full stack with an encryption key configured | No |
 
 ## 20. Known Limitations
 
-- Usage information is not shown, so deleting a credential that projects still reference is not blocked or listed. The confirm text warns about it in general terms.
+- Usage information is not shown, so deleting a credential that workflows still reference is not blocked or listed. The confirm text warns about it in general terms.
 - Pagination offset is component state, not URL state: a reload returns to page 1. This is intentional, because nothing about credentials should go into the URL.
 - A failed create or update keeps the typed value in the input and in mutation variables until the dialog closes (§8.5).
 - Screen-reader output for the masked Value cell is not reliable (Finding 5).
@@ -416,7 +416,7 @@ None. There are no new or changed dependencies, environment variables, Docker or
 - **Name and kind are read-only after creation**, matching `CredentialService.update` (name is the reference identity).
 - **403 is a page state, not a generic error.** Members are told why and that references still work.
 - **No usage data or provider field was invented**, per the "no invented data" rule; recorded as deferred.
-- **Pagination is not kept in the URL** on this page, unlike Projects: least exposure, small lists.
+- **Pagination is not kept in the URL** on this page, unlike Workflows: least exposure, small lists.
 
 ## 23. Repository / Git State
 

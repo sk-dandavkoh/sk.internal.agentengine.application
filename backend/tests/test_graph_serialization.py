@@ -10,8 +10,8 @@ import json
 import pytest
 
 from akasha.domain.graph import Edge, Graph, NodeInstance, Position
-from akasha.domain.project import Dependency
 from akasha.domain.trigger import Trigger, TriggerType
+from akasha.domain.workflow import Dependency
 from akasha.errors import DomainValidationError
 from akasha.infrastructure.graph_serialization import (
     deserialize_dependency,

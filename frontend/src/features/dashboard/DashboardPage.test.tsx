@@ -33,8 +33,8 @@ function counts(overrides: Partial<Record<(typeof STATUSES)[number], number>>) {
 function execution(id: string, overrides: Record<string, unknown> = {}) {
     return {
         id,
-        project_id: 'proj_1',
-        project_name: 'Invoice triage',
+        workflow_id: 'wf_1',
+        workflow_name: 'Invoice triage',
         version: 2,
         status: 'completed',
         trigger_type: 'manual',
@@ -48,7 +48,7 @@ function execution(id: string, overrides: Record<string, unknown> = {}) {
     }
 }
 
-function project(id: string, name: string, status = 'published') {
+function workflow(id: string, name: string, status = 'published') {
     return {
         id,
         name,
@@ -89,8 +89,8 @@ function report(
     return {
         schema_version: 1,
         execution_id: executionId,
-        project: {
-            id: 'proj_1',
+        workflow: {
+            id: 'wf_1',
             name: 'Invoice triage',
             version: 2,
             version_description: '',
@@ -184,8 +184,8 @@ function populated(): Record<string, Handler> {
                 }),
                 execution('exec_q', {
                     status: 'queued',
-                    project_id: 'proj_unknown',
-                    project_name: 'Beyond the project sample',
+                    workflow_id: 'wf_unknown',
+                    workflow_name: 'Beyond the workflow sample',
                     started_at: null,
                     finished_at: null,
                 }),
@@ -194,12 +194,12 @@ function populated(): Record<string, Handler> {
             recent: [execution('exec_ok')],
         }),
         'GET /system/status': () => ok(system()),
-        'GET /projects': () =>
+        'GET /workflows': () =>
             ok(
                 page([
-                    project('proj_1', 'Invoice triage'),
-                    project('proj_2', 'Weekly digest', 'draft'),
-                    project('proj_3', 'Lead enrichment'),
+                    workflow('wf_1', 'Invoice triage'),
+                    workflow('wf_2', 'Weekly digest', 'draft'),
+                    workflow('wf_3', 'Lead enrichment'),
                 ]),
             ),
     }
@@ -243,9 +243,9 @@ describe('Dashboard', () => {
         expect(running).toHaveTextContent('Invoice triage')
         expect(running).toHaveTextContent('Running')
         expect(running).toHaveTextContent('In progress')
-        // The listing names the project itself, even one outside the
-        // dashboard's project sample; unstarted runs say so.
-        expect(queued).toHaveTextContent('Beyond the project sample')
+        // The listing names the workflow itself, even one outside the
+        // dashboard's workflow sample; unstarted runs say so.
+        expect(queued).toHaveTextContent('Beyond the workflow sample')
         expect(queued).toHaveTextContent('Queued')
         expect(queued).toHaveTextContent('Not started')
 
@@ -264,16 +264,16 @@ describe('Dashboard', () => {
         expect(await systemCard.findByText('Ready')).toBeInTheDocument()
         expect(systemCard.getByText('0.27.0')).toBeInTheDocument()
 
-        const projects = card('Projects')
-        expect(await projects.findByText('Total')).toBeInTheDocument()
+        const workflows = card('Workflows')
+        expect(await workflows.findByText('Total')).toBeInTheDocument()
         expect(
-            projects.getByText('Total').nextElementSibling,
+            workflows.getByText('Total').nextElementSibling,
         ).toHaveTextContent('3')
         expect(
-            projects.getByText('Published').nextElementSibling,
+            workflows.getByText('Published').nextElementSibling,
         ).toHaveTextContent('2')
         expect(
-            projects.getByText('Draft').nextElementSibling,
+            workflows.getByText('Draft').nextElementSibling,
         ).toHaveTextContent('1')
 
         // The lists ask the backend for exactly what they show.
@@ -294,7 +294,7 @@ describe('Dashboard', () => {
             'GET /executions/status-counts': pending,
             'GET /executions': pending,
             'GET /system/status': pending,
-            'GET /projects': pending,
+            'GET /workflows': pending,
         })
 
         for (const label of [
@@ -303,7 +303,7 @@ describe('Dashboard', () => {
             'Loading recent failures…',
             'Loading recent executions…',
             'Loading system status…',
-            'Loading projects…',
+            'Loading workflows…',
         ])
             expect(await screen.findByText(label)).toHaveAttribute(
                 'role',
@@ -320,7 +320,7 @@ describe('Dashboard', () => {
             'GET /executions/status-counts': () => ok(counts({})),
             'GET /executions': executionsBy({}),
             'GET /system/status': () => ok(system()),
-            'GET /projects': () => ok(page([])),
+            'GET /workflows': () => ok(page([])),
         })
 
         expect(
@@ -344,8 +344,8 @@ describe('Dashboard', () => {
             }),
         ).toBeInTheDocument()
         expect(
-            await card('Projects').findByRole('heading', {
-                name: 'No projects yet',
+            await card('Workflows').findByRole('heading', {
+                name: 'No workflows yet',
             }),
         ).toBeInTheDocument()
         expect(screen.queryByRole('table')).not.toBeInTheDocument()
@@ -366,7 +366,7 @@ describe('Dashboard', () => {
         expect(alert).toHaveTextContent('Could not load system status')
         expect(alert).toHaveTextContent('The engine failed.')
         // The other sections still render their data.
-        expect(await card('Projects').findByText('Total')).toBeInTheDocument()
+        expect(await card('Workflows').findByText('Total')).toBeInTheDocument()
 
         systemDown = false
         fireEvent.click(systemCard.getByRole('button', { name: 'Retry' }))
@@ -531,26 +531,26 @@ describe('Dashboard', () => {
         expect(countCalls).toBeGreaterThan(1)
     })
 
-    it('notes when a list is truncated or project counts are partial', async () => {
+    it('notes when a list is truncated or workflow counts are partial', async () => {
         await renderDashboard({
             ...populated(),
             'GET /executions': () => ok(page([execution('exec_1')], true)),
-            'GET /projects': () => ok(page([project('proj_1', 'A')], true)),
+            'GET /workflows': () => ok(page([workflow('wf_1', 'A')], true)),
         })
 
         expect(
             await card('Recent executions').findByText('Showing the newest 1.'),
         ).toBeInTheDocument()
-        const projects = card('Projects')
-        expect(await projects.findByText('1+')).toBeInTheDocument()
+        const workflows = card('Workflows')
+        expect(await workflows.findByText('1+')).toBeInTheDocument()
         expect(
-            projects.getByText('Status counts cover the first 1 projects.'),
+            workflows.getByText('Status counts cover the first 1 workflows.'),
         ).toBeInTheDocument()
     })
 
     it.each([
         ['Recent executions', 'All executions', '/executions', 'Executions'],
-        ['Projects', 'All projects', '/projects', 'Projects'],
+        ['Workflows', 'All workflows', '/workflows', 'Workflows'],
     ])('%s links to %s', async (cardName, linkName, path, heading) => {
         const { router } = await renderDashboard(populated())
 
@@ -562,19 +562,19 @@ describe('Dashboard', () => {
         expect(router.state.location.pathname).toBe(path)
     })
 
-    it('offers the way to create a first project', async () => {
+    it('offers the way to create a first workflow', async () => {
         const { router } = await renderDashboard({
             ...populated(),
-            'GET /projects': () => ok(page([])),
+            'GET /workflows': () => ok(page([])),
         })
 
         fireEvent.click(
-            await card('Projects').findByRole('link', {
-                name: 'Go to Projects',
+            await card('Workflows').findByRole('link', {
+                name: 'Go to Workflows',
             }),
         )
 
-        await screen.findByRole('heading', { level: 1, name: 'Projects' })
-        expect(router.state.location.pathname).toBe('/projects')
+        await screen.findByRole('heading', { level: 1, name: 'Workflows' })
+        expect(router.state.location.pathname).toBe('/workflows')
     })
 })

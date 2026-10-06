@@ -26,7 +26,7 @@ Supporting pieces:
   `Execution.revision`, and one rehydration invariant.
 
 **Resulting system state:**
-- A published `ProjectVersion` can be turned into a QUEUED `Execution` and
+- A published `WorkflowVersion` can be turned into a QUEUED `Execution` and
   run to a terminal state (COMPLETED, FAILED, CANCELLED or TIMEOUT).
 - Every state change is persisted in PostgreSQL through CAS writes.
 - All of this is proven only by tests that inject a node catalog. There is
@@ -42,7 +42,7 @@ Supporting pieces:
   17 runtime unit and 5 domain tests.
 - ruff, ruff format, mypy (strict) and `uv build` all pass.
 
-**Acceptance criterion:** "A published Project Version can be executed from
+**Acceptance criterion:** "A published Workflow Version can be executed from
 start to finish" is **PASS**, with integration evidence (§14). The phase
 leaves limitations that belong to other phases' scope but constrain the
 current system:
@@ -70,7 +70,7 @@ Roadmap `/docs/roadmap-backend.md` §12 "Phase 08 — Execution Runtime":
 > Implement execution persistence.
 > Tests: A → B → C; A → B, A → C; A → B, A → C → D; node failure; invalid
 > graph; parallel execution.
-> Acceptance: A published Project Version can be executed from start to
+> Acceptance: A published Workflow Version can be executed from start to
 > finish.
 
 The roadmap's Phase 08 prompt (§37) adds: use the existing Node contract.
@@ -149,9 +149,9 @@ It never raises for node behaviour. Only `CancelledError` propagates.
 - `executions.py` (new):
   - `ExecutionNotFoundError` (`EXECUTION_NOT_FOUND`, 404) and
     `load_execution(uow, id)`.
-  - `ExecutionService.create_execution(project_id, version, *, metadata,
+  - `ExecutionService.create_execution(workflow_id, version, *, metadata,
     timeout_policy)` loads the pinned version (or raises
-    `ProjectVersionNotFoundError`), then calls `Execution.create`, then
+    `WorkflowVersionNotFoundError`), then calls `Execution.create`, then
     `enqueue()`, saves and commits, and logs `execution_created`.
   - `ExecutionService.get_execution(id)`.
 - `persistence.py`: new `ExecutionRepository` protocol (`get`, `save`
@@ -258,7 +258,7 @@ It never raises for node behaviour. Only `CancelledError` propagates.
 ### 5.2 CAS persistence as the cross-process safety net
 
 - **Decision:** `ExecutionRepository.save` is a compare-and-swap on
-  `executions.revision`, the same pattern as `ProjectRepository.save`.
+  `executions.revision`, the same pattern as `WorkflowRepository.save`.
 - **Context:** there are no leases or ownership records yet (Phase 22).
   Two runtimes, or a runtime and an out-of-process cancel, can target the
   same execution.
@@ -287,7 +287,7 @@ It never raises for node behaviour. Only `CancelledError` propagates.
 - **Consequences:**
   - An invalid snapshot yields FAILED with `EXECUTION_GRAPH_INVALID`
     before any node starts, and `started_at` stays `None`.
-  - Phase 09 must supply the same catalog to `ProjectService` and to
+  - Phase 09 must supply the same catalog to `WorkflowService` and to
     `ExecutionRuntime`.
 
 ### 5.4 Fail-fast failure strategy
@@ -352,15 +352,15 @@ refine it.
 - The Phase 07 action tables are untouched.
 - All 255 Phase 07 domain tests still pass.
 
-### Database (migration `0003_executions`, revises `0002_project_revision`)
+### Database (migration `0003_executions`, revises `0002_workflow_revision`)
 
 **`executions`**
 
 | Column | Type | Notes |
 |---|---|---|
 | `id` | String, PK | |
-| `project_id` | String, NOT NULL | |
-| `project_version` | Integer, NOT NULL | |
+| `workflow_id` | String, NOT NULL | |
+| `workflow_version` | Integer, NOT NULL | |
 | `status` | String, NOT NULL | |
 | `metadata` | JSONB | `trigger_type`, `trigger_id`, `correlation_id`, `engine_version` |
 | `retry_policy` | JSONB | `max_attempts`, `initial_backoff_s`, `backoff_multiplier`, `max_backoff_s`, sorted `retryable_kinds` |
@@ -371,12 +371,12 @@ refine it.
 | `created_at`, `started_at`, `finished_at` | timestamptz | |
 
 Constraints and indexes:
-- `fk_executions_project_version`: `(project_id, project_version)` →
-  `project_versions(project_id, version)`, `ON DELETE RESTRICT`. It
-  references the existing unique index `uq_project_versions_project_version`.
+- `fk_executions_workflow_version`: `(workflow_id, workflow_version)` →
+  `workflow_versions(workflow_id, version)`, `ON DELETE RESTRICT`. It
+  references the existing unique index `uq_workflow_versions_workflow_version`.
 - `ck_executions_status`: `status` must be one of the nine enum values.
 - `ck_executions_revision_positive`: `revision >= 1`.
-- Index `ix_executions_project_id`.
+- Index `ix_executions_workflow_id`.
 
 **`node_executions`**
 
@@ -420,9 +420,9 @@ Constraints and indexes:
 
 **Python-level contracts (new):**
 
-`ExecutionService.create_execution(project_id, version, *, metadata=None, timeout_policy=None) -> Execution`
+`ExecutionService.create_execution(workflow_id, version, *, metadata=None, timeout_policy=None) -> Execution`
 - Returns a QUEUED execution with all nodes PENDING and `revision == 1`.
-- Errors: `ProjectVersionNotFoundError` (404).
+- Errors: `WorkflowVersionNotFoundError` (404).
 - Retry policy is always the default (`max_attempts = 1`).
 
 `ExecutionService.get_execution(id) -> Execution`
@@ -449,12 +449,12 @@ Constraints and indexes:
 
 **Node contract use** (`NodeExecutionContext`, unchanged shape; the fields
 are populated as follows):
-- `project_version`: `str(version.version)`.
+- `workflow_version`: `str(version.version)`.
 - `config`: a deep copy.
 - `inputs`: resolved and deep-copied.
 - `logger`: `logging.getLogger("akasha.nodes.<node_type>")`.
 - `is_cancelled`: `_CancelRequest.should_stop`.
-- `runtime_metadata`: `project_version_id`, `engine_version`, `attempt`.
+- `runtime_metadata`: `workflow_version_id`, `engine_version`, `attempt`.
 - `credentials`: `None` (Phase 13).
 
 **New stable error codes persisted in `ExecutionError.code`:**
@@ -587,7 +587,7 @@ exception message).
   - the terminal state.
 - `SqlAlchemyExecutionRepository.get` reads the execution row with
   `SELECT ... FOR SHARE`, then the node rows ordered by `node_id`, then the
-  pinned `ProjectVersion` through the version repository.
+  pinned `WorkflowVersion` through the version repository.
 
 ### Time and identity
 - The runtime takes an injectable `clock` (default `utcnow`) for all domain
@@ -601,7 +601,7 @@ exception message).
 `akasha.runtime` logs `execution_started`, `node_started`,
 `node_completed`, `node_failed`, `execution_completed`, `execution_failed`,
 `execution_cancelled` and `execution_timed_out`.
-- Fields: `execution_id`, `project_id`, `project_version`,
+- Fields: `execution_id`, `workflow_id`, `workflow_version`,
   `correlation_id`, `status`, and `node_id`, `error_code` or `error_kind`
   where applicable.
 - Never logged: inputs, outputs or config values.
@@ -642,7 +642,7 @@ exception message).
   cancelled immediately.
 - **Resolution:** FIXED (B2/B3).
 
-### F5: PostgreSQL FK can reference the existing unique *index* on `project_versions(project_id, version)`
+### F5: PostgreSQL FK can reference the existing unique *index* on `workflow_versions(workflow_id, version)`
 - **Impact:** LOW.
 - **Resolution:** FIXED (used as designed).
 - **Notes:** no extra unique constraint was needed. Verified by the
@@ -666,12 +666,12 @@ exception message).
   `request_cancellation`, `cancel`, `time_out`, `fail`, `complete`).
   Verified by grep; no direct `NodeExecution` mutators are used.
 
-### F8: `NodeExecutionContext.project_version` is a string with ambiguous semantics
+### F8: `NodeExecutionContext.workflow_version` is a string with ambiguous semantics
 - **Impact:** LOW.
 - **Resolution:** OPEN (documented).
 - **Notes:** the Phase 03 example used `"1.0.0"`. The runtime passes the
   version number (`"1"`) and exposes the version id via
-  `runtime_metadata["project_version_id"]`.
+  `runtime_metadata["workflow_version_id"]`.
 
 ### F9: ruff `ASYNC109` rejects an async function parameter named `timeout`
 - **Impact:** LOW (tooling).
@@ -844,7 +844,7 @@ Other tests, by area:
 **Existing integration suite:**
 - `test_persistence.py`: the migration up/down/up test now expects `0003`
   and the new tables.
-- `test_project_service.py` and `test_projects_api.py`: unchanged.
+- `test_workflow_service.py` and `test_workflows_api.py`: unchanged.
 - Total: 121 integration tests pass.
 
 ### Infrastructure Tests
@@ -926,7 +926,7 @@ No `noqa` and no `type: ignore` were added in any new or changed file.
 
 | Acceptance Criterion | Status | Evidence |
 |---|---|---|
-| A published Project Version can be executed from start to finish | PASS | Every runtime integration test publishes via `ProjectService.publish_project`, creates via `ExecutionService.create_execution`, runs via `ExecutionRuntime.run` and asserts COMPLETED from a fresh DB read. Also `test_upgrade_from_0002_…` for a pre-existing version. Caveat: only with an injected node catalog; production has no catalog or caller (L8), which is Phase 09/22 scope and does not block this criterion |
+| A published Workflow Version can be executed from start to finish | PASS | Every runtime integration test publishes via `WorkflowService.publish_workflow`, creates via `ExecutionService.create_execution`, runs via `ExecutionRuntime.run` and asserts COMPLETED from a fresh DB read. Also `test_upgrade_from_0002_…` for a pre-existing version. Caveat: only with an injected node catalog; production has no catalog or caller (L8), which is Phase 09/22 scope and does not block this criterion |
 | Implement GraphLoader | PASS | `runtime/plan.py::load_plan` |
 | Implement GraphValidator (integration) | PASS | `load_plan` calls `validate_graph`; `test_graph_invalid_at_runtime_…`, `test_invalid_graph_is_rejected_…` |
 | Implement ExecutionRuntime | PASS | `runtime/runtime.py::ExecutionRuntime` |
@@ -986,7 +986,7 @@ scope, but they constrain the resulting system.
   - Nodes are still trusted, in-process code: no sandbox (backend AGENTS
     §24).
 - **Snapshot integrity:**
-  - Executions pin `(project_id, version)` with a `RESTRICT` FK.
+  - Executions pin `(workflow_id, version)` with a `RESTRICT` FK.
   - Draft edits and later publishes cannot affect a queued or running
     execution (tested).
 - **Input validation:** node inputs and outputs are validated against the
@@ -1109,7 +1109,7 @@ Documentation to update in future phases:
   - No API endpoint and no bootstrap wiring.
   - The production catalog is empty, so executions can only be run by code
     that constructs `ExecutionRuntime` itself (tests today).
-- **L9 (context field):** `NodeExecutionContext.project_version` carries
+- **L9 (context field):** `NodeExecutionContext.workflow_version` carries
   the version number as a string (F8).
 - **L10 (not thread-safe):** runtime instance state (`_active`) supports a
   single event loop only.
@@ -1248,7 +1248,7 @@ Documentation to update in future phases:
 
 **Phase 09 (Node Registry + Built-in Nodes) can assume:**
 - **Catalog:** `ExecutionRuntime(uow, catalog)` expects
-  `catalog: Mapping[node_type_id, type[Node]]`. `ProjectService` expects
+  `catalog: Mapping[node_type_id, type[Node]]`. `WorkflowService` expects
   `Mapping[node_type_id, NodeDefinition]`. The registry should produce both
   from one source so that publish-time and run-time validation agree. The
   runtime re-validates every run.

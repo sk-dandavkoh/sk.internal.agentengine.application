@@ -23,8 +23,8 @@ from websockets.typing import Origin
 from akasha import __version__
 from akasha.api.app import create_app
 from akasha.application.executions import ExecutionService
-from akasha.application.projects import ProjectService
 from akasha.application.triggers import TriggerRegistry, TriggerService
+from akasha.application.workflows import WorkflowService
 from akasha.bootstrap import Container
 from akasha.config import Settings
 from akasha.domain.graph_validation import port_compatibility
@@ -47,7 +47,7 @@ from tests.integration.test_triggers_api import assert_error, publish_with
 pytestmark = pytest.mark.usefixtures("clean_db")
 
 UNKNOWN_EXECUTION = "exec_" + "0" * 32
-UNKNOWN_PROJECT = "proj_" + "0" * 32
+UNKNOWN_WORKFLOW = "wf_" + "0" * 32
 SECRET = "sk-live-0123456789abcdefghijklmnop"
 
 
@@ -93,9 +93,9 @@ class Env:
             headers=headers,
         )
 
-    async def run(self, project_id: str, version: int, **input: Any) -> str:
+    async def run(self, workflow_id: str, version: int, **input: Any) -> str:
         created = await self.client.post(
-            f"/api/v1/projects/{project_id}/versions/{version}/execute", json=input
+            f"/api/v1/workflows/{workflow_id}/versions/{version}/execute", json=input
         )
         assert created.status_code == 201, created.text
         execution_id: str = created.json()["id"]
@@ -105,7 +105,7 @@ class Env:
 
 @pytest.fixture
 async def env(
-    database: Database, project_service: ProjectService
+    database: Database, workflow_service: WorkflowService
 ) -> AsyncIterator[Env]:
     def uow() -> SqlAlchemyUnitOfWork:
         return SqlAlchemyUnitOfWork(database)
@@ -122,7 +122,7 @@ async def env(
         settings=settings,
         nodes=create_builtin_registry(),
         database=database,
-        projects=project_service,
+        workflows=workflow_service,
         executions=executions,
         runtime=runtime,
         triggers=TriggerService(executions),
@@ -144,18 +144,18 @@ async def env(
 
 async def test_list_executions_newest_first_and_paginated(env: Env) -> None:
     pid, version, _ = await publish_with(env.client, [])
-    assert (await env.client.get(f"/api/v1/projects/{pid}/executions")).json() == {
+    assert (await env.client.get(f"/api/v1/workflows/{pid}/executions")).json() == {
         "items": [],
         "page": {"offset": 0, "limit": 50, "has_more": False},
     }
     ids = [await env.run(pid, version) for _ in range(3)]
 
     first = (
-        await env.client.get(f"/api/v1/projects/{pid}/executions", params={"limit": 2})
+        await env.client.get(f"/api/v1/workflows/{pid}/executions", params={"limit": 2})
     ).json()
     second = (
         await env.client.get(
-            f"/api/v1/projects/{pid}/executions", params={"offset": 2, "limit": 2}
+            f"/api/v1/workflows/{pid}/executions", params={"offset": 2, "limit": 2}
         )
     ).json()
 
@@ -174,12 +174,12 @@ async def test_list_executions_newest_first_and_paginated(env: Env) -> None:
 async def test_list_executions_filter_by_version(env: Env) -> None:
     """Which runs used which immutable version (frontend Phase 12)."""
     pid, v1, revision = await publish_with(env.client, [])
-    _, v2, _ = await publish_with(env.client, [], project_id=pid, revision=revision)
+    _, v2, _ = await publish_with(env.client, [], workflow_id=pid, revision=revision)
     old = await env.run(pid, v1)
     new = [await env.run(pid, v2) for _ in range(2)]
 
     def listed(params: dict[str, int]) -> Any:
-        return env.client.get(f"/api/v1/projects/{pid}/executions", params=params)
+        return env.client.get(f"/api/v1/workflows/{pid}/executions", params=params)
 
     of_v1 = (await listed({"version": v1})).json()["items"]
     assert [(e["id"], e["version"]) for e in of_v1] == [(old, v1)]
@@ -192,26 +192,26 @@ async def test_list_executions_filter_by_version(env: Env) -> None:
     assert (await listed({"version": 0})).status_code == 422
 
 
-async def test_list_executions_rejects_bad_pages_and_unknown_projects(
+async def test_list_executions_rejects_bad_pages_and_unknown_workflows(
     env: Env,
 ) -> None:
     pid, _, _ = await publish_with(env.client, [])
     for params in ({"limit": 0}, {"limit": 101}, {"offset": -1}):
         response = await env.client.get(
-            f"/api/v1/projects/{pid}/executions", params=params
+            f"/api/v1/workflows/{pid}/executions", params=params
         )
         assert response.status_code == 422, params
     assert_error(
-        await env.client.get(f"/api/v1/projects/{UNKNOWN_PROJECT}/executions"),
+        await env.client.get(f"/api/v1/workflows/{UNKNOWN_WORKFLOW}/executions"),
         404,
-        "PROJECT_NOT_FOUND",
+        "WORKFLOW_NOT_FOUND",
     )
 
 
-# -- cross-project listing and counts ------------------------------------------
+# -- cross-workflow listing and counts ------------------------------------------
 
 
-async def test_recent_executions_span_projects_newest_first(env: Env) -> None:
+async def test_recent_executions_span_workflows_newest_first(env: Env) -> None:
     assert (await env.client.get("/api/v1/executions")).json() == {
         "items": [],
         "page": {"offset": 0, "limit": 50, "has_more": False},
@@ -227,33 +227,33 @@ async def test_recent_executions_span_projects_newest_first(env: Env) -> None:
 
     items = first["items"] + second["items"]
     assert [e["id"] for e in items] == ids[::-1]
-    assert [e["project_id"] for e in items] == [a, b, a]
+    assert [e["workflow_id"] for e in items] == [a, b, a]
     assert (first["page"]["has_more"], second["page"]["has_more"]) == (True, False)
 
 
-async def test_listings_name_each_project_by_its_current_name(env: Env) -> None:
+async def test_listings_name_each_workflow_by_its_current_name(env: Env) -> None:
     pid, version, _ = await publish_with(env.client, [])
     execution_id = await env.run(pid, version)
-    project = (await env.client.get(f"/api/v1/projects/{pid}")).json()
+    workflow = (await env.client.get(f"/api/v1/workflows/{pid}")).json()
     renamed = await env.client.put(
-        f"/api/v1/projects/{pid}",
+        f"/api/v1/workflows/{pid}",
         json={
-            "expected_revision": project["revision"],
+            "expected_revision": workflow["revision"],
             "name": "Renamed after the run",
-            "draft": project["draft"],
+            "draft": workflow["draft"],
         },
     )
     assert renamed.status_code == 200, renamed.text
 
-    for path in ("/api/v1/executions", f"/api/v1/projects/{pid}/executions"):
+    for path in ("/api/v1/executions", f"/api/v1/workflows/{pid}/executions"):
         (item,) = (await env.client.get(path)).json()["items"]
-        assert (item["id"], item["project_name"]) == (
+        assert (item["id"], item["workflow_name"]) == (
             execution_id,
             "Renamed after the run",
         )
     # Single-execution responses (and the public webhook) never carry it.
     detail = (await env.client.get(f"/api/v1/executions/{execution_id}")).json()
-    assert "project_name" not in detail
+    assert "workflow_name" not in detail
 
 
 async def test_recent_executions_filter_by_status(env: Env) -> None:
@@ -261,7 +261,7 @@ async def test_recent_executions_filter_by_status(env: Env) -> None:
     completed = await env.run(pid, version)
     failed = await env.run(pid, version, fail=True)
     queued = (
-        await env.client.post(f"/api/v1/projects/{pid}/versions/{version}/execute")
+        await env.client.post(f"/api/v1/workflows/{pid}/versions/{version}/execute")
     ).json()["id"]
 
     async def listed(*statuses: str) -> list[str]:
@@ -310,7 +310,7 @@ async def test_status_counts_cover_every_status(env: Env) -> None:
     assert sum(counts["counts"].values()) == 3
 
 
-async def test_members_see_only_their_projects_executions(env: Env) -> None:
+async def test_members_see_only_their_workflows_executions(env: Env) -> None:
     admin_pid, admin_version, _ = await publish_with(env.client, [])
     await env.run(admin_pid, admin_version, fail=True)
     member_headers = await env.kit.member_headers(env.admin, "member")
@@ -331,15 +331,15 @@ async def test_members_see_only_their_projects_executions(env: Env) -> None:
         counts = (await member.get("/api/v1/executions/status-counts")).json()
 
     assert [e["id"] for e in listed] == [own]
-    assert listed[0]["project_name"] == "t"
+    assert listed[0]["workflow_name"] == "t"
     assert counts["counts"]["completed"] == 1
     assert counts["counts"]["failed"] == 0
-    # The admin still sees every project's runs.
+    # The admin still sees every workflow's runs.
     everything = (await env.client.get("/api/v1/executions")).json()["items"]
     assert len(everything) == 2
 
 
-async def test_cross_project_routes_require_a_session(env: Env) -> None:
+async def test_cross_workflow_routes_require_a_session(env: Env) -> None:
     async with env.client_with({}) as anonymous:
         for path in ("/api/v1/executions", "/api/v1/executions/status-counts"):
             assert_error(await anonymous.get(path), 401, "AUTHENTICATION_REQUIRED")
@@ -565,7 +565,7 @@ async def test_live_streams_a_running_execution_until_it_ends(
 ) -> None:
     pid, version, _ = await publish_with(env.client, [])
     created = await env.client.post(
-        f"/api/v1/projects/{pid}/versions/{version}/execute", json={}
+        f"/api/v1/workflows/{pid}/versions/{version}/execute", json={}
     )
     execution_id = created.json()["id"]
 
@@ -669,7 +669,7 @@ async def test_live_server_shutdown_closes_open_streams_for_reconnect(
     a close code it treats as transient (it reconnects to the next server)."""
     pid, version, _ = await publish_with(env.client, [])
     created = await env.client.post(
-        f"/api/v1/projects/{pid}/versions/{version}/execute", json={}
+        f"/api/v1/workflows/{pid}/versions/{version}/execute", json={}
     )
     ws = await _subscribe(live_server.url, created.json()["id"], _token(env.admin))
     await _frame(ws)  # subscribed
@@ -687,7 +687,7 @@ async def test_live_closes_when_the_session_ends_mid_stream(
 ) -> None:
     pid, version, _ = await publish_with(env.client, [])
     created = await env.client.post(
-        f"/api/v1/projects/{pid}/versions/{version}/execute", json={}
+        f"/api/v1/workflows/{pid}/versions/{version}/execute", json={}
     )
     execution_id = created.json()["id"]
     session = await env.kit.login("admin")
@@ -774,7 +774,7 @@ async def test_live_accepts_the_proxy_forwarded_host(env: Env, live_url: str) ->
 async def test_cancel_queued_execution_then_conflict(env: Env) -> None:
     pid, version, _ = await publish_with(env.client, [])
     created = await env.client.post(
-        f"/api/v1/projects/{pid}/versions/{version}/execute", json={}
+        f"/api/v1/workflows/{pid}/versions/{version}/execute", json={}
     )
     execution_id = created.json()["id"]
     url = f"/api/v1/executions/{execution_id}/cancel"
@@ -783,7 +783,7 @@ async def test_cancel_queued_execution_then_conflict(env: Env) -> None:
         "queued",
         True,
     )
-    listed = (await env.client.get(f"/api/v1/projects/{pid}/executions")).json()
+    listed = (await env.client.get(f"/api/v1/workflows/{pid}/executions")).json()
     assert listed["items"][0]["cancellable"] is True
 
     cancelled = await env.client.post(url, json={"reason": "not needed"})

@@ -60,7 +60,7 @@ execution, partially persisted state.
 
 **Acceptance criteria.** The single roadmap criterion is satisfied, with
 evidence in §14. Remaining limitations are listed in §20. The most
-relevant: there is no configuration surface (API, project or engine
+relevant: there is no configuration surface (API, workflow or engine
 default) for retry and timeout policies.
 
 **Phase Status:** COMPLETE WITH LIMITATIONS
@@ -302,7 +302,7 @@ save and by the owner's periodic heartbeat. Staleness is judged with
 
 **Context.** A stale execution has to be detected. Workers already have
 Redis registrations with a TTL (Phase 22), but CLI in-process runs
-(`akasha project run`) have no worker registration, and Redis is optional.
+(`akasha workflow run`) have no worker registration, and Redis is optional.
 
 **Chosen Approach.** A database column, a CAS heartbeat, and a stale query
 that compares against the database clock.
@@ -545,7 +545,7 @@ removed that test.
 No production caller passes `timeout_policy` (a pre-existing gap), and
 there was no `retry_policy` parameter at all. This phase added the
 parameter to `ExecutionService.create_execution`. However, API, trigger,
-project and engine-default configuration still do not exist. In a running
+workflow and engine-default configuration still do not exist. In a running
 engine, every execution therefore uses the defaults: no retries and no
 timeouts.
 
@@ -613,7 +613,7 @@ built-ins.
 | Problem | Root cause | Fix | Regression test | Area |
 |---|---|---|---|---|
 | mypy: `FakeExecutions` could not be instantiated | New required methods on the `ExecutionRepository` protocol | Implemented `heartbeat`/`list_stale`/`claim_stale` in the fake | `mypy .` passes | tests |
-| 2 reliability tests failed with `ProjectValidationFailedError` | Test fixtures used single-node graphs, which publish validation rejects | Changed them to two-node graphs | the tests themselves | tests |
+| 2 reliability tests failed with `WorkflowValidationFailedError` | Test fixtures used single-node graphs, which publish validation rejects | Changed them to two-node graphs | the tests themselves | tests |
 | Reliability tests: "fixture 'h' not found" | The fixture was imported from the wrong place (it lives in each test module) | Local `h` fixture | the tests themselves | tests |
 | Lint: E501, RUF059, ASYNC110 (a polling `while` with a condition), I001 | Authoring | Reformatted; the polling loop was restructured with a bounded timeout | `ruff check .` | src/tests |
 | mypy: `Execution(**dict[str, object])` in a domain test | Untyped kwargs | Typed helper `rehydrate()` | `mypy .` | tests |
@@ -884,7 +884,7 @@ Should be updated in a future phase:
 
 | What | Why deferred | Intended phase | Affects Phase 23 completion |
 |---|---|---|---|
-| Retry/timeout configuration surface (API request fields, trigger/project settings, engine defaults) | Not in Phase 23 scope; needs product/API design | Phase 24 (limits/defaults) or a project-settings phase | No; enforcement exists and is reachable via `ExecutionService` |
+| Retry/timeout configuration surface (API request fields, trigger/workflow settings, engine defaults) | Not in Phase 23 scope; needs product/API design | Phase 24 (limits/defaults) or a workflow-settings phase | No; enforcement exists and is reachable via `ExecutionService` |
 | Default node timeouts (architecture §132) | Resource limits phase | Phase 24 | No |
 | API idempotency keys for execution creation (§148) | Not in roadmap Phase 23 scope | Unassigned | No |
 | Audit of `has_side_effects` on built-in nodes | Found late (F7); outside the runtime change | Next backend phase touching nodes | No for the mechanism; YES for the correctness of recovery of affected nodes (§21) |
@@ -925,7 +925,7 @@ Should be updated in a future phase:
 | Issue | Impact | Severity | Area | Recommended next action | Target |
 |---|---|---|---|---|---|
 | `has_side_effects` classification (F7): `core.llm`/`core.web_search` are side-effect-free by declaration; plugins not reviewed | An interrupted LLM call is repeated (cost, repeated data transmission) | MEDIUM | nodes, plugins | Decide the LLM classification; add a contract test pinning the flag for effectful built-ins (`core.http`, `core.smtp` already `True`) | Next backend phase touching nodes |
-| No configuration surface for retry/timeout policies (F2) | Retries and timeouts are unusable from the API, triggers or CLI | MEDIUM | API, application | Design engine defaults + per-project/trigger policy fields | Phase 24 or later |
+| No configuration surface for retry/timeout policies (F2) | Retries and timeouts are unusable from the API, triggers or CLI | MEDIUM | API, application | Design engine defaults + per-workflow/trigger policy fields | Phase 24 or later |
 | No automatic recovery without Redis | Stale executions stay `RUNNING` in Redis-less installations | LOW | operations | Offer a CLI command or a scheduler-driven pass when no queue is configured | Unassigned |
 
 ---
@@ -1035,7 +1035,7 @@ None for Phase 23's acceptance criterion.
   - Metrics `akasha_node_retries_total`,
     `akasha_executions_recovered_total`
 - **Phase 24 (resource limits) should know:**
-  - Engine/project defaults for `TimeoutPolicy` and `RetryPolicy` are the
+  - Engine/workflow defaults for `TimeoutPolicy` and `RetryPolicy` are the
     natural place to close F2.
   - A max-retries limit must stay compatible with
     `INTERRUPTED_ATTEMPTS_LIMIT`.

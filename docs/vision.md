@@ -4,13 +4,13 @@
 
 Die AI Agent Orchestration Engine ist eine professionelle, self-hosted Plattform zur Entwicklung, Orchestrierung, Ausführung, Überwachung und Verwaltung modularer AI-Agent-Systeme.
 
-Die Plattform stellt eine zentrale Engine bereit, auf der Benutzer eigene AI-Anwendungen als Projects erstellen können.
+Die Plattform stellt eine zentrale Engine bereit, auf der Benutzer eigene AI-Anwendungen als Workflows erstellen können.
 
-Ein Project besteht aus standardisierten Nodes, die über einen visuellen Graph miteinander verbunden werden. Nodes können AI-Modelle, Agents, Tools, Datenquellen, externe APIs, Kontrolllogik, Kommunikationskanäle oder eigene Python-Implementierungen repräsentieren.
+Ein Workflow besteht aus standardisierten Nodes, die über einen visuellen Graph miteinander verbunden werden. Nodes können AI-Modelle, Agents, Tools, Datenquellen, externe APIs, Kontrolllogik, Kommunikationskanäle oder eigene Python-Implementierungen repräsentieren.
 
 Die Engine übernimmt dabei die Infrastruktur und Runtime:
 
-- Project-Verwaltung
+- Workflow-Verwaltung
 - Graph-Modellierung
 - Node Registry
 - Node-Ausführung
@@ -24,7 +24,7 @@ Die Engine übernimmt dabei die Infrastruktur und Runtime:
 - Metrics
 - Kosten- und Token-Tracking
 - Reporting
-- Project-Versionierung
+- Workflow-Versionierung
 - Import und Export
 - Plugin-System
 - API
@@ -34,7 +34,7 @@ Die Engine übernimmt dabei die Infrastruktur und Runtime:
 
 Die zentrale Idee ist:
 
-> Die Engine betreibt Agent-Systeme. Projects definieren Agent-Systeme. Nodes bilden die funktionalen Bausteine. Executions sind konkrete Ausführungen eines Project-Zustands.
+> Die Engine betreibt Agent-Systeme. Workflows definieren Agent-Systeme. Nodes bilden die funktionalen Bausteine. Executions sind konkrete Ausführungen eines Workflow-Zustands.
 
 ---
 
@@ -53,7 +53,7 @@ Benutzer müssen für ein neues Agentensystem nicht jedes Mal:
 - eigene Monitoring-Lösungen entwickeln,
 - eigene LLM-Abstraktionen implementieren,
 - eigene Retry-Mechanismen schreiben,
-- eigene Project-Konfigurationen definieren.
+- eigene Workflow-Konfigurationen definieren.
 
 Stattdessen sollen sie vorhandene Nodes kombinieren oder bei Bedarf eigene Nodes entwickeln.
 
@@ -70,7 +70,7 @@ Nicht-technische Benutzer sollen vorhandene Nodes über den visuellen Editor kom
 Die Plattform basiert auf vier zentralen Konzepten:
 
 1. Engine
-2. Project
+2. Workflow
 3. Node
 4. Execution
 
@@ -82,7 +82,7 @@ Sie stellt bereit:
 
 - Runtime
 - API
-- Project Management
+- Workflow Management
 - Node Registry
 - Plugin System
 - Scheduler
@@ -94,17 +94,17 @@ Sie stellt bereit:
 - Persistence
 - WebSocket Events
 
-Die Engine ist nicht an ein einzelnes Project gebunden.
+Die Engine ist nicht an ein einzelnes Workflow gebunden.
 
-Eine Installation kann gleichzeitig viele unterschiedliche Projects verwalten und ausführen.
+Eine Installation kann gleichzeitig viele unterschiedliche Workflows verwalten und ausführen.
 
 ---
 
-## 3.2 Project
+## 3.2 Workflow
 
-Ein Project ist eine in sich logisch gekapselte Agent-Anwendung.
+Ein Workflow ist eine in sich logisch gekapselte Agent-Anwendung.
 
-Ein Project beschreibt ein konkretes Problem oder einen konkreten Geschäftsprozess.
+Ein Workflow beschreibt ein konkretes Problem oder einen konkreten Geschäftsprozess.
 
 Beispiele:
 
@@ -120,13 +120,13 @@ Beispiele:
 - Reporting
 - automatisierte Backoffice-Prozesse
 
-Ein Project besitzt einen Graph aus Nodes und Connections.
+Ein Workflow besitzt einen Graph aus Nodes und Connections.
 
-Projects werden durch die Engine ausgeführt.
+Workflows werden durch die Engine ausgeführt.
 
-Ein Project muss in v1 nicht unabhängig von der Engine deploybar sein.
+Ein Workflow muss in v1 nicht unabhängig von der Engine deploybar sein.
 
-Die Engine ist die Runtime für Projects.
+Die Engine ist die Runtime für Workflows.
 
 ---
 
@@ -170,13 +170,13 @@ Nodes müssen dem Node Contract der Engine entsprechen.
 
 ## 3.4 Execution
 
-Eine Execution ist eine konkrete Ausführung eines Project-Version-Snapshots.
+Eine Execution ist eine konkrete Ausführung eines Workflow-Version-Snapshots.
 
 Eine Execution besitzt unter anderem:
 
 - eindeutige ID
-- Project-ID
-- Project-Version
+- Workflow-ID
+- Workflow-Version
 - Trigger
 - Status
 - Startzeit
@@ -189,7 +189,7 @@ Eine Execution besitzt unter anderem:
 - Tokenverbrauch
 - Kosteninformationen
 
-Eine Execution ist unabhängig von späteren Änderungen am Project.
+Eine Execution ist unabhängig von späteren Änderungen am Workflow.
 
 ---
 
@@ -202,7 +202,7 @@ Die Analogie lautet:
 | Game Engine | AI Agent Engine |
 |---|---|
 | Engine | Agent Engine |
-| Project | Agent Project |
+| Workflow | Agent Workflow |
 | Scene | Graph |
 | Node | Node |
 | Script | Python Node |
@@ -212,7 +212,7 @@ Die Analogie lautet:
 | Run | Execution |
 | Editor | Visual Agent Editor |
 | Plugin | Node Plugin |
-| Export | Project Package |
+| Export | Workflow Package |
 | Runtime | Execution Runtime |
 
 Diese Analogie dient als Architekturmodell.
@@ -236,19 +236,19 @@ Insbesondere benötigt die Plattform keine:
 
 Die Engine ist das eigentliche Produkt.
 
-Projects sind Artefakte, die auf der Engine laufen.
+Workflows sind Artefakte, die auf der Engine laufen.
 
-Die Runtime darf nicht projektspezifisch implementiert werden.
+Die Runtime darf nicht workflowspezifisch implementiert werden.
 
 ---
 
-## 5.2 Project / Runtime Separation
+## 5.2 Workflow / Runtime Separation
 
-Projects beschreiben, was ausgeführt werden soll.
+Workflows beschreiben, was ausgeführt werden soll.
 
 Die Runtime entscheidet, wie es ausgeführt wird.
 
-Projects dürfen keine direkte Kontrolle über interne Runtime-Mechanismen erhalten.
+Workflows dürfen keine direkte Kontrolle über interne Runtime-Mechanismen erhalten.
 
 ---
 
@@ -282,9 +282,9 @@ Der visuelle Editor ist lediglich eine Benutzeroberfläche für dieses Graph-Mod
 
 ## 5.5 Execution Snapshot
 
-Eine Execution darf niemals von späteren Änderungen am Project beeinflusst werden.
+Eine Execution darf niemals von späteren Änderungen am Workflow beeinflusst werden.
 
-Vor dem Start einer Execution wird ein konsistenter Project-Version-Snapshot bestimmt.
+Vor dem Start einer Execution wird ein konsistenter Workflow-Version-Snapshot bestimmt.
 
 Die Execution arbeitet ausschließlich gegen diesen Snapshot.
 
@@ -315,7 +315,7 @@ Die Engine-Architektur darf jedoch nicht von LiteLLM als fundamentaler Domain-Ab
 
 Das Backend ist autoritative Quelle für:
 
-- Projects
+- Workflows
 - Graphs
 - Nodes
 - Configuration
@@ -381,8 +381,8 @@ Ein Developer soll:
 - komplexe Graphen bauen,
 - Nodes parametrisieren,
 - Plugins installieren,
-- Projects exportieren,
-- Projects versionieren,
+- Workflows exportieren,
+- Workflows versionieren,
 - die Engine über API und CLI bedienen können.
 
 Der Developer benötigt keine Einschränkung auf den visuellen Editor.
@@ -393,13 +393,13 @@ Der Developer benötigt keine Einschränkung auf den visuellen Editor.
 
 Ein Non-Technical User soll:
 
-- Projects erstellen,
+- Workflows erstellen,
 - Nodes aus der Library auswählen,
 - Nodes per Drag & Drop platzieren,
 - Nodes verbinden,
 - Konfigurationen über Formulare setzen,
-- Projects validieren,
-- Projects veröffentlichen,
+- Workflows validieren,
+- Workflows veröffentlichen,
 - Executions starten,
 - Monitoring verwenden,
 - Reports betrachten
@@ -410,9 +410,9 @@ Der Benutzer soll nicht zwingend Python schreiben müssen.
 
 ---
 
-# 7. Project Lifecycle
+# 7. Workflow Lifecycle
 
-Projects durchlaufen einen definierten Lifecycle.
+Workflows durchlaufen einen definierten Lifecycle.
 
 ```text
 Draft
@@ -430,19 +430,19 @@ Archived
 
 ## Draft
 
-Project befindet sich in Bearbeitung.
+Workflow befindet sich in Bearbeitung.
 
 ## Validated
 
-Project erfüllt die technischen Validierungsregeln.
+Workflow erfüllt die technischen Validierungsregeln.
 
 ## Published
 
-Eine konkrete Project-Version wurde veröffentlicht.
+Eine konkrete Workflow-Version wurde veröffentlicht.
 
 ## Active
 
-Die Project-Version kann durch Trigger ausgeführt werden.
+Die Workflow-Version kann durch Trigger ausgeführt werden.
 
 ## Disabled
 
@@ -450,7 +450,7 @@ Automatische Trigger sind deaktiviert.
 
 ## Archived
 
-Project wird nicht mehr aktiv verwendet.
+Workflow wird nicht mehr aktiv verwendet.
 
 ----------
 
@@ -469,14 +469,14 @@ Validation
   ↓
 Publish
   ↓
-Project Version
+Workflow Version
   ↓
 Trigger
   ↓
 Execution Snapshot
 ```
 
-Dadurch kann ein Benutzer ein Project verändern, ohne laufende oder zukünftige Produktionsausführungen unbeabsichtigt zu verändern.
+Dadurch kann ein Benutzer einen Workflow verändern, ohne laufende oder zukünftige Produktionsausführungen unbeabsichtigt zu verändern.
 
 ----------
 
@@ -622,7 +622,7 @@ Ein Agent kann beispielsweise enthalten:
 
 # 11. Subgraphs
 
-Projects sollen hierarchische Graphen unterstützen können.
+Workflows sollen hierarchische Graphen unterstützen können.
 
 Ein Node kann intern einen Subgraph repräsentieren.
 
@@ -685,7 +685,7 @@ Damit sollen auch komplexe Geschäftsprozesse ohne individuellen Runtime-Code mo
 
 # 13. Triggers
 
-Projects können durch unterschiedliche Mechanismen gestartet werden.
+Workflows können durch unterschiedliche Mechanismen gestartet werden.
 
 Mindestens:
 
@@ -722,11 +722,11 @@ Die Engine besitzt ein internes Event-System.
 
 Events können beispielsweise sein:
 
--   project.created
+-   workflow.created
     
--   project.updated
+-   workflow.updated
     
--   project.published
+-   workflow.published
     
 -   execution.created
     
@@ -1043,9 +1043,9 @@ Verbindungen müssen validiert werden.
 
 # 24. Credentials and Secrets
 
-Secrets sind strikt von Project-Konfigurationen getrennt.
+Secrets sind strikt von Workflow-Konfigurationen getrennt.
 
-Projects dürfen keine Klartext-Secrets enthalten.
+Workflows dürfen keine Klartext-Secrets enthalten.
 
 Nodes referenzieren Credentials beispielsweise über:
 
@@ -1067,7 +1067,7 @@ Secrets dürfen niemals ungefiltert in:
     
 -   Execution History
     
--   Project Exports
+-   Workflow Exports
     
 
 erscheinen.
@@ -1175,11 +1175,11 @@ Plugins müssen Engine- und SDK-Kompatibilität deklarieren.
 
 ----------
 
-# 28. Project Dependencies
+# 28. Workflow Dependencies
 
-Projects deklarieren benötigte Nodes und Plugins.
+Workflows deklarieren benötigte Nodes und Plugins.
 
-Beim Import oder Aktivieren eines Projects prüft die Engine:
+Beim Import oder Aktivieren eines Workflows prüft die Engine:
 
 -   Node vorhanden?
     
@@ -1194,19 +1194,19 @@ Beim Import oder Aktivieren eines Projects prüft die Engine:
 -   Dependencies erfüllt?
     
 
-Projects dürfen keine impliziten Abhängigkeiten besitzen.
+Workflows dürfen keine impliziten Abhängigkeiten besitzen.
 
 ----------
 
-# 29. Project Import and Export
+# 29. Workflow Import and Export
 
-Projects sollen als portable Packages exportiert werden können.
+Workflows sollen als portable Packages exportiert werden können.
 
-Ein Project Package enthält beispielsweise:
+Ein Workflow Package enthält beispielsweise:
 
 -   Manifest
     
--   Project Metadata
+-   Workflow Metadata
     
 -   Graph
     
@@ -1218,7 +1218,7 @@ Ein Project Package enthält beispielsweise:
     
 -   Dependencies
     
--   Project Resources
+-   Workflow Resources
     
 -   Documentation
     
@@ -1229,18 +1229,18 @@ Beim Import erfolgt eine vollständige Validierung.
 
 ----------
 
-# 30. Project Versioning
+# 30. Workflow Versioning
 
-Projects besitzen Versionen.
+Workflows besitzen Versionen.
 
 Eine Execution referenziert immer:
 
 ```text
-project_id
-project_version
+workflow_id
+workflow_version
 ```
 
-Die Engine muss alte Project-Versionen nachvollziehbar halten, soweit sie noch für Execution History oder Reproduzierbarkeit benötigt werden.
+Die Engine muss alte Workflow-Versionen nachvollziehbar halten, soweit sie noch für Execution History oder Reproduzierbarkeit benötigt werden.
 
 ----------
 
@@ -1256,7 +1256,7 @@ Strukturierte Logs für:
 
 -   Engine
     
--   Project
+-   Workflow
     
 -   Execution
     
@@ -1302,7 +1302,7 @@ Eine Execution zeigt:
 Execution
 ├── Status
 ├── Trigger
-├── Project Version
+├── Workflow Version
 ├── Start
 ├── End
 ├── Duration
@@ -1362,7 +1362,7 @@ Technische Reports:
 -   Cost Report
     
 
-Project-/Business-Reports können beispielsweise enthalten:
+Workflow-/Business-Reports können beispielsweise enthalten:
 
 -   Anzahl verarbeiteter Datensätze
     
@@ -1406,7 +1406,7 @@ Das Dashboard zeigt unter anderem:
 -   Execution-Aktivität
     
 
-Monitoring muss sowohl auf Project- als auch auf Engine-Ebene möglich sein.
+Monitoring muss sowohl auf Workflow- als auch auf Engine-Ebene möglich sein.
 
 ----------
 
@@ -1417,7 +1417,7 @@ Das Frontend ist eine visuelle Entwicklungs- und Betriebsumgebung für die Engin
 Es soll mindestens folgende Bereiche besitzen:
 
 ```text
-Projects
+Workflows
 Editor
 Node Library
 Inspector
@@ -1561,10 +1561,10 @@ Neben der Web UI soll langfristig eine CLI verfügbar sein.
 Beispielsweise:
 
 ```text
-agent-engine project validate
-agent-engine project import
-agent-engine project export
-agent-engine project run
+agent-engine workflow validate
+agent-engine workflow import
+agent-engine workflow export
+agent-engine workflow run
 
 agent-engine node create
 agent-engine node validate
@@ -1586,7 +1586,7 @@ Das Backend stellt eine versionierte API bereit.
 Beispielsweise:
 
 ```text
-/api/v1/projects
+/api/v1/workflows
 /api/v1/nodes
 /api/v1/executions
 /api/v1/triggers
@@ -1608,7 +1608,7 @@ Die Standard-Persistenz besteht konzeptionell aus:
 ```text
 PostgreSQL
     ↓
-Projects
+Workflows
 Executions
 Events
 Metrics
@@ -1686,9 +1686,9 @@ Zu berücksichtigen sind:
 
 -   Datenbank
     
--   Projects
+-   Workflows
     
--   Project Versions
+-   Workflow Versions
     
 -   Credentials
     
@@ -1754,13 +1754,13 @@ Wichtige Systemaktionen sollen nachvollziehbar sein.
 
 Beispielsweise:
 
--   Project erstellt
+-   Workflow erstellt
     
--   Project geändert
+-   Workflow geändert
     
--   Project veröffentlicht
+-   Workflow veröffentlicht
     
--   Project gelöscht
+-   Workflow gelöscht
     
 -   Credential erstellt
     
@@ -1855,7 +1855,7 @@ Die Engine soll soweit technisch möglich reproduzierbare Executions ermögliche
 
 Dazu gehören:
 
--   Project Version
+-   Workflow Version
     
 -   Node Version
     
@@ -1887,8 +1887,8 @@ Folgende Versionen müssen explizit berücksichtigt werden:
 
 ```text
 Engine Version
-Project Schema Version
-Project Version
+Workflow Schema Version
+Workflow Version
 Node Version
 SDK Version
 Plugin Version
@@ -1920,13 +1920,13 @@ Erforderlich sind:
 -   End-to-End Tests
     
 
-Beispielprojects dienen zusätzlich als Integrationstest-Suite.
+Beispielworkflows dienen zusätzlich als Integrationstest-Suite.
 
 ----------
 
-# 58. Example Projects
+# 58. Example Workflows
 
-Die Repository-Struktur soll Beispielprojects enthalten.
+Die Repository-Struktur soll Beispielworkflows enthalten.
 
 Mindestens:
 
@@ -1976,7 +1976,7 @@ Scoring
 Email
 ```
 
-Diese Projects dienen gleichzeitig als Dokumentation und Regressionstests.
+Diese Workflows dienen gleichzeitig als Dokumentation und Regressionstests.
 
 ----------
 
@@ -1996,7 +1996,7 @@ Dokumentation soll mindestens umfassen:
     
 -   Execution Engine
     
--   Project Format
+-   Workflow Format
     
 -   Plugin System
     
@@ -2029,7 +2029,7 @@ Version 1 umfasst:
 
 -   Core Domain
     
--   Project System
+-   Workflow System
     
 -   Graph System
     
@@ -2128,14 +2128,14 @@ Version 1 umfasst:
     
 -   Plugin System
     
--   Project Dependencies
+-   Workflow Dependencies
     
--   Project Import / Export
+-   Workflow Import / Export
     
 
 ### Frontend
 
--   Project Management
+-   Workflow Management
     
 -   Graph Editor
     
@@ -2272,7 +2272,7 @@ Alle zukünftigen Architekturentscheidungen sollen auf folgendes Modell zurückg
                        │
         ┌──────────────┼──────────────┐
         │              │              │
-     PROJECT        NODE SYSTEM    RUNTIME
+     WORKFLOW        NODE SYSTEM    RUNTIME
         │              │              │
       GRAPH        REGISTRY        EXECUTION
         │              │              │
@@ -2290,9 +2290,9 @@ Alle zukünftigen Architekturentscheidungen sollen auf folgendes Modell zurückg
 Die zentrale Kette lautet:
 
 ```text
-Project
+Workflow
   ↓
-Project Version
+Workflow Version
   ↓
 Graph
   ↓
@@ -2313,19 +2313,19 @@ Die folgenden Prinzipien sind für die gesamte Entwicklung verbindlich:
 
 1.  **Engine first.**
     
-2.  **Projects sind deklarative Agent-Anwendungen.**
+2.  **Workflows sind deklarative Agent-Anwendungen.**
     
 3.  **Nodes sind standardisierte Erweiterungseinheiten.**
     
 4.  **Graphs sind die zentrale Orchestrierungsabstraktion.**
     
-5.  **Executions arbeiten gegen immutable Project-Version-Snapshots.**
+5.  **Executions arbeiten gegen immutable Workflow-Version-Snapshots.**
     
-6.  **Runtime und Project bleiben getrennt.**
+6.  **Runtime und Workflow bleiben getrennt.**
     
 7.  **LLM Provider werden abstrahiert.**
     
-8.  **Credentials und Secrets bleiben von Projects getrennt.**
+8.  **Credentials und Secrets bleiben von Workflows getrennt.**
     
 9.  **Frontend und Backend teilen einen definierten Contract.**
     
@@ -2349,7 +2349,7 @@ Die folgenden Prinzipien sind für die gesamte Entwicklung verbindlich:
     
 19.  **Komplexität wird nur eingeführt, wenn sie einen konkreten Nutzen besitzt.**
     
-20.  **Neue Architekturentscheidungen dürfen die Kernabstraktionen Node, Graph, Project und Execution nicht ohne dokumentierte Begründung brechen.**
+20.  **Neue Architekturentscheidungen dürfen die Kernabstraktionen Node, Graph, Workflow und Execution nicht ohne dokumentierte Begründung brechen.**
     
 
 ----------
@@ -2361,7 +2361,7 @@ Die Vision ist erreicht, wenn ein Unternehmen die Engine self-hosted betreiben k
 ```text
 Engine installieren
         ↓
-Project erstellen
+Workflow erstellen
         ↓
 Nodes auswählen
         ↓
@@ -2371,9 +2371,9 @@ Konfiguration setzen
         ↓
 Credentials hinterlegen
         ↓
-Project validieren
+Workflow validieren
         ↓
-Project veröffentlichen
+Workflow veröffentlichen
         ↓
 Trigger konfigurieren
         ↓
@@ -2387,7 +2387,7 @@ Kosten analysieren
         ↓
 Report auswerten
         ↓
-Project exportieren
+Workflow exportieren
 ```
 
 Ein Entwickler muss gleichzeitig in der Lage sein:
@@ -2403,7 +2403,7 @@ Node Registry
     ↓
 Visual Editor
     ↓
-Project
+Workflow
     ↓
 Execution Runtime
 ```

@@ -68,7 +68,7 @@ Roadmap (`docs/roadmap-frontend.md` §9): "Eine robuste zentrale Backend-Kommuni
 
 **Not responsible for:**
 
-- domain types and query hooks for projects, nodes, executions and other areas (Phase 04)
+- domain types and query hooks for workflows, nodes, executions and other areas (Phase 04)
 - any feature screen (Phase 05+)
 - session storage, login UI and redirects (Phase 21)
 - live updates over WebSocket (Phase 14)
@@ -787,7 +787,7 @@ Documentation to update later:
 
 | What                                                                                               | Why deferred                                                                           | Intended phase                  | Affects completion |
 | -------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- | ------------------------------- | ------------------ |
-| Service modules and schemas for projects, nodes, executions, triggers, credentials, reports, users | Phase 04 is "Domain Types + Server State"; adding them here would duplicate that phase | 04                              | No                 |
+| Service modules and schemas for workflows, nodes, executions, triggers, credentials, reports, users | Phase 04 is "Domain Types + Server State"; adding them here would duplicate that phase | 04                              | No                 |
 | Query keys, query/mutation hooks, cache invalidation                                               | Phase 04 scope                                                                         | 04                              | No                 |
 | Surfacing query/mutation errors via `notify` (Phase 02 open issue O1)                              | No query or mutation consumer exists yet; normalization (the prerequisite) is done     | 04/05                           | No                 |
 | Token storage, login UI, central 401 handling                                                      | Auth feature                                                                           | 21                              | No                 |
@@ -920,12 +920,12 @@ None.
 
 ### Pattern for new services
 
-- One module per backend router in `src/api/`, e.g. `projects.ts`.
+- One module per backend router in `src/api/`, e.g. `workflows.ts`.
 - Each module exports Zod schemas, `z.infer` types, and functions `(client, …args, signal?) => client.request(...)`.
 - Encode path parameters with `encodeURIComponent` (L6).
 - Pass TanStack's `signal` from `queryFn` through to `request`.
 - 204 endpoints use `z.undefined()`.
-- Paginated responses follow the backend `PageInfo` (`offset`, `limit`, `has_more`) seen in `api/project_schemas.py`. Define its schema once when the first paginated endpoint is added.
+- Paginated responses follow the backend `PageInfo` (`offset`, `limit`, `has_more`) seen in `api/workflow_schemas.py`. Define its schema once when the first paginated endpoint is added.
 
 ### Contract (mandatory for every new service)
 

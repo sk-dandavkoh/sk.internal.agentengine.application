@@ -1,6 +1,6 @@
 """Execution use cases (roadmap Phase 08): create and inspect executions.
 
-Creating an execution pins one immutable ProjectVersion and records it as
+Creating an execution pins one immutable WorkflowVersion and records it as
 QUEUED — accepted for execution. *Running* it is the runtime's job
 (``akasha.runtime``), done by a worker (Phase 22): after the commit the
 execution is dispatched as a ``Job`` on the ``ExecutionQueue``. Every
@@ -14,15 +14,15 @@ from typing import Any
 
 from akasha.application.events import EventPublisher
 from akasha.application.persistence import ExecutionSummary, UnitOfWork
-from akasha.application.projects import (
+from akasha.application.queue import ExecutionQueue, Job, QueueUnavailableError
+from akasha.application.workflows import (
     Page,
-    ProjectVersionNotFoundError,
     UowFactory,
+    WorkflowVersionNotFoundError,
     check_page,
-    load_project,
+    load_workflow,
     to_page,
 )
-from akasha.application.queue import ExecutionQueue, Job, QueueUnavailableError
 from akasha.domain.event import Event
 from akasha.domain.execution import (
     Execution,
@@ -82,12 +82,12 @@ class ExecutionService:
         self._events = events or EventPublisher()
         self._metrics = metrics or EngineMetrics()
         # None: nothing dispatches; whoever creates an execution runs it
-        # (tests, the CLI's in-process ``project run``).
+        # (tests, the CLI's in-process ``workflow run``).
         self._queue = queue
 
     async def create_execution(
         self,
-        project_id: str,
+        workflow_id: str,
         version: int,
         *,
         input: Mapping[str, Any] | None = None,
@@ -99,7 +99,7 @@ class ExecutionService:
         """Pin ``version`` and queue a new execution of it with ``input``
         (a JSON object; entry nodes such as ``core.input`` read it), then
         hand it to the workers unless ``dispatch`` is false (the caller runs
-        it itself, like the CLI's ``project run``).
+        it itself, like the CLI's ``workflow run``).
 
         Never reads the draft: later draft edits or publishes cannot change
         what this execution runs. The retry policy defaults to no retries:
@@ -107,12 +107,12 @@ class ExecutionService:
 
         Admission control (Phase 24): unset timeouts take the engine's
         limits. A policy above a limit, a graph that is too large or too
-        deep, or a project at its active-execution cap raises
+        deep, or a workflow at its active-execution cap raises
         ``ResourceLimitError`` and nothing is stored.
         """
         try:
             return await self._create(
-                project_id,
+                workflow_id,
                 version,
                 input=input,
                 metadata=metadata,
@@ -126,8 +126,8 @@ class ExecutionService:
                 "execution_rejected",
                 extra={
                     "event": "execution_rejected",
-                    "project_id": project_id,
-                    "project_version": version,
+                    "workflow_id": workflow_id,
+                    "workflow_version": version,
                     "reason": exc.code,
                     "limit": exc.limit.value,
                 },
@@ -136,7 +136,7 @@ class ExecutionService:
 
     async def _create(
         self,
-        project_id: str,
+        workflow_id: str,
         version: int,
         *,
         input: Mapping[str, Any] | None,
@@ -149,18 +149,18 @@ class ExecutionService:
             timeout_policy, retry_policy
         )
         async with self._uow() as uow:
-            snapshot = await uow.versions.get(project_id, version)
+            snapshot = await uow.versions.get(workflow_id, version)
             if snapshot is None:
-                raise ProjectVersionNotFoundError(
-                    "Project version not found.",
-                    details={"project_id": project_id, "version": version},
+                raise WorkflowVersionNotFoundError(
+                    "Workflow version not found.",
+                    details={"workflow_id": workflow_id, "version": version},
                 )
             self._limits.check_graph(snapshot.graph)
             self._limits.check_capacity(
-                await uow.executions.count_unfinished(project_id)
+                await uow.executions.count_unfinished(workflow_id)
             )
             execution = Execution.create(
-                project_id,
+                workflow_id,
                 snapshot,
                 metadata=metadata,
                 timeout_policy=timeout_policy,
@@ -216,20 +216,20 @@ class ExecutionService:
 
     async def list_executions(
         self,
-        project_id: str,
+        workflow_id: str,
         *,
         version: int | None = None,
         offset: int = 0,
         limit: int = 50,
     ) -> Page[ExecutionSummary]:
-        """The project's executions newest first; only those of published
+        """The workflow's executions newest first; only those of published
         ``version`` when given (an unpublished one simply has none)."""
         check_page(offset, limit)
         async with self._uow() as uow:
-            await load_project(uow, project_id)
+            await load_workflow(uow, workflow_id)
             rows = await uow.executions.list_summaries(
-                project_id=project_id,
-                project_version=version,
+                workflow_id=workflow_id,
+                workflow_version=version,
                 offset=offset,
                 limit=limit + 1,
             )
@@ -243,8 +243,8 @@ class ExecutionService:
         offset: int = 0,
         limit: int = 50,
     ) -> Page[ExecutionSummary]:
-        """Executions across projects, newest first: every project's, or
-        only those of the projects ``visible_to`` that user; optionally only
+        """Executions across workflows, newest first: every workflow's, or
+        only those of the workflows ``visible_to`` that user; optionally only
         ``statuses``."""
         check_page(offset, limit)
         async with self._uow() as uow:

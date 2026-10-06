@@ -6,15 +6,15 @@ import { apiError, ok, renderRoute, stubBackend } from '../../test/app'
 
 const AT = '2026-10-02T08:00:00Z'
 const LATER = '2026-10-02T08:00:01Z'
-const PID = 'proj_1'
+const PID = 'wf_1'
 const EID = 'exec_1'
 const REPORT = `GET /reports/executions/${EID}`
 
 function listItem(id: string, status = 'completed') {
     return {
         id,
-        project_id: PID,
-        project_name: 'Lead scoring',
+        workflow_id: PID,
+        workflow_name: 'Lead scoring',
         version: 2,
         status,
         trigger_type: 'manual',
@@ -67,7 +67,7 @@ function report(overrides: object = {}, execution: object = {}) {
     return {
         schema_version: 1,
         execution_id: EID,
-        project: {
+        workflow: {
             id: PID,
             name: 'Lead scoring',
             version: 2,
@@ -220,7 +220,7 @@ describe('Report detail', () => {
         await openReport(report())
         expect(
             screen.getByRole('link', { name: 'Lead scoring' }),
-        ).toHaveAttribute('href', `/projects/${PID}`)
+        ).toHaveAttribute('href', `/workflows/${PID}`)
         expect(screen.getByText('1 s')).toBeInTheDocument() // backend duration
         expect(screen.getAllByText(/0\.0021 USD/).length).toBeGreaterThan(0)
         const nodes = screen.getByRole('table', {

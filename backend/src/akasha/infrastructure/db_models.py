@@ -35,7 +35,7 @@ JSONB_VARIANT = (
 metadata = MetaData()
 
 # Authentication (Phase 20). Users are never deleted while they own
-# projects (RESTRICT); disabling is the revocation path.
+# workflows (RESTRICT); disabling is the revocation path.
 users = Table(
     "users",
     metadata,
@@ -82,8 +82,8 @@ access_tokens = Table(
     Index("ix_access_tokens_user_id", "user_id"),
 )
 
-projects = Table(
-    "projects",
+workflows = Table(
+    "workflows",
     metadata,
     Column("id", String, primary_key=True),
     Column("name", String, nullable=False),
@@ -92,32 +92,32 @@ projects = Table(
     Column("draft_graph", JSONB_VARIANT, nullable=False),
     Column("draft_triggers", JSONB_VARIANT, nullable=False),
     Column("draft_dependencies", JSONB_VARIANT, nullable=False),
-    # {path: base64 content}; see domain.project.validate_project_files.
+    # {path: base64 content}; see domain.workflow.validate_workflow_files.
     Column("draft_files", JSONB_VARIANT, nullable=False, server_default="{}"),
     # Optimistic-concurrency token; every successful write increments it.
     Column("revision", Integer, nullable=False, server_default="1"),
     Column("current_version", Integer, nullable=False, server_default="0"),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("updated_at", DateTime(timezone=True), nullable=False),
-    # NULL = admin-only (projects from before accounts existed).
+    # NULL = admin-only (workflows from before accounts existed).
     Column(
         "owner_id", String, ForeignKey("users.id", ondelete="RESTRICT"), nullable=True
     ),
-    Index("ix_projects_owner_id", "owner_id"),
-    CheckConstraint("revision >= 1", name="ck_projects_revision_positive"),
+    Index("ix_workflows_owner_id", "owner_id"),
+    CheckConstraint("revision >= 1", name="ck_workflows_revision_positive"),
     CheckConstraint(
-        "current_version >= 0", name="ck_projects_current_version_non_negative"
+        "current_version >= 0", name="ck_workflows_current_version_non_negative"
     ),
 )
 
-# Project sharing (migration 0017). The owner is not a row here.
-project_members = Table(
-    "project_members",
+# Workflow sharing (migration 0017). The owner is not a row here.
+workflow_members = Table(
+    "workflow_members",
     metadata,
     Column(
-        "project_id",
+        "workflow_id",
         String,
-        ForeignKey("projects.id", ondelete="CASCADE"),
+        ForeignKey("workflows.id", ondelete="CASCADE"),
         primary_key=True,
     ),
     Column(
@@ -125,18 +125,18 @@ project_members = Table(
     ),
     Column("role", String, nullable=False),
     Column("created_at", DateTime(timezone=True), nullable=False),
-    Index("ix_project_members_user_id", "user_id"),
-    CheckConstraint("role IN ('viewer','editor')", name="ck_project_members_role"),
+    Index("ix_workflow_members_user_id", "user_id"),
+    CheckConstraint("role IN ('viewer','editor')", name="ck_workflow_members_role"),
 )
 
-project_versions = Table(
-    "project_versions",
+workflow_versions = Table(
+    "workflow_versions",
     metadata,
     Column("id", String, primary_key=True),
     Column(
-        "project_id",
+        "workflow_id",
         String,
-        ForeignKey("projects.id", ondelete="RESTRICT"),
+        ForeignKey("workflows.id", ondelete="RESTRICT"),
         nullable=False,
     ),
     Column("version", Integer, nullable=False),
@@ -154,8 +154,10 @@ project_versions = Table(
         nullable=True,
     ),
     Column("plugin_versions", JSONB_VARIANT, nullable=False, server_default="{}"),
-    Index("uq_project_versions_project_version", "project_id", "version", unique=True),
-    Index("ix_project_versions_project_id", "project_id"),
+    Index(
+        "uq_workflow_versions_workflow_version", "workflow_id", "version", unique=True
+    ),
+    Index("ix_workflow_versions_workflow_id", "workflow_id"),
 )
 
 _EXECUTION_STATUSES = (
@@ -170,8 +172,8 @@ executions = Table(
     "executions",
     metadata,
     Column("id", String, primary_key=True),
-    Column("project_id", String, nullable=False),
-    Column("project_version", Integer, nullable=False),
+    Column("workflow_id", String, nullable=False),
+    Column("workflow_version", Integer, nullable=False),
     Column("status", String, nullable=False),
     # Small value objects as documents: metadata, policies, error, cancel.
     Column("metadata", JSONB_VARIANT, nullable=False),
@@ -195,14 +197,14 @@ executions = Table(
     ),
     # Pins the immutable snapshot; RESTRICT keeps history reproducible.
     ForeignKeyConstraint(
-        ["project_id", "project_version"],
-        ["project_versions.project_id", "project_versions.version"],
+        ["workflow_id", "workflow_version"],
+        ["workflow_versions.workflow_id", "workflow_versions.version"],
         ondelete="RESTRICT",
-        name="fk_executions_project_version",
+        name="fk_executions_workflow_version",
     ),
     CheckConstraint(f"status IN ({_EXECUTION_STATUSES})", name="ck_executions_status"),
     CheckConstraint("revision >= 1", name="ck_executions_revision_positive"),
-    Index("ix_executions_project_id", "project_id"),
+    Index("ix_executions_workflow_id", "workflow_id"),
     # Monitoring windows and the newest-first listing (migration 0013).
     Index("ix_executions_created_at", "created_at"),
     # Queue recovery scans QUEUED executions; the partial index stays as
@@ -249,21 +251,21 @@ node_executions = Table(
 events = Table(
     "events",
     metadata,
-    # Store-assigned order. Per execution/project it is the true event order
+    # Store-assigned order. Per execution/workflow it is the true event order
     # (one CAS-guarded writer, rows inserted in order).
     Column("position", BigInteger, Identity(always=True), primary_key=True),
     Column("event_id", String, nullable=False, unique=True),
     Column("event_type", String, nullable=False),
     Column("schema_version", Integer, nullable=False),
     Column("occurred_at", DateTime(timezone=True), nullable=False),
-    Column("project_id", String, nullable=False),
+    Column("workflow_id", String, nullable=False),
     Column("execution_id", String, nullable=True),
     Column("node_id", String, nullable=True),
-    Column("project_version", Integer, nullable=True),
+    Column("workflow_version", Integer, nullable=True),
     Column("correlation_id", String, nullable=True),
     Column("payload", JSONB_VARIANT, nullable=False),
     Index("ix_events_execution_position", "execution_id", "position"),
-    Index("ix_events_project_position", "project_id", "position"),
+    Index("ix_events_workflow_position", "workflow_id", "position"),
 )
 
 # Node log lines (frontend Phase 15): what node code wrote through

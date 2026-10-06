@@ -20,7 +20,7 @@ The phase request added some requirements:
   - an extended `PluginMetadata` and a new `PluginNode`;
   - namespacing of plugin node ids;
   - a pure compatibility check, `compatibility_issues`.
-- **Project dependencies:** `validate_dependencies` (`akasha/domain/project.py`) now also checks project `Dependency(kind="plugin")` when given the list of enabled plugins. `ProjectService` passes that list at validate and publish.
+- **Workflow dependencies:** `validate_dependencies` (`akasha/domain/workflow.py`) now also checks workflow `Dependency(kind="plugin")` when given the list of enabled plugins. `WorkflowService` passes that list at validate and publish.
 - **`PluginRegistry`** (`akasha/plugins/registry.py`) runs the whole lifecycle:
   - startup discovery in dependency order;
   - all-or-nothing install;
@@ -32,11 +32,11 @@ The phase request added some requirements:
 - **Tests:** 46 component tests (`tests/test_plugins.py`) and 1 PostgreSQL integration test of the full lifecycle through publish and the execution runtime (`tests/integration/test_plugin_runtime.py`).
 
 **Resulting system state.**
-- A node written against `akasha.sdk` can be packaged as a directory with a manifest. It can then be installed into the plugins directory, registered, discovered at startup, used in a published project, executed, disabled, re-enabled and removed, all without changing engine code.
-- Plugin nodes reach `ProjectService` and `ExecutionRuntime` only through the ordinary `NodeRegistry.definitions` and `NodeRegistry.catalog` views. Neither component has a plugin-specific code path.
+- A node written against `akasha.sdk` can be packaged as a directory with a manifest. It can then be installed into the plugins directory, registered, discovered at startup, used in a published workflow, executed, disabled, re-enabled and removed, all without changing engine code.
+- Plugin nodes reach `WorkflowService` and `ExecutionRuntime` only through the ordinary `NodeRegistry.definitions` and `NodeRegistry.catalog` views. Neither component has a plugin-specific code path.
 
 **Acceptance.** All roadmap acceptance items have evidence (§14). The limitations that remain are documented:
-- removing a plugin is not blocked by projects that use its nodes (architecture §143);
+- removing a plugin is not blocked by workflows that use its nodes (architecture §143);
 - changes apply to one process only;
 - no archive package format;
 - plugin ids containing `-` cannot provide nodes (finding F5).
@@ -66,7 +66,7 @@ The phase request additionally required tests for:
 Also relevant from the architecture:
 - §35–§37: plugin architecture, plugin lifecycle and the Node Registry;
 - §65: plugin security. Trusted code in V1, but the engine must validate metadata, validate compatibility, track versions, control activation and record installation;
-- §141–§144: discovery, installation, removal and project dependency resolution;
+- §141–§144: discovery, installation, removal and workflow dependency resolution;
 - §157: the reference plugin lifecycle.
 
 **Explicitly not in scope:**
@@ -74,14 +74,14 @@ Also relevant from the architecture:
 - authentication and authorization (Phase 20);
 - CLI commands (Phase 21);
 - workers and multi-process coordination (Phase 22);
-- project import/export (Phase 18);
+- workflow import/export (Phase 18);
 - sandboxed execution (vision §26: "not part of v1 functionality").
 
 ---
 
 ## 3. Scope Implemented
 
-### Domain (`akasha/domain/plugin.py`, `akasha/domain/project.py`)
+### Domain (`akasha/domain/plugin.py`, `akasha/domain/workflow.py`)
 
 **`PluginMetadata`** (frozen dataclass):
 - Existing fields: `plugin_id`, `name`, `version`, `engine_compatibility`, `sdk_compatibility`, `description`.
@@ -105,8 +105,8 @@ Also relevant from the architecture:
 **`validate_dependencies(dependencies, definitions, plugins=None)`** (changed):
 - Plugin dependencies are checked when `plugins` (enabled id → version) is given.
 - It reports the same codes as node dependencies: `MISSING_DEPENDENCY`, `INCOMPATIBLE_DEPENDENCY` and `INVALID_DEPENDENCY`.
-- `ProjectDraft.validate` and the private `_validate` gained the same optional parameter.
-- `ProjectVersion.validate`, the runtime path, is unchanged and passes no plugins (decision D3).
+- `WorkflowDraft.validate` and the private `_validate` gained the same optional parameter.
+- `WorkflowVersion.validate`, the runtime path, is unchanged and passes no plugins (decision D3).
 
 ### Plugins package (`akasha/plugins/`)
 
@@ -167,10 +167,10 @@ This follows the precedent of `NodeRegistry` in Phase 09, where several roadmap 
 
 ### Application / composition
 
-- **`ProjectService.__init__`:** new keyword `plugins: Mapping[str, str] = MappingProxyType({})`. An empty mapping means no plugins are installed, so a declared plugin dependency is `MISSING_DEPENDENCY`. Both `validate_project` and `publish_project` pass it.
+- **`WorkflowService.__init__`:** new keyword `plugins: Mapping[str, str] = MappingProxyType({})`. An empty mapping means no plugins are installed, so a declared plugin dependency is `MISSING_DEPENDENCY`. Both `validate_workflow` and `publish_workflow` pass it.
 - **`Settings.plugins_dir: Path | None`** (`AKASHA_PLUGINS_DIR`).
 - **`Container.plugins: PluginRegistry | None`.**
-- **`create_container`:** when `plugins_dir` is set, it builds a `PluginRegistry` over the built-in `NodeRegistry` and calls `load_installed()` before the services are wired. `ProjectService` receives `plugins.versions`.
+- **`create_container`:** when `plugins_dir` is set, it builds a `PluginRegistry` over the built-in `NodeRegistry` and calls `load_installed()` before the services are wired. `WorkflowService` receives `plugins.versions`.
 
 ### Sample plugin (`backend/examples/plugins/text_tools/`)
 
@@ -197,10 +197,10 @@ This follows the precedent of `NodeRegistry` in Phase 09, where several roadmap 
 | `backend/src/akasha/plugins/registry.py` | Created | Lifecycle, loader, installer and error types |
 | `backend/src/akasha/plugins/__init__.py` | Modified (docstring) | Corrected the dependency rules; points to `registry.py` for the trust model |
 | `backend/src/akasha/domain/plugin.py` | Modified (rewritten) | `PluginNode`, extended `PluginMetadata`, `compatibility_issues` |
-| `backend/src/akasha/domain/project.py` | Modified | `validate_dependencies`, `_validate` and `ProjectDraft.validate` accept the optional `plugins` view |
-| `backend/src/akasha/application/projects.py` | Modified | `ProjectService` takes `plugins` and passes it at validate and publish |
+| `backend/src/akasha/domain/workflow.py` | Modified | `validate_dependencies`, `_validate` and `WorkflowDraft.validate` accept the optional `plugins` view |
+| `backend/src/akasha/application/workflows.py` | Modified | `WorkflowService` takes `plugins` and passes it at validate and publish |
 | `backend/src/akasha/config.py` | Modified | `plugins_dir` setting |
-| `backend/src/akasha/bootstrap.py` | Modified | `Container.plugins`; load plugins at startup; pass `versions` to `ProjectService` |
+| `backend/src/akasha/bootstrap.py` | Modified | `Container.plugins`; load plugins at startup; pass `versions` to `WorkflowService` |
 | `backend/examples/plugins/text_tools/` | Created (new directory, 4 files) | Sample plugin |
 | `backend/tests/test_plugins.py` | Created | Component tests |
 | `backend/tests/integration/test_plugin_runtime.py` | Created | Lifecycle through PostgreSQL, publish and runtime |
@@ -241,7 +241,7 @@ This follows the precedent of `NodeRegistry` in Phase 09, where several roadmap 
 
 ### D2 — Plugins integrate through `NodeRegistry.register` only
 
-**Decision.** Plugin nodes are registered with the ordinary `NodeRegistry.register(node_cls)`. `ProjectService` and `ExecutionRuntime` are unchanged in how they see nodes.
+**Decision.** Plugin nodes are registered with the ordinary `NodeRegistry.register(node_cls)`. `WorkflowService` and `ExecutionRuntime` are unchanged in how they see nodes.
 
 **Context.** Phase requirement: "Plugins integrate with the Node Registry without special-case coupling." Roadmap acceptance: "without changing Engine core".
 
@@ -257,9 +257,9 @@ This follows the precedent of `NodeRegistry` in Phase 09, where several roadmap 
 - Publish reports `UNKNOWN_NODE_TYPE` and `MISSING_DEPENDENCY`. A run fails at plan load (`EXECUTION_GRAPH_INVALID`).
 - Running executions keep the implementation they resolved at start. This is existing `unregister` semantics from Phase 09.
 
-### D3 — Project plugin dependencies gate validate and publish, not runtime
+### D3 — Workflow plugin dependencies gate validate and publish, not runtime
 
-**Decision.** `validate_dependencies` checks `kind="plugin"` dependencies only when given the enabled plugins. `ProjectService` passes them; `load_plan`, through `ProjectVersion.validate`, does not.
+**Decision.** `validate_dependencies` checks `kind="plugin"` dependencies only when given the enabled plugins. `WorkflowService` passes them; `load_plan`, through `WorkflowVersion.validate`, does not.
 
 **Context.**
 - Phase 04 left plugin dependencies unchecked. The docstring said "Phase 17 owns that check".
@@ -267,7 +267,7 @@ This follows the precedent of `NodeRegistry` in Phase 09, where several roadmap 
 
 **Chosen approach.** Publish-time check only. At run time the node-type check is authoritative.
 
-**Alternatives considered.** Passing plugin versions through `ProjectVersion.validate`, `load_plan` and `ExecutionRuntime`.
+**Alternatives considered.** Passing plugin versions through `WorkflowVersion.validate`, `load_plan` and `ExecutionRuntime`.
 
 **Reason.**
 - A run can only fail because of plugins if it uses plugin nodes, and those are already checked per run through the catalog.
@@ -318,7 +318,7 @@ Both are wrapped so that any exception becomes `PLUGIN_LOAD_FAILED`.
 ## 6. Domain / Data Model Changes
 
 **`PluginMetadata` (changed):**
-- `dependencies` changed from `tuple[str, ...]` to `tuple[Dependency, ...]`, reusing the existing project `Dependency(kind, name, version_constraint)`.
+- `dependencies` changed from `tuple[str, ...]` to `tuple[Dependency, ...]`, reusing the existing workflow `Dependency(kind, name, version_constraint)`.
 - Added `nodes` and `documentation`.
 - Added invariants (§3) and the `plugin_dependencies` property.
 - Compatibility: `PluginMetadata` was not persisted or serialized anywhere before this phase. Its only user was one domain test, which was updated. No stored data is affected.
@@ -327,12 +327,12 @@ Both are wrapped so that any exception becomes `PLUGIN_LOAD_FAILED`.
 
 **`PluginState` (new enum):** `ENABLED`, `DISABLED`, `FAILED`. `PluginRecord` is a new frozen dataclass. Both live in `akasha.plugins.registry`, not the domain, because they describe installation state.
 
-**Project dependencies:**
+**Workflow dependencies:**
 - `Dependency(kind="plugin")` is now checked at validate and publish.
 - Compatibility impact: a draft that declared a plugin dependency used to validate cleanly. It now fails with `MISSING_DEPENDENCY` unless that plugin is installed and enabled. That is the behaviour the Phase 04 design deferred to this phase.
 - Already published versions are not re-validated for plugins (D3).
 
-**No database tables, migrations or serialization formats changed.** Project graph serialization already stored `kind="plugin"` dependencies.
+**No database tables, migrations or serialization formats changed.** Workflow graph serialization already stored `kind="plugin"` dependencies.
 
 **New on-disk formats:**
 - `akasha-plugin.json`, manifest format version 1. `manifest_version` must be exactly `1`.
@@ -372,9 +372,9 @@ Both are wrapped so that any exception becomes `PLUGIN_LOAD_FAILED`.
 - `PLUGIN_LOAD_FAILED` (`details.error`: exception type name only)
 - `NODE_ALREADY_REGISTERED` and `NODE_CONTRACT_ERROR` propagate unchanged from the node registry during activation.
 
-**Application contract:** `ProjectService(uow, node_definitions, events=None, plugins=MappingProxyType({}))`. Backward compatible, because the new parameter is a keyword with a default.
+**Application contract:** `WorkflowService(uow, node_definitions, events=None, plugins=MappingProxyType({}))`. Backward compatible, because the new parameter is a keyword with a default.
 
-**Domain function signatures:** `validate_dependencies` and `ProjectDraft.validate` gained an optional trailing parameter. Backward compatible.
+**Domain function signatures:** `validate_dependencies` and `WorkflowDraft.validate` gained an optional trailing parameter. Backward compatible.
 
 **SDK contract:**
 - The `akasha.sdk` surface is unchanged (`SDK_VERSION` stays `1.0.0`).
@@ -457,10 +457,10 @@ Upgrading is `remove` followed by `install`. There is no in-place upgrade.
 
 ## 9. Findings
 
-### F1 — Plugin dependencies of projects were silently unchecked
+### F1 — Plugin dependencies of workflows were silently unchecked
 - **Impact:** MEDIUM
 - **Resolution:** FIXED
-- **Notes:** Since Phase 04, `validate_dependencies` skipped `kind="plugin"` ("Phase 17 owns that check"). A project could declare a plugin dependency and publish without it. This phase checks it at validate and publish (D3). The existing domain test `test_project.py` (the `codes(Dependency("plugin", ...)) == []` case) still holds, because the domain path without plugins deliberately remains unchecked.
+- **Notes:** Since Phase 04, `validate_dependencies` skipped `kind="plugin"` ("Phase 17 owns that check"). A workflow could declare a plugin dependency and publish without it. This phase checks it at validate and publish (D3). The existing domain test `test_workflow.py` (the `codes(Dependency("plugin", ...)) == []` case) still holds, because the domain path without plugins deliberately remains unchecked.
 
 ### F2 — `PluginMetadata.dependencies` could not express version constraints
 - **Impact:** LOW
@@ -486,12 +486,12 @@ Upgrading is `remove` followed by `install`. There is no in-place upgrade.
   - The rejection is safe but late, and the message is indirect.
   - Fix options: reject `-` in plugin ids when `nodes` is non-empty, or tighten `_PLUGIN_ID_RE`.
 
-### F6 — Architecture §143 ("block removal if active Projects depend on it") is not enforced
+### F6 — Architecture §143 ("block removal if active Workflows depend on it") is not enforced
 - **Impact:** MEDIUM
 - **Resolution:** DEFERRED
 - **Notes:**
   - Enforcing it needs a query over published versions for node types or plugin dependencies. No such repository query exists.
-  - Current behaviour is non-destructive: project data is untouched. Publishes and runs fail with structured errors until the plugin is reinstalled or re-enabled.
+  - Current behaviour is non-destructive: workflow data is untouched. Publishes and runs fail with structured errors until the plugin is reinstalled or re-enabled.
   - Documented in `registry.py` and architecture §36.
 
 ### F7 — One run of a combined test subset reported "1 skipped"
@@ -537,7 +537,7 @@ Upgrading is `remove` followed by `install`. There is no in-place upgrade.
 
 | Symptom | Root cause | Implementation | Verification |
 |---|---|---|---|
-| Plugin dependency declared but never checked | Phase 04 deferral | `validate_dependencies(..., plugins)`; `ProjectService(plugins=)` | `test_project_plugin_dependencies_are_checked_when_plugins_are_given`; the integration test's publish after disable reports `MISSING_DEPENDENCY` |
+| Plugin dependency declared but never checked | Phase 04 deferral | `validate_dependencies(..., plugins)`; `WorkflowService(plugins=)` | `test_workflow_plugin_dependencies_are_checked_when_plugins_are_given`; the integration test's publish after disable reports `MISSING_DEPENDENCY` |
 | Plugin constructor exception would abort startup | `register` instantiates nodes | `_activate` rollback and conversion to `PLUGIN_LOAD_FAILED` | parametrized broken-code test (`ValueError`) |
 | String `disabled` accepted | Missing type check | `isinstance(disabled, list)` | state-file test |
 | mypy `arg-type` in `disable` | Optional metadata | `_deactivate` returns metadata | mypy PASS |
@@ -586,7 +586,7 @@ Real temporary directories (`tmp_path`), real imports, real `NodeRegistry`. No m
 **Incompatible plugin.**
 - `test_compatibility_issues_cover_engine_sdk_and_dependencies`: exact issue codes and their order.
 - `test_incompatible_plugins_are_not_installed` (4 cases: engine, SDK, missing plugin dependency, missing node dependency).
-- `test_project_plugin_dependencies_are_checked_when_plugins_are_given`.
+- `test_workflow_plugin_dependencies_are_checked_when_plugins_are_given`.
 
 **Duplicate plugin.**
 - `test_duplicate_plugin_is_rejected`: `PLUGIN_ALREADY_INSTALLED`; version 1.0.0 stays active.
@@ -635,10 +635,10 @@ PostgreSQL via Testcontainers, using the existing session container and `clean_d
 `test_sample_plugin_lifecycle_through_the_engine`:
 1. Built-in registry plus the installed sample plugin.
 2. Draft `core.input(field=title) → text_tools.slugify`, with `Dependency("plugin", "text_tools", ">=1.0.0,<2.0.0")` and `Dependency("node", "text_tools.slugify", ">=1.0.0")`.
-3. Publish through `ProjectService(plugins=plugins.versions)`.
+3. Publish through `WorkflowService(plugins=plugins.versions)`.
 4. `ExecutionRuntime(uow, nodes.catalog)` gives `COMPLETED` with `{"slug": "plugins-without-core-changes"}`.
 5. Disable:
-   - publish raises `ProjectValidationFailedError` containing `UNKNOWN_NODE_TYPE` and `MISSING_DEPENDENCY`;
+   - publish raises `WorkflowValidationFailedError` containing `UNKNOWN_NODE_TYPE` and `MISSING_DEPENDENCY`;
    - a new run of the already published version is `FAILED` with no outputs.
 6. Enable → `COMPLETED`.
 7. Remove → the node type is gone; run `FAILED`.
@@ -699,7 +699,7 @@ Roadmap §21 acceptance: "A custom Node can be … without changing Engine core.
 | installed | PASS | `PluginRegistry.install`; `test_sample_plugin_installs_registers_and_executes`; integration test |
 | registered | PASS | Nodes registered via `NodeRegistry.register`; `nodes.resolve("text_tools.slugify", ">=1.0.0")` succeeds |
 | discovered | PASS | `load_installed` scans the plugins directory; `test_startup_restores_state_in_dependency_order`; `test_container_loads_plugins_from_the_configured_directory` |
-| used | PASS | Integration test: published project executes to `COMPLETED` with the plugin node's output |
+| used | PASS | Integration test: published workflow executes to `COMPLETED` with the plugin node's output |
 | disabled | PASS | `disable` unregisters the nodes and persists state; publish and run fail with structured errors; `enable` restores |
 | removed | PASS | `remove` deletes files and nodes; the integration test run fails after removal; `test_disable_enable_remove_and_reinstall` |
 | without changing Engine core | PASS | Installing a plugin requires no code change. The one-time engine changes that make this possible (bootstrap wiring, `plugins_dir`, the plugin-dependency check) are the phase's infrastructure, not per-plugin changes. `ExecutionRuntime`, `load_plan` and `NodeRegistry` are unchanged |
@@ -711,7 +711,7 @@ Roadmap §21 acceptance: "A custom Node can be … without changing Engine core.
 | Phase request tests (valid, invalid manifest, incompatible, duplicate, loading, registration, disable/remove, sample execution) | PASS | §12 |
 | Phase request: no marketplace | PASS | None implemented |
 
-Nothing is PARTIAL or FAIL. The limitations in §20 are outside the literal acceptance criteria. Architecture §143 (removal blocking by project usage) is the most material one, which is why the status is COMPLETE WITH LIMITATIONS.
+Nothing is PARTIAL or FAIL. The limitations in §20 are outside the literal acceptance criteria. Architecture §143 (removal blocking by workflow usage) is the most material one, which is why the status is COMPLETE WITH LIMITATIONS.
 
 ---
 
@@ -760,7 +760,7 @@ Nothing is PARTIAL or FAIL. The limitations in §20 are outside the literal acce
 
 | File | Change |
 |---|---|
-| `docs/sdk.md` §9 | Rewritten from "Making a Node available … arrives with Phase 17" into "Packaging a Node as a Plugin": layout, manifest example, field rules, lifecycle table, project plugin dependencies, trust note, direct registration fallback |
+| `docs/sdk.md` §9 | Rewritten from "Making a Node available … arrives with Phase 17" into "Packaging a Node as a Plugin": layout, manifest example, field rules, lifecycle table, workflow plugin dependencies, trust note, direct registration fallback |
 | `docs/architecture.md` §36 | New "Implementation (Phase 17)" note: manifest, compatibility, registry, all-or-nothing install, startup behaviour, state file, trust seam, non-blocking removal, single-process scope, no HTTP install |
 | `docs/architecture.md` §33 | Stale "registration without engine code (Phase 17)" replaced by a pointer to §36 |
 | `backend/src/akasha/plugins/__init__.py` | Dependency rules corrected |
@@ -787,7 +787,7 @@ Nothing is PARTIAL or FAIL. The limitations in §20 are outside the literal acce
 
 | What | Why deferred | Intended phase | Affects completion? |
 |---|---|---|---|
-| Blocking disable/remove while projects use the plugin (§143) | Needs a published-version query; current behaviour is non-destructive | Phase 18 (import/export dependency resolution) or 21 (CLI with `--force`) | No (limitation) |
+| Blocking disable/remove while workflows use the plugin (§143) | Needs a published-version query; current behaviour is non-destructive | Phase 18 (import/export dependency resolution) or 21 (CLI with `--force`) | No (limitation) |
 | HTTP plugin endpoints | Remote code execution risk before authentication | Phase 20+ | No |
 | CLI `plugin list/install/...` | CLI phase | Phase 21 | No |
 | Archive (zip/wheel) packages and a `package` command | A directory package satisfies the roadmap; archives add a zip-slip surface | Phase 18 or 21 | No |
@@ -803,7 +803,7 @@ Nothing is PARTIAL or FAIL. The limitations in §20 are outside the literal acce
 
 ## 20. Known Limitations
 
-- Disabling or removing a plugin used by published projects is allowed. Those projects then fail at publish or run with structured errors.
+- Disabling or removing a plugin used by published workflows is allowed. Those workflows then fail at publish or run with structured errors.
 - Lifecycle changes affect only the calling process. Other processes need a restart.
 - All lifecycle methods are synchronous and unlocked. Concurrent calls in one process are not supported.
 - Upgrading requires `remove` + `install`. There is no in-place upgrade and no rollback to the previous version.
@@ -820,7 +820,7 @@ Nothing is PARTIAL or FAIL. The limitations in §20 are outside the literal acce
 | Issue | Impact | Severity | Area | Recommended next action | Target |
 |---|---|---|---|---|---|
 | F5: plugin id grammar allows `-`, node ids do not | Late, indirect failure for such plugins | LOW | `domain/plugin.py` | Reject `-` in plugin ids that declare nodes (or align the regexes) with a test | Next plugin-touching phase |
-| F6: §143 removal blocking | Projects can lose their node types when a plugin is disabled | MEDIUM | `plugins/registry.py`, repositories | Add a published-version usage query; block or require explicit force | Phase 18/21 |
+| F6: §143 removal blocking | Workflows can lose their node types when a plugin is disabled | MEDIUM | `plugins/registry.py`, repositories | Add a published-version usage query; block or require explicit force | Phase 18/21 |
 | F7: transient "1 skipped" in one subset run | Possible Docker availability probe flake hiding integration tests | LOW | `tests/integration/conftest.py` | Watch CI; consider failing instead of skipping when Docker is expected | Phase 26/27 CI |
 | Multi-process plugin state | Workers could disagree with the API process | MEDIUM (once workers exist) | `plugins/registry.py` | Reload on start per process; define a change-notification policy | Phase 22 |
 
@@ -844,11 +844,11 @@ Nothing is PARTIAL or FAIL. The limitations in §20 are outside the literal acce
 
 - **Branch:** `main`. Last commit: `8d4a11b backend phase 16 - python node sdk`. Phase 17 is **not committed**; no commit was requested.
 - **Modified (tracked, 10 files, +260/−52):**
-  - `backend/src/akasha/application/projects.py`
+  - `backend/src/akasha/application/workflows.py`
   - `backend/src/akasha/bootstrap.py`
   - `backend/src/akasha/config.py`
   - `backend/src/akasha/domain/plugin.py`
-  - `backend/src/akasha/domain/project.py`
+  - `backend/src/akasha/domain/workflow.py`
   - `backend/src/akasha/plugins/__init__.py`
   - `backend/tests/domain/test_trigger_credentials_plugin.py`
   - `backend/tests/test_architecture.py`
@@ -871,7 +871,7 @@ Nothing is PARTIAL or FAIL. The limitations in §20 are outside the literal acce
 - Manifest v1 and its validator.
 - Extended domain `PluginMetadata` and `PluginNode`.
 - Compatibility checker covering engine, SDK, and plugin and node dependencies.
-- Project plugin-dependency check at validate and publish.
+- Workflow plugin-dependency check at validate and publish.
 - `PluginRegistry`: discovery, dependency-ordered startup, all-or-nothing install, loader, enable, disable, remove, and persisted state.
 - Configuration and container wiring.
 - Sample plugin.
@@ -901,13 +901,13 @@ Nothing is PARTIAL or FAIL. The limitations in §20 are outside the literal acce
 
 ## 25. Handoff to Next Phase
 
-**Next phase:** Phase 18, Project Import / Export.
+**Next phase:** Phase 18, Workflow Import / Export.
 
 **What the next phase can assume:**
 - A `PluginRegistry` exists (`container.plugins`, `None` when `AKASHA_PLUGINS_DIR` is unset).
 - `plugins.versions` is the live mapping of enabled plugin id → version.
 - `validate_dependencies(deps, definitions, plugins)` checks both node and plugin dependencies. Import validation (backend AGENTS §46: "Plugin-Abhängigkeiten") should call it with `plugins.versions`, not re-implement it.
-- `ProjectService` already validates plugin dependencies at validate and publish.
+- `WorkflowService` already validates plugin dependencies at validate and publish.
 - Plugin node types are ordinary entries in `NodeRegistry`. Exports should reference node types and `Dependency(kind="plugin")` entries, never plugin code.
 
 **Contracts that must not change casually:**
@@ -915,7 +915,7 @@ Nothing is PARTIAL or FAIL. The limitations in §20 are outside the literal acce
 - the `PLUGIN_*` error codes;
 - node id namespacing (`<plugin_id>.<name>`);
 - the `state.json` shape;
-- `ProjectService(..., plugins=)`.
+- `WorkflowService(..., plugins=)`.
 
 **Constraints:**
 - Lifecycle operations are synchronous and single-process.
@@ -924,7 +924,7 @@ Nothing is PARTIAL or FAIL. The limitations in §20 are outside the literal acce
 - Import/export of packages must reuse the same path-traversal and symlink discipline if archives are introduced (see `_copy_package`, `read_manifest`).
 
 **Open issues to be aware of:**
-- F6: removal is not blocked by project usage. Import-time dependency resolution will surface such projects as `MISSING_DEPENDENCY`.
+- F6: removal is not blocked by workflow usage. Import-time dependency resolution will surface such workflows as `MISSING_DEPENDENCY`.
 - F5: hyphenated plugin ids.
 
 **Prerequisites:** none beyond the current `main` plus this uncommitted Phase 17 change set, which should be committed first.

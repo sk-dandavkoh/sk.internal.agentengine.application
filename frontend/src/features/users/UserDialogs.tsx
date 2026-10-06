@@ -313,8 +313,8 @@ export function EditUserDialog({
                 {roleChanged && (
                     <Alert tone="warning" title="Change administrator role?">
                         {role === 'admin'
-                            ? 'The user can manage users, credentials and plugins and see every project, starting with their next request.'
-                            : 'The user loses access to administration and to projects they do not own, starting with their next request.'}
+                            ? 'The user can manage users, credentials and plugins and see every workflow, starting with their next request.'
+                            : 'The user loses access to administration and to workflows they do not own, starting with their next request.'}
                     </Alert>
                 )}
             </form>
@@ -432,7 +432,7 @@ export function StatusDialog({
             }}
         >
             {disable
-                ? 'The user will no longer be able to sign in. Their sessions and access tokens end at once; their projects stay.'
+                ? 'The user will no longer be able to sign in. Their sessions and access tokens end at once; their workflows stay.'
                 : 'The user can sign in again with their password. Access tokens revoked when they were disabled stay revoked.'}
         </ConfirmDialog>
     )

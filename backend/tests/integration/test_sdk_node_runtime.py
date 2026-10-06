@@ -1,6 +1,6 @@
 """An SDK-built custom node inside the real engine (roadmap Phase 16):
 
-    NodeRegistry.register → ProjectService (publish) → ExecutionRuntime
+    NodeRegistry.register → WorkflowService (publish) → ExecutionRuntime
     → community.hmac_sign with its secret from the encrypted Credential Store
 
 Proves that a node written against ``akasha.sdk`` only is registered,
@@ -16,12 +16,12 @@ from examples.hmac_signer import HmacSignNode, verify
 
 from akasha.application.credentials import CredentialService
 from akasha.application.executions import ExecutionService
-from akasha.application.projects import ProjectService
+from akasha.application.workflows import WorkflowService
 from akasha.domain.credentials import CredentialKind, PlaintextSecretError, Secret
 from akasha.domain.event import EventType
 from akasha.domain.execution import Execution, ExecutionStatus
 from akasha.domain.graph import Edge, Graph, NodeInstance
-from akasha.domain.project import ProjectDraft
+from akasha.domain.workflow import WorkflowDraft
 from akasha.infrastructure.database import Database
 from akasha.infrastructure.persistence import SqlAlchemyUnitOfWork
 from akasha.nodes.builtins import create_builtin_registry
@@ -55,18 +55,18 @@ async def run(
     g.add_node(sign)
     g.add_edge(Edge(source.id, "value", sign.id, "payload"))
 
-    projects = ProjectService(uow, registry.definitions)
-    project = await projects.create_project("signer")
-    await projects.update_draft(
-        project.id,
-        expected_revision=project.revision,
+    workflows = WorkflowService(uow, registry.definitions)
+    workflow = await workflows.create_workflow("signer")
+    await workflows.update_draft(
+        workflow.id,
+        expected_revision=workflow.revision,
         name="signer",
-        draft=ProjectDraft(graph=g),
+        draft=WorkflowDraft(graph=g),
     )
-    version = await projects.publish_project(project.id)
+    version = await workflows.publish_workflow(workflow.id)
     executions = ExecutionService(uow)
     queued = await executions.create_execution(
-        project.id, version.version, input={"order": 42}
+        workflow.id, version.version, input={"order": 42}
     )
     await ExecutionRuntime(
         uow, registry.catalog, credentials=store, metrics=metrics

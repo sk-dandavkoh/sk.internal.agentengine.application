@@ -60,11 +60,11 @@ describe('routes', () => {
         }
     })
 
-    it('serves the per-project editor route', async () => {
-        renderAt('/projects/p_1/editor')
+    it('serves the per-workflow editor route', async () => {
+        renderAt('/workflows/p_1/editor')
 
-        // The stub backend knows no project p_1.
-        expect(await pageHeading('Project not found')).toBeInTheDocument()
+        // The stub backend knows no workflow p_1.
+        expect(await pageHeading('Workflow not found')).toBeInTheDocument()
     })
 
     it('shows a not-found page inside the shell for unknown routes', async () => {

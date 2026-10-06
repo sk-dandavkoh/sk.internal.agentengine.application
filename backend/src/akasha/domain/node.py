@@ -151,7 +151,7 @@ class ConfigIssue:
 @dataclass(frozen=True)
 class NodeConfigSchema:
     """Machine-readable configuration schema, usable by backend validation,
-    frontend forms and project import alike (architecture §3.5).
+    frontend forms and workflow import alike (architecture §3.5).
 
     Expressed as a JSON-Schema object; validation intentionally supports only
     the structural subset checked by ``issues``. ``title``, ``description``
@@ -545,15 +545,15 @@ class NodeExecutionContext:
     """Everything a node is allowed to see while it runs (§21).
 
     Nodes never touch global application state; ids pin the execution to one
-    immutable ProjectVersion snapshot. ``is_cancelled`` is cooperative:
+    immutable WorkflowVersion snapshot. ``is_cancelled`` is cooperative:
     nodes doing long work must poll it.
     """
 
     execution_id: str
     node_execution_id: str
     node_instance_id: str
-    project_id: str
-    project_version: str
+    workflow_id: str
+    workflow_version: str
     config: Mapping[str, Any]
     inputs: Mapping[str, Any]
     logger: logging.Logger

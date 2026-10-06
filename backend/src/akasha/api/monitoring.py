@@ -4,8 +4,8 @@
   window (at most 31 days), aggregated: status counts, durations, timeline,
   error codes, per node type performance, retries, tokens and cost.
 
-Members see their own projects' runs, admins every run (the owner filter of
-the cross-project execution listing).
+Members see their own workflows' runs, admins every run (the owner filter of
+the cross-workflow execution listing).
 """
 
 from datetime import datetime

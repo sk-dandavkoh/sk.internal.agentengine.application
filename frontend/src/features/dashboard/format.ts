@@ -58,6 +58,6 @@ export function formatMilliseconds(duration: number): string {
     return `${String(Math.floor(min / 60))} h ${String(min % 60)} min`
 }
 
-// The project page size the backend allows at most. Dashboard project
-// counts cover this many projects; beyond it the counts say so.
-export const PROJECT_SAMPLE = { limit: 100 }
+// The workflow page size the backend allows at most. Dashboard workflow
+// counts cover this many workflows; beyond it the counts say so.
+export const WORKFLOW_SAMPLE = { limit: 100 }

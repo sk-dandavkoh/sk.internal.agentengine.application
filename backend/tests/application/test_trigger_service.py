@@ -23,52 +23,52 @@ from akasha.application.persistence import (
     ExecutionSummary,
     NodeLogRepository,
     NodeSample,
-    ProjectMemberRepository,
-    ProjectRepository,
-    ProjectVersionRepository,
     SessionRepository,
     UnitOfWork,
     UserRepository,
+    WorkflowMemberRepository,
+    WorkflowRepository,
+    WorkflowVersionRepository,
 )
-from akasha.application.projects import ProjectVersionNotFoundError
 from akasha.application.triggers import (
     ResolvedTrigger,
     TriggerDisabledError,
     TriggerRegistry,
     TriggerService,
 )
+from akasha.application.workflows import WorkflowVersionNotFoundError
 from akasha.domain.event import Event
 from akasha.domain.execution import Execution, ExecutionStatus, LogLevel, NodeLogEntry
 from akasha.domain.graph import Graph
 from akasha.domain.primitives import new_id
-from akasha.domain.project import Project, ProjectDraft, ProjectVersion
 from akasha.domain.trigger import Trigger, TriggerContext, TriggerType
+from akasha.domain.workflow import Workflow, WorkflowDraft, WorkflowVersion
 from akasha.errors import DomainValidationError
 
 
-class FakeVersions(ProjectVersionRepository):
+class FakeVersions(WorkflowVersionRepository):
     def __init__(self) -> None:
-        self.rows: dict[tuple[str, int], ProjectVersion] = {}
+        self.rows: dict[tuple[str, int], WorkflowVersion] = {}
 
-    async def get(self, project_id: str, version: int) -> ProjectVersion | None:
-        return self.rows.get((project_id, version))
+    async def get(self, workflow_id: str, version: int) -> WorkflowVersion | None:
+        return self.rows.get((workflow_id, version))
 
-    async def save(self, project_id: str, version: ProjectVersion) -> None:
-        self.rows[(project_id, version.version)] = version
+    async def save(self, workflow_id: str, version: WorkflowVersion) -> None:
+        self.rows[(workflow_id, version.version)] = version
 
     async def list(
-        self, project_id: str, *, offset: int = 0, limit: int = 100
-    ) -> Sequence[ProjectVersion]:
-        return [v for (pid, _), v in sorted(self.rows.items()) if pid == project_id][
+        self, workflow_id: str, *, offset: int = 0, limit: int = 100
+    ) -> Sequence[WorkflowVersion]:
+        return [v for (pid, _), v in sorted(self.rows.items()) if pid == workflow_id][
             offset : offset + limit
         ]
 
     async def list_latest(
-        self, *, project_id: str | None = None
-    ) -> Sequence[tuple[str, ProjectVersion]]:
-        latest: dict[str, ProjectVersion] = {}
+        self, *, workflow_id: str | None = None
+    ) -> Sequence[tuple[str, WorkflowVersion]]:
+        latest: dict[str, WorkflowVersion] = {}
         for (pid, _), version in self.rows.items():
-            if project_id is not None and pid != project_id:
+            if workflow_id is not None and pid != workflow_id:
                 continue
             if pid not in latest or version.version > latest[pid].version:
                 latest[pid] = version
@@ -88,8 +88,8 @@ class FakeExecutions(ExecutionRepository):
     async def list_summaries(
         self,
         *,
-        project_id: str | None = None,
-        project_version: int | None = None,
+        workflow_id: str | None = None,
+        workflow_version: int | None = None,
         visible_to: str | None = None,
         statuses: Collection[ExecutionStatus] = (),
         offset: int = 0,
@@ -113,11 +113,11 @@ class FakeExecutions(ExecutionRepository):
     ) -> Sequence[str]:
         return []
 
-    async def count_unfinished(self, project_id: str) -> int:
+    async def count_unfinished(self, workflow_id: str) -> int:
         return sum(
             1
             for e in self.items.values()
-            if e.project_id == project_id and not e.is_terminal
+            if e.workflow_id == workflow_id and not e.is_terminal
         )
 
     async def heartbeat(self, execution_id: str, *, revision: int) -> bool:
@@ -130,19 +130,19 @@ class FakeExecutions(ExecutionRepository):
         return False
 
 
-class FakeProjects(ProjectRepository):
+class FakeWorkflows(WorkflowRepository):
     """Unused by the trigger services; the UoW protocol demands the member."""
 
-    async def get(self, project_id: str) -> Project | None:
+    async def get(self, workflow_id: str) -> Workflow | None:
         return None
 
-    async def save(self, project: Project) -> None:
+    async def save(self, workflow: Workflow) -> None:
         raise NotImplementedError
 
-    async def delete(self, project_id: str, *, revision: int) -> bool:
+    async def delete(self, workflow_id: str, *, revision: int) -> bool:
         return False
 
-    async def list(self, **_: object) -> Sequence[Project]:
+    async def list(self, **_: object) -> Sequence[Workflow]:
         return []
 
     async def using_plugin(
@@ -162,7 +162,7 @@ class FakeEvents(EventRepository):
         self,
         *,
         execution_id: str | None = None,
-        project_id: str | None = None,
+        workflow_id: str | None = None,
         after: int = 0,
         limit: int = 100,
         positions: Collection[int] | None = None,
@@ -196,7 +196,7 @@ class FakeUow(UnitOfWork):
     def __init__(self) -> None:
         self.versions = FakeVersions()
         self.executions = FakeExecutions()
-        self.projects = FakeProjects()
+        self.workflows = FakeWorkflows()
         self.events = FakeEvents()
         self.node_logs = FakeNodeLogs()
         # Triggers never touch credentials or accounts; any access would
@@ -205,7 +205,7 @@ class FakeUow(UnitOfWork):
         self.users = cast(UserRepository, None)
         self.sessions = cast(SessionRepository, None)
         self.access_tokens = cast(AccessTokenRepository, None)
-        self.members = cast(ProjectMemberRepository, None)
+        self.members = cast(WorkflowMemberRepository, None)
 
     async def __aenter__(self) -> "FakeUow":
         return self
@@ -230,12 +230,12 @@ class Harness:
         self.registry = TriggerRegistry(lambda: self.uow)
 
     def publish(
-        self, project_id: str, version: int, triggers: list[Trigger] | None = None
-    ) -> ProjectVersion:
-        snapshot = ProjectDraft(graph=Graph(), triggers=list(triggers or [])).publish(
+        self, workflow_id: str, version: int, triggers: list[Trigger] | None = None
+    ) -> WorkflowVersion:
+        snapshot = WorkflowDraft(graph=Graph(), triggers=list(triggers or [])).publish(
             version=version
         )
-        self.uow.versions.rows[(project_id, version)] = snapshot
+        self.uow.versions.rows[(workflow_id, version)] = snapshot
         return snapshot
 
 
@@ -247,11 +247,11 @@ class TestFire:
     async def test_fire_creates_queued_execution_with_metadata(self) -> None:
         harness = Harness()
         trigger = api_trigger()
-        project_id = new_id("proj")
-        harness.publish(project_id, 1, [trigger])
+        workflow_id = new_id("wf")
+        harness.publish(workflow_id, 1, [trigger])
 
         execution = await harness.service.fire(
-            ResolvedTrigger(project_id, 1, trigger),
+            ResolvedTrigger(workflow_id, 1, trigger),
             TriggerContext(
                 trigger_type=TriggerType.API,
                 payload={"name": "ada"},
@@ -274,42 +274,42 @@ class TestFire:
         harness = Harness()
         trigger = api_trigger()
         trigger.enabled = False
-        project_id = new_id("proj")
-        harness.publish(project_id, 1, [trigger])
+        workflow_id = new_id("wf")
+        harness.publish(workflow_id, 1, [trigger])
 
         with pytest.raises(TriggerDisabledError):
             await harness.service.fire(
-                ResolvedTrigger(project_id, 1, trigger),
+                ResolvedTrigger(workflow_id, 1, trigger),
                 TriggerContext(trigger_type=TriggerType.API),
             )
 
     async def test_fire_context_type_mismatch_rejected(self) -> None:
         harness = Harness()
         trigger = api_trigger()
-        project_id = new_id("proj")
-        harness.publish(project_id, 1, [trigger])
+        workflow_id = new_id("wf")
+        harness.publish(workflow_id, 1, [trigger])
 
         with pytest.raises(DomainValidationError, match="does not match"):
             await harness.service.fire(
-                ResolvedTrigger(project_id, 1, trigger),
+                ResolvedTrigger(workflow_id, 1, trigger),
                 TriggerContext(trigger_type=TriggerType.WEBHOOK),
             )
 
     async def test_fire_unknown_version_rejected(self) -> None:
         harness = Harness()
-        with pytest.raises(ProjectVersionNotFoundError):
+        with pytest.raises(WorkflowVersionNotFoundError):
             await harness.service.fire(
-                ResolvedTrigger(new_id("proj"), 42, api_trigger()),
+                ResolvedTrigger(new_id("wf"), 42, api_trigger()),
                 TriggerContext(trigger_type=TriggerType.API),
             )
 
     async def test_fire_manual(self) -> None:
         harness = Harness()
-        project_id = new_id("proj")
-        harness.publish(project_id, 3)
+        workflow_id = new_id("wf")
+        harness.publish(workflow_id, 3)
 
         execution = await harness.service.fire_manual(
-            project_id, 3, input={"q": "x"}, correlation_id="req-9"
+            workflow_id, 3, input={"q": "x"}, correlation_id="req-9"
         )
 
         assert execution.status is ExecutionStatus.QUEUED
@@ -323,63 +323,63 @@ class TestRegistry:
     async def test_resolve_finds_trigger_on_latest_version(self) -> None:
         harness = Harness()
         trigger = api_trigger()
-        project_id = new_id("proj")
-        harness.publish(project_id, 1, [trigger])
+        workflow_id = new_id("wf")
+        harness.publish(workflow_id, 1, [trigger])
         # Trigger ids are stable across publishes (draft copies keep ids).
-        harness.publish(project_id, 2, [api_trigger(), trigger])
+        harness.publish(workflow_id, 2, [api_trigger(), trigger])
 
-        resolved = await harness.registry.resolve(project_id, trigger.id)
+        resolved = await harness.registry.resolve(workflow_id, trigger.id)
 
         assert resolved is not None
-        assert (resolved.project_id, resolved.version) == (project_id, 2)
+        assert (resolved.workflow_id, resolved.version) == (workflow_id, 2)
         assert resolved.trigger.id == trigger.id
 
     async def test_resolve_ignores_triggers_retired_by_newer_version(self) -> None:
         harness = Harness()
         trigger = api_trigger()
-        project_id = new_id("proj")
-        harness.publish(project_id, 1, [trigger])
-        harness.publish(project_id, 2)  # republished without the trigger
+        workflow_id = new_id("wf")
+        harness.publish(workflow_id, 1, [trigger])
+        harness.publish(workflow_id, 2)  # republished without the trigger
 
-        assert await harness.registry.resolve(project_id, trigger.id) is None
+        assert await harness.registry.resolve(workflow_id, trigger.id) is None
 
     async def test_resolve_never_sees_drafts(self) -> None:
         harness = Harness()
-        assert await harness.registry.resolve(new_id("proj"), new_id("trig")) is None
+        assert await harness.registry.resolve(new_id("wf"), new_id("trig")) is None
 
     async def test_resolve_filters_by_type(self) -> None:
         harness = Harness()
         trigger = api_trigger()
-        project_id = new_id("proj")
-        harness.publish(project_id, 1, [trigger])
+        workflow_id = new_id("wf")
+        harness.publish(workflow_id, 1, [trigger])
 
         assert (
             await harness.registry.resolve(
-                project_id, trigger.id, trigger_type=TriggerType.API
+                workflow_id, trigger.id, trigger_type=TriggerType.API
             )
             is not None
         )
         assert (
             await harness.registry.resolve(
-                project_id, trigger.id, trigger_type=TriggerType.WEBHOOK
+                workflow_id, trigger.id, trigger_type=TriggerType.WEBHOOK
             )
             is None
         )
 
-    async def test_resolution_is_scoped_by_project(self) -> None:
-        # The same trigger id published by two projects never crosses over:
-        # each project's URL reaches only its own trigger (D6).
+    async def test_resolution_is_scoped_by_workflow(self) -> None:
+        # The same trigger id published by two workflows never crosses over:
+        # each workflow's URL reaches only its own trigger (D6).
         harness = Harness()
         tid = new_id("trig")
-        project_a, project_b = new_id("proj"), new_id("proj")
-        harness.publish(project_a, 1, [Trigger(id=tid, trigger_type=TriggerType.API)])
-        harness.publish(project_b, 1, [Trigger(id=tid, trigger_type=TriggerType.API)])
+        workflow_a, workflow_b = new_id("wf"), new_id("wf")
+        harness.publish(workflow_a, 1, [Trigger(id=tid, trigger_type=TriggerType.API)])
+        harness.publish(workflow_b, 1, [Trigger(id=tid, trigger_type=TriggerType.API)])
 
-        for project_id in (project_a, project_b):
-            resolved = await harness.registry.resolve(project_id, tid)
+        for workflow_id in (workflow_a, workflow_b):
+            resolved = await harness.registry.resolve(workflow_id, tid)
             assert resolved is not None
-            assert resolved.project_id == project_id
-        assert await harness.registry.resolve(new_id("proj"), tid) is None
+            assert resolved.workflow_id == workflow_id
+        assert await harness.registry.resolve(new_id("wf"), tid) is None
 
     async def test_list_scheduled_only_enabled_cron_interval_latest(self) -> None:
         harness = Harness()
@@ -390,10 +390,10 @@ class TestRegistry:
         retired = Trigger.create(TriggerType.INTERVAL, {"interval_seconds": 5})
         other = Trigger.create(TriggerType.INTERVAL, {"interval_seconds": 30})
 
-        project_a, project_b = new_id("proj"), new_id("proj")
-        harness.publish(project_a, 1, [retired])
-        harness.publish(project_a, 2, [cron, disabled, manual])
-        harness.publish(project_b, 1, [other])
+        workflow_a, workflow_b = new_id("wf"), new_id("wf")
+        harness.publish(workflow_a, 1, [retired])
+        harness.publish(workflow_a, 2, [cron, disabled, manual])
+        harness.publish(workflow_b, 1, [other])
 
         scheduled = await harness.registry.list_scheduled()
 
@@ -401,21 +401,21 @@ class TestRegistry:
         assert ids == sorted([cron.id, other.id])
 
         by_id = {r.trigger.id: r for r in scheduled}
-        assert (by_id[cron.id].project_id, by_id[cron.id].version) == (project_a, 2)
-        assert (by_id[other.id].project_id, by_id[other.id].version) == (project_b, 1)
+        assert (by_id[cron.id].workflow_id, by_id[cron.id].version) == (workflow_a, 2)
+        assert (by_id[other.id].workflow_id, by_id[other.id].version) == (workflow_b, 1)
 
-    async def test_list_scheduled_keeps_same_id_in_two_projects(self) -> None:
+    async def test_list_scheduled_keeps_same_id_in_two_workflows(self) -> None:
         harness = Harness()
         tid = new_id("trig")
         config = {"interval_seconds": 30}
-        project_a, project_b = sorted([new_id("proj"), new_id("proj")])
-        for project_id in (project_b, project_a):
+        workflow_a, workflow_b = sorted([new_id("wf"), new_id("wf")])
+        for workflow_id in (workflow_b, workflow_a):
             harness.publish(
-                project_id,
+                workflow_id,
                 1,
                 [Trigger(id=tid, trigger_type=TriggerType.INTERVAL, config=config)],
             )
 
         scheduled = await harness.registry.list_scheduled()
 
-        assert [r.project_id for r in scheduled] == [project_a, project_b]
+        assert [r.workflow_id for r in scheduled] == [workflow_a, workflow_b]

@@ -1,5 +1,5 @@
-export const versionsPath = (projectId: string) =>
-    `/projects/${encodeURIComponent(projectId)}/versions`
+export const versionsPath = (workflowId: string) =>
+    `/workflows/${encodeURIComponent(workflowId)}/versions`
 
-export const versionPath = (projectId: string, version: number) =>
-    `${versionsPath(projectId)}/${String(version)}`
+export const versionPath = (workflowId: string, version: number) =>
+    `${versionsPath(workflowId)}/${String(version)}`

@@ -41,19 +41,19 @@ export const routes: RouteObject[] = [
                         },
                     },
                     {
-                        path: '/projects',
+                        path: '/workflows',
                         lazy: async () => {
-                            const { ProjectsPage } =
-                                await import('../features/projects/ProjectsPage')
-                            return { Component: ProjectsPage }
+                            const { WorkflowsPage } =
+                                await import('../features/workflows/WorkflowsPage')
+                            return { Component: WorkflowsPage }
                         },
                     },
                     {
-                        path: '/projects/:projectId',
+                        path: '/workflows/:workflowId',
                         lazy: async () => {
-                            const { ProjectDetailPage } =
-                                await import('../features/projects/ProjectDetailPage')
-                            return { Component: ProjectDetailPage }
+                            const { WorkflowDetailPage } =
+                                await import('../features/workflows/WorkflowDetailPage')
+                            return { Component: WorkflowDetailPage }
                         },
                     },
                     {
@@ -129,7 +129,7 @@ export const routes: RouteObject[] = [
                         },
                     },
                     {
-                        path: '/projects/:projectId/versions',
+                        path: '/workflows/:workflowId/versions',
                         lazy: async () => {
                             const { VersionsPage } =
                                 await import('../features/versions/VersionsPage')
@@ -137,7 +137,7 @@ export const routes: RouteObject[] = [
                         },
                     },
                     {
-                        path: '/projects/:projectId/versions/:version',
+                        path: '/workflows/:workflowId/versions/:version',
                         lazy: async () => {
                             const { VersionDetailPage } =
                                 await import('../features/versions/VersionDetailPage')
@@ -145,7 +145,7 @@ export const routes: RouteObject[] = [
                         },
                     },
                     {
-                        path: '/projects/:projectId/triggers',
+                        path: '/workflows/:workflowId/triggers',
                         lazy: async () => {
                             const { TriggersPage } =
                                 await import('../features/triggers/TriggersPage')
@@ -153,7 +153,7 @@ export const routes: RouteObject[] = [
                         },
                     },
                     {
-                        path: '/projects/:projectId/editor',
+                        path: '/workflows/:workflowId/editor',
                         lazy: async () => {
                             const { EditorPage } =
                                 await import('../features/editor/EditorPage')

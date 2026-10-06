@@ -15,13 +15,13 @@ The session prompt added:
 - implement, test and document any missing backend function.
 
 **Discovered.**
-- **Trigger CRUD:** the backend already offered trigger CRUD. Triggers are part of the Project Draft, replaced by `PUT /api/v1/projects/{id}` under optimistic concurrency, and validated by `POST /projects/{id}/validate`.
+- **Trigger CRUD:** the backend already offered trigger CRUD. Triggers are part of the Workflow Draft, replaced by `PUT /api/v1/workflows/{id}` under optimistic concurrency, and validated by `POST /workflows/{id}/validate`.
 - **Event triggers never fired:** they were accepted by the domain, but no code dispatched them (`TriggerType.EVENT` was never fired anywhere).
 - **Manual triggers:** they could only be fired through the invoke endpoint, with no UI path.
 
 **Actually implemented.**
 - **Frontend:**
-  - the page `/projects/:projectId/triggers` (`frontend/src/features/triggers/`);
+  - the page `/workflows/:workflowId/triggers` (`frontend/src/features/triggers/`);
   - a create/edit dialog covering all six trigger types;
   - Run for published manual triggers;
   - a validation query pinned to the draft revision;
@@ -30,16 +30,16 @@ The session prompt added:
 - **Backend:**
   - EVENT trigger dispatch: domain rules, validation code `INVALID_TRIGGER_EVENT`, `EventTriggerDispatcher`;
   - loop protection through `ExecutionMetadata.trigger_depth` and `AKASHA_LIMIT_EVENT_TRIGGER_DEPTH`;
-  - authorization through the existing `may_access_project` rule;
+  - authorization through the existing `may_access_workflow` rule;
   - two event-repository read methods;
   - 10 integration tests, domain tests, and config and lifecycle tests.
 
 **Resulting state.** A user can:
-- list a project's draft triggers, with type, config summary, endpoint, enabled state, publish state relative to the latest version, and the backend's per-trigger validation verdict;
+- list a workflow's draft triggers, with type, config summary, endpoint, enabled state, publish state relative to the latest version, and the backend's per-trigger validation verdict;
 - create, edit, enable/disable and delete triggers of every type;
 - run a published manual trigger.
 
-Every write is a revision-checked draft PUT. All six trigger types fire in the backend. An event trigger created in the UI starts its project when a source project's run completes, verified full-stack against PostgreSQL and Redis.
+Every write is a revision-checked draft PUT. All six trigger types fire in the backend. An event trigger created in the UI starts its workflow when a source workflow's run completes, verified full-stack against PostgreSQL and Redis.
 
 **Acceptance criteria.** All three roadmap criteria pass (§14).
 
@@ -48,7 +48,7 @@ Every write is a revision-checked draft PUT. All six trigger types fire in the b
 The limitations (§20) are:
 - no next-fire / last-fired display;
 - event dispatch is at-most-once without catch-up;
-- no project sharing between members.
+- no workflow sharing between members.
 
 ## 2. Phase Objective
 
@@ -70,17 +70,17 @@ Roadmap §24:
 **Not responsible for:**
 - trigger execution logic in the frontend (explicitly excluded);
 - reports (Phase 19), plugins (Phase 20), the login UI (Phase 21) and security hardening (Phase 23);
-- a project sharing/grant model.
+- a workflow sharing/grant model.
 
 **Scope extension (requested by the user during the phase, in follow-up prompts):**
 - "fix this": make event triggers fire, and fix other issues worth fixing in this phase. This led to the backend event dispatcher and the manual Run button.
-- "Fix it": let an admin's project react to other users' projects. This led to the access-rule change.
+- "Fix it": let an admin's workflow react to other users' workflows. This led to the access-rule change.
 
 ## 3. Scope Implemented
 
 ### Frontend/UI
-- **`TriggersPage`** (`features/triggers/TriggersPage.tsx`, route `/projects/:projectId/triggers`):
-  - **Data:** loads the project (`projectQueries.detail`); loads the latest version when `current_version > 0` (`projectQueries.version`, immutable, `staleTime: Infinity`); and loads the validation verdict of the shown revision (`projectQueries.validation`).
+- **`TriggersPage`** (`features/triggers/TriggersPage.tsx`, route `/workflows/:workflowId/triggers`):
+  - **Data:** loads the workflow (`workflowQueries.detail`); loads the latest version when `current_version > 0` (`workflowQueries.version`, immutable, `staleTime: Infinity`); and loads the validation verdict of the shown revision (`workflowQueries.validation`).
   - **Info alert:** says triggers are saved to the draft at revision N and fire only from the latest published version, with links to that version and to the editor (where publishing happens).
   - **Table "Triggers"** (`Table`, caption hidden under the Card title), with columns:
     - **Type:** label plus id.
@@ -96,28 +96,28 @@ Roadmap §24:
     - **Cron:** expression input.
     - **Interval:** a number input, `min=1`, `max=31536000`, `step="any"`.
     - **Webhook:** signing secret through `CredentialInput`, required before submit.
-    - **Event:** an Event select over `triggerableEvents`, plus a Source project select ("This project" plus the projects the caller can access).
+    - **Event:** an Event select over `triggerableEvents`, plus a Source workflow select ("This workflow" plus the workflows the caller can access).
   - Enabled switch.
   - On edit, config keys the form does not know are kept.
-  - A stored value the pickers do not offer is shown as "Unsupported: …" or "Unavailable project …" rather than replaced.
+  - A stored value the pickers do not offer is shown as "Unsupported: …" or "Unavailable workflow …" rather than replaced.
   - The form content remounts on every open (`Dialog` mounts content only while open).
 - **`triggerTypes.ts`:** labels, descriptions, `creatableTypes`, `triggerableEvents`, `MAX_INTERVAL_SECONDS`, `WEBHOOK_SECRET_FIELD`, `EVENT_SOURCE_FIELD`, `newTriggerId()` (`trig_<32 hex>`, the backend's `new_id("trig")` shape), and `triggerSummary()`.
 - **`CredentialInput`** (`features/credentials/CredentialInput.tsx`): a credential-name input with a `datalist` of credential names. It stores `credential:<name>` and hides a stored non-reference value. Moved out of `editor/ConfigForm.tsx` so the webhook form reuses it; `ConfigForm.CredentialField` now wraps it.
-- **Navigation:** a "Triggers" link in the `ProjectDetailPage` header.
+- **Navigation:** a "Triggers" link in the `WorkflowDetailPage` header.
 
 ### Frontend API layer
-- `queryKeys.projects.validation(projectId, revision)` and `projectQueries.validation(...)`, which call the existing `validateProject(client, id, revision)`. The key sits below `projects.detail(id)`, so invalidating the project reaches it.
+- `queryKeys.workflows.validation(workflowId, revision)` and `workflowQueries.validation(...)`, which call the existing `validateWorkflow(client, id, revision)`. The key sits below `workflows.detail(id)`, so invalidating the workflow reaches it.
 - The `validationCodeSchema` enum gained `'invalid_trigger_event'`.
-- Writes reuse the existing `useUpdateProject` (draft PUT) and `useInvokeTrigger`; no new mutation hooks.
+- Writes reuse the existing `useUpdateWorkflow` (draft PUT) and `useInvokeTrigger`; no new mutation hooks.
 
 ### Domain (backend)
 - **`domain/trigger.py`:**
-  - `EVENT_SOURCE_FIELD = "source_project_id"`;
-  - `TRIGGERABLE_EVENTS` = {`execution.completed`, `execution.failed`, `execution.cancelled`, `execution.timed_out`, `project.published`};
+  - `EVENT_SOURCE_FIELD = "source_workflow_id"`;
+  - `TRIGGERABLE_EVENTS` = {`execution.completed`, `execution.failed`, `execution.cancelled`, `execution.timed_out`, `workflow.published`};
   - `event_problem(trigger)`, plus the helper `_is_id`;
   - `TriggerContext.depth: int = 0` (≥ 0; bool rejected).
 - **`domain/graph_validation.py`:** `ValidationCode.INVALID_TRIGGER_EVENT`.
-- **`domain/project.py`:** `validate_triggers()` reports `event_problem` as `INVALID_TRIGGER_EVENT`.
+- **`domain/workflow.py`:** `validate_triggers()` reports `event_problem` as `INVALID_TRIGGER_EVENT`.
 - **`domain/execution.py`:** `ExecutionMetadata.trigger_depth: int = 0` (≥ 0).
 
 ### Persistence (backend)
@@ -149,19 +149,19 @@ See §12.
 | `frontend/src/features/credentials/CredentialInput.tsx` | Created | Shared credential-reference input |
 | `frontend/src/features/editor/ConfigForm.tsx` | Modified | `CredentialField` delegates to `CredentialInput` (−71/+ lines) |
 | `frontend/src/features/editor/configSchema.ts` | Modified | `CREDENTIAL_PREFIX` moved to `CredentialInput.tsx` |
-| `frontend/src/features/projects/ProjectDetailPage.tsx` | Modified | "Triggers" link |
-| `frontend/src/app/routes.tsx` | Modified | Lazy route `/projects/:projectId/triggers` |
+| `frontend/src/features/workflows/WorkflowDetailPage.tsx` | Modified | "Triggers" link |
+| `frontend/src/app/routes.tsx` | Modified | Lazy route `/workflows/:workflowId/triggers` |
 | `frontend/src/api/queries.ts` | Modified | Validation key and query options |
-| `frontend/src/api/projects.ts` | Modified | `invalid_trigger_event` enum value |
+| `frontend/src/api/workflows.ts` | Modified | `invalid_trigger_event` enum value |
 | `frontend/src/api/openapi.json` | Modified (regenerated) | Contract snapshot: +1 enum value |
-| `frontend/tests/fullstack/projects.spec.ts` | Modified | 2 trigger journeys (+170 lines) |
+| `frontend/tests/fullstack/workflows.spec.ts` | Modified | 2 trigger journeys (+170 lines) |
 | `frontend/tests/fullstack/backend.sh` | Modified | Credential key; scheduler enabled |
 | `frontend/README.md` | Modified | "Triggers" section |
 | `backend/src/akasha/runtime/event_triggers.py` | Created | Event trigger dispatcher |
 | `backend/src/akasha/domain/trigger.py` | Modified | Event rules, context depth |
 | `backend/src/akasha/domain/execution.py` | Modified | `trigger_depth` |
 | `backend/src/akasha/domain/graph_validation.py` | Modified | New validation code |
-| `backend/src/akasha/domain/project.py` | Modified | Validation of event triggers |
+| `backend/src/akasha/domain/workflow.py` | Modified | Validation of event triggers |
 | `backend/src/akasha/application/triggers.py` | Modified | `list_event_triggers`, depth passthrough |
 | `backend/src/akasha/application/persistence.py` | Modified | Event repository protocol |
 | `backend/src/akasha/infrastructure/persistence.py` | Modified | `positions`, `max_position`, depth codec |
@@ -184,9 +184,9 @@ See §12.
 
 ### 5.1 Trigger CRUD stays on the draft PUT
 
-- **Decision.** No `/projects/{id}/triggers` resource. The UI edits triggers by replacing the draft.
+- **Decision.** No `/workflows/{id}/triggers` resource. The UI edits triggers by replacing the draft.
 - **Context.** Architecture §125 puts triggers on the draft and publishes them with it. The roadmap lists `/api/v1/triggers` only as an example.
-- **Chosen approach.** Every create/edit/toggle/delete is `PUT /projects/{id}` with `{...draft, triggers: next}` and `expected_revision`.
+- **Chosen approach.** Every create/edit/toggle/delete is `PUT /workflows/{id}` with `{...draft, triggers: next}` and `expected_revision`.
 - **Alternatives considered.** A dedicated trigger resource with its own endpoints.
 - **Reason.** It would duplicate the draft write and its optimistic concurrency, and create two ways to change one aggregate.
 - **Consequences.**
@@ -216,7 +216,7 @@ See §12.
 
 ### 5.3 Loop protection through execution depth
 
-- **Decision.** `ExecutionMetadata.trigger_depth`: 0 for non-event runs, the source execution's depth + 1 for event runs (1 for `project.published`).
+- **Decision.** `ExecutionMetadata.trigger_depth`: 0 for non-event runs, the source execution's depth + 1 for event runs (1 for `workflow.published`).
 - **Context.** Architecture §130/§131 require protection against event-trigger recursion.
 - **Chosen approach.** The depth is stored in the metadata JSON. A fire at depth > `AKASHA_LIMIT_EVENT_TRIGGER_DEPTH` is refused and logged (`event_trigger_depth_exceeded`).
 - **Alternatives considered.** Rate limiting, or forbidding self-sources.
@@ -225,9 +225,9 @@ See §12.
 
 ### 5.4 Event source authorization through the API's access rule
 
-- **Decision.** A trigger may react to another project only if the trigger project's owner passes `may_access_project(owner, source.owner_id)` and is not disabled. Two ownerless projects may chain.
-- **Context.** Events must not let a user observe or chain onto projects they cannot access (§49). A first version required identical owners; the user asked to allow admins.
-- **Chosen approach.** `_may_observe(uow, project_id, source)` runs at fire time.
+- **Decision.** A trigger may react to another workflow only if the trigger workflow's owner passes `may_access_workflow(owner, source.owner_id)` and is not disabled. Two ownerless workflows may chain.
+- **Context.** Events must not let a user observe or chain onto workflows they cannot access (§49). A first version required identical owners; the user asked to allow admins.
+- **Chosen approach.** `_may_observe(uow, workflow_id, source)` runs at fire time.
 - **Alternatives considered.** The same-owner rule (too narrow for admins); a grant model (out of scope).
 - **Reason.** It reuses the single existing authorization rule, with no new model.
 - **Consequences.** Members cannot share sources with each other until a grant model exists.
@@ -239,18 +239,18 @@ See §12.
 - **`ValidationCode.INVALID_TRIGGER_EVENT`** (new enum member). It is a publish gate, not a construction error: drafts with old or free-text event names stay loadable (consistent with §125).
 - **EVENT trigger config:**
   - `event` (required non-empty string, unchanged construction rule) must be in `TRIGGERABLE_EVENTS` to publish;
-  - the optional `source_project_id` must be a `proj_<32 hex>` id to publish.
+  - the optional `source_workflow_id` must be a `wf_<32 hex>` id to publish.
 - **Compatibility:** a published version that contains an event trigger with a non-triggerable `event` stays published. That trigger simply never matches anything. A republish reports the issue.
 - No tables, indexes or constraints changed.
 
 ## 7. API / Contract Changes
 
-- **`POST /api/v1/projects/{id}/validate`, `POST /publish`:** the `ValidationIssue.code` enum gains `invalid_trigger_event`. The message names the allowed events or the field, never config values.
+- **`POST /api/v1/workflows/{id}/validate`, `POST /publish`:** the `ValidationIssue.code` enum gains `invalid_trigger_event`. The message names the allowed events or the field, never config values.
   - *Compatibility:* additive for the backend. The frontend's strict Zod enum was updated in the same change; an older frontend build would reject a response containing the new code (`malformed_response`).
-- **Execution input of event-triggered runs** (new semantics, existing field): `{"event": {"type", "event_id", "project_id", "project_version", "execution_id", "occurred_at", "data"}}`. `data` is the event's closed payload: ids, statuses, error codes.
+- **Execution input of event-triggered runs** (new semantics, existing field): `{"event": {"type", "event_id", "workflow_id", "workflow_version", "execution_id", "occurred_at", "data"}}`. `data` is the event's closed payload: ids, statuses, error codes.
 - **Executions created by event triggers:** `trigger_type: "event"` and `trigger_id` in `ExecutionDetail` (existing fields). The correlation id is the source event's, when present.
 - **No new endpoints. No endpoint removed or changed in shape.**
-- **Frontend usage:** `PUT /projects/{id}` (trigger writes), `POST /projects/{id}/validate` with `expected_revision`, `GET /projects/{id}/versions/{n}`, `GET /projects` (source picker, `limit=100`, `sort=name`), `GET /credentials` (names, admin only; members type freely), and `POST /projects/{id}/triggers/{tid}/invoke` (Run).
+- **Frontend usage:** `PUT /workflows/{id}` (trigger writes), `POST /workflows/{id}/validate` with `expected_revision`, `GET /workflows/{id}/versions/{n}`, `GET /workflows` (source picker, `limit=100`, `sort=name`), `GET /credentials` (names, admin only; members type freely), and `POST /workflows/{id}/triggers/{tid}/invoke` (Run).
 
 ## 8. Implementation Details
 
@@ -261,7 +261,7 @@ See §12.
   - otherwise → Published;
   - removed ids → the warning list.
   It is display only. `live` maps published trigger ids to their published copy and gates the Run button (`trigger_type === 'manual' && live.get(id)?.enabled`).
-- **Writes:** `saveTriggers(next, successTitle, onSuccess)` calls `useUpdateProject` with the unchanged name and description. On success the mutation sets `projects.detail` from the response, so the revision changes and the validation query re-runs under the new key. On a 409 the project query is invalidated, and the error stays visible until the next attempt. No optimistic updates (AGENTS §85).
+- **Writes:** `saveTriggers(next, successTitle, onSuccess)` calls `useUpdateWorkflow` with the unchanged name and description. On success the mutation sets `workflows.detail` from the response, so the revision changes and the validation query re-runs under the new key. On a 409 the workflow query is invalidated, and the error stays visible until the next attempt. No optimistic updates (AGENTS §85).
 - **Validation query:** `retry: false`. A 409 (draft changed elsewhere) or 5xx shows "Could not check the triggers" with Retry, and cells show "Not checked".
 - **Run:** `useInvokeTrigger`. On success: a toast, then navigation to `/executions/{id}`. On error: a danger toast with the backend message.
 - **Webhook display:** `triggerSummary` shows `Signed with credential:<name>` only for reference strings; anything else shows "Signing secret is not a credential reference". The URL is `new URL(client.baseUrl + path, window.location.origin)`.
@@ -276,9 +276,9 @@ See §12.
 3. Update `high` and the gaps; expire old gaps; cap their number.
 4. Filter candidates to `TRIGGERABLE_EVENTS`. If there are none, return without loading triggers.
 5. `registry.list_event_triggers()` (enabled EVENT triggers on latest versions).
-6. Per event: match on `config.event == event_type` and `config.source_project_id` (default: trigger project) `== event.project_id`.
-7. Load the source project and the source execution's depth.
-8. Compute `_may_observe` per foreign trigger project.
+6. Per event: match on `config.event == event_type` and `config.source_workflow_id` (default: trigger workflow) `== event.workflow_id`.
+7. Load the source workflow and the source execution's depth.
+8. Compute `_may_observe` per foreign trigger workflow.
 9. Per match: refuse (logged warning `event_trigger_depth_exceeded` / `event_trigger_source_denied`) or fire. A fire exception is logged (`event_trigger_failed`) and the loop continues.
 
 `run()` sleeps `poll_seconds` unless the last batch was full (`behind`). A failed tick is logged (`event_trigger_tick_failed`) and retried.
@@ -310,7 +310,7 @@ See §12.
 ### The same-owner source rule excluded admins
 - **Impact:** MEDIUM
 - **Resolution:** FIXED
-- **Notes:** Replaced by `may_access_project` (§5.4) at the user's request.
+- **Notes:** Replaced by `may_access_workflow` (§5.4) at the user's request.
 
 ### Shutdown log noise in the full-stack suite
 - **Impact:** LOW
@@ -336,7 +336,7 @@ See §12.
 ## 11. Fixes Applied
 
 - **Event dispatch:**
-  - *Symptom:* event-trigger projects never ran.
+  - *Symptom:* event-trigger workflows never ran.
   - *Root cause:* no consumer.
   - *Implementation:* §5.2/§8.
   - *Verification:* 10 integration tests, mutation checks, and the full-stack event journey.
@@ -345,10 +345,10 @@ See §12.
   - *Implementation:* a Run button through `useInvokeTrigger`.
   - *Verification:* component tests (success navigation, hidden when disabled or not published, refusal toast) and the full-stack step "Run opens the execution".
 - **Admin sources:**
-  - *Symptom:* an admin's trigger could not observe other users' projects.
+  - *Symptom:* an admin's trigger could not observe other users' workflows.
   - *Root cause:* the same-owner rule.
-  - *Implementation:* `_may_observe` uses `may_access_project` and checks `disabled`.
-  - *Verification:* `test_an_admin_reacts_to_any_project_until_disabled`, `test_a_member_cannot_react_to_another_users_project`, and three mutation checks.
+  - *Implementation:* `_may_observe` uses `may_access_workflow` and checks `disabled`.
+  - *Verification:* `test_an_admin_reacts_to_any_workflow_until_disabled`, `test_a_member_cannot_react_to_another_users_workflow`, and three mutation checks.
 - **Full-stack credential key:**
   - *Symptom:* a 500 on credential create.
   - *Verification:* the full-stack trigger test passes.
@@ -369,7 +369,7 @@ See §12.
 - **Secrets:** a plaintext webhook secret is never in the DOM or the input.
 - **Empty state.**
 - **Creating each type** (`it.each`: manual, api, cron, interval, webhook). Checks the PUT body (revision, name/description unchanged, other triggers kept, config, id shape), the saved row and re-validation.
-- **Event:** creation on another accessible project (the option list is all other caller-visible projects); edit back to own project, with unsupported stored values shown.
+- **Event:** creation on another accessible workflow (the option list is all other caller-visible workflows); edit back to own workflow, with unsupported stored values shown.
 - **Run:** navigates to `/executions/exec_1`, exactly one invoke; hidden for disabled or not-published copies and for API triggers. A refused Run (409) shows a toast and stays on the page.
 - **Invalid schedule:** the backend `invalid_trigger_schedule` message appears after save.
 - **422 `DOMAIN_VALIDATION_ERROR`:** stays in the dialog, no state change.
@@ -382,15 +382,15 @@ See §12.
 Result: PASS (23/23). Existing editor tests still pass after the `CredentialInput` extraction.
 
 ### Integration Tests (backend, PostgreSQL via Testcontainers)
-`tests/integration/test_event_triggers.py`, 10 tests. Projects are published over HTTP, and source runs execute through `ExecutionRuntime`.
+`tests/integration/test_event_triggers.py`, 10 tests. Workflows are published over HTTP, and source runs execute through `ExecutionRuntime`.
 
-- cross-project fire, with the input, depth and listing checked;
+- cross-workflow fire, with the input, depth and listing checked;
 - no replay of history before the first tick;
 - a self-trigger stops at depth 3 with `max_depth=3`;
 - non-matching and disabled triggers are ignored;
-- `project.published` as a source;
-- a member cannot react to an admin's project;
-- an admin reacts to a member's project until disabled;
+- `workflow.published` as a source;
+- a member cannot react to an admin's workflow;
+- an admin reacts to a member's workflow until disabled;
 - an event committed after a later one is dispatched, using a real open transaction;
 - a rolled-back gap expires after 60 s on a fake clock;
 - `/validate` reports `invalid_trigger_event` without echoing values.
@@ -417,7 +417,7 @@ A conflict-reload mutation in the frontend also failed its component test.
     4. After publish: "Published"; an unsigned webhook call gets 401.
     5. Delete, then the "Removed from the draft" notice.
     6. Run opens `/executions/exec_…`.
-  - *"an event trigger starts a project when another one completes":* an event trigger is created in the UI on the upstream project; the upstream run completes in the worker; the downstream project gets one `event` execution within 20 s (`expect.poll`).
+  - *"an event trigger starts a workflow when another one completes":* an event trigger is created in the UI on the upstream workflow; the upstream run completes in the worker; the downstream workflow gets one `event` execution within 20 s (`expect.poll`).
 
 ### Security Tests
 - Component: the plaintext webhook secret is not rendered.
@@ -458,7 +458,7 @@ The final run happened after the last code change (the admin access fix). No cod
 
 | Acceptance Criterion | Status | Evidence |
 |---|---|---|
-| Trigger-Konfiguration verwendet Backend Contracts. (Trigger configuration uses backend contracts.) | PASS | Writes go through `PUT /projects/{id}` with `TriggerBody` (`api/projects.ts` `triggerSchema`); verdicts come from `/validate` (`validationIssueSchema` with `trigger_id`); structural errors are the backend's 422, shown verbatim. No schedule/cron logic in the browser. Types and config keys mirror `domain/trigger.py` and are documented as mirrors. Full-stack test compares the stored draft with the UI. |
+| Trigger-Konfiguration verwendet Backend Contracts. (Trigger configuration uses backend contracts.) | PASS | Writes go through `PUT /workflows/{id}` with `TriggerBody` (`api/workflows.ts` `triggerSchema`); verdicts come from `/validate` (`validationIssueSchema` with `trigger_id`); structural errors are the backend's 422, shown verbatim. No schedule/cron logic in the browser. Types and config keys mirror `domain/trigger.py` and are documented as mirrors. Full-stack test compares the stored draft with the UI. |
 | Aktivierung/Deaktivierung ist sichtbar. (Activation/deactivation is visible.) | PASS | An Enabled/Disabled text badge per row, plus Published / Unpublished changes, derived from draft vs. latest version. Toggle tests (component) and full-stack "Disabled" after reload. |
 | Webhook-Informationen werden sicher dargestellt. (Webhook information is shown securely.) | PASS | Only the URL, the signature scheme and `credential:<name>` are shown. Non-reference values are hidden in the summary and the input (component test with a canary secret). The signing secret is chosen by credential name; values never reach the browser (no endpoint returns them). |
 
@@ -480,8 +480,8 @@ Session prompt items:
 ## 15. Security Considerations
 
 - **Authorization:**
-  - Trigger writes use the existing project authorization on PUT/validate (a 403 is shown in the UI; tested).
-  - Event sources pass `may_access_project` for the trigger project's owner, at fire time, and disabled owners are refused. This prevents a member from observing or chaining onto other users' projects. Refusals are logged with ids only.
+  - Trigger writes use the existing workflow authorization on PUT/validate (a 403 is shown in the UI; tested).
+  - Event sources pass `may_access_workflow` for the trigger workflow's owner, at fire time, and disabled owners are refused. This prevents a member from observing or chaining onto other users' workflows. Refusals are logged with ids only.
 - **Secrets:**
   - The webhook secret is a credential reference only; the UI never shows or stores values. A plaintext value in config is hidden.
   - Event-trigger input contains only the closed, secret-free event fields.
@@ -495,13 +495,13 @@ Session prompt items:
 
 - **Dispatcher reads:**
   - each poll (1 s): one `position > high LIMIT 500` query over the primary key, plus one `position IN (gaps)` query when gaps exist;
-  - for ticks with triggerable events: `list_latest` versions, and per matching event the source project, source execution and owner lookups.
+  - for ticks with triggerable events: `list_latest` versions, and per matching event the source workflow, source execution and owner lookups.
   Not measured.
 - **Throughput bound:** without sleeping while `behind`, the dispatcher processes ≥ 500 events per tick round. Node events dominate the volume.
 - **Memory:** at most 10,000 gap entries.
 - **Frontend:**
   - one validation POST per revision (cached by key);
-  - one project list (≤ 100) when the event form is open;
+  - one workflow list (≤ 100) when the event form is open;
   - the published version is cached indefinitely.
 
 ## 17. Documentation Changes
@@ -529,8 +529,8 @@ Documentation to update in a future phase: if a grant model or event replay is i
 |---|---|---|---|
 | Next-fire / last-fired per trigger | Scheduler due times are in memory only; no endpoint | Not planned | No |
 | Event replay / persisted cursor / retry | Needs idempotency and persistence design; conflicts with the no-catch-up rule | Not planned | No |
-| Project sharing so members can use other members' sources | Needs a grant model | Not planned (architecture lists per-resource grants as future work) | No |
-| Source-project existence check at publish | Cross-aggregate check outside pure domain validation; enforced at fire time | Not planned | No |
+| Workflow sharing so members can use other members' sources | Needs a grant model | Not planned (architecture lists per-resource grants as future work) | No |
+| Source-workflow existence check at publish | Cross-aggregate check outside pure domain validation; enforced at fire time | Not planned | No |
 | Webhook replay protection | Backend security work (§127) | Phase 23 candidate | No |
 | Node-emitted events as trigger sources | Not required; volume and contract concerns | Not planned | No |
 | Automated accessibility audit, responsive check | Roadmap phases 25/26 | 25–26 | No |
@@ -543,7 +543,7 @@ Documentation to update in a future phase: if a grant model or event replay is i
   - a gap older than 60 s is abandoned, so an event committed later than that is missed.
 - **One replica:** the dispatcher, like the scheduler, must run in one replica only. Two would double-fire.
 - **Validation timing:** validation reflects the saved draft. Schedule and event errors appear after saving, not while typing.
-- **Source picker:** it lists the caller's accessible projects (≤ 100, by name). When an admin edits a member's project, it offers projects the member's trigger will be refused for. The hint explains the rule.
+- **Source picker:** it lists the caller's accessible workflows (≤ 100, by name). When an admin edits a member's workflow, it offers workflows the member's trigger will be refused for. The hint explains the rule.
 - **Type changes:** an existing trigger's type cannot be changed (delete and recreate).
 - **Depth visibility:** `trigger_depth` is not exposed through the API.
 - **Accessibility:** not audited with tooling; keyboard behavior not manually verified.
@@ -560,7 +560,7 @@ Documentation to update in a future phase: if a grant model or event replay is i
 - Triggers are edited only through the draft PUT; there is no trigger resource (§5.1).
 - The event dispatcher reads the persisted log, anchors at the end, tracks gaps, and fires at most once (§5.2). Do not switch it to `EventPublisher`: worker events never reach it.
 - `trigger_depth` is the loop-protection mechanism (§5.3).
-- The event source rule is the API's `may_access_project` for the trigger project's owner, at fire time (§5.4).
+- The event source rule is the API's `may_access_workflow` for the trigger workflow's owner, at fire time (§5.4).
 - The frontend mirrors `TRIGGERABLE_EVENTS`, `MAX_INTERVAL_SECONDS` and the config keys for pickers only; `/validate` decides.
 - Status is derived by comparing the draft with the latest version, because only the latest version fires (§125).
 - `CredentialInput` is shared by the editor and the triggers feature and lives in `features/credentials/`.
@@ -610,15 +610,15 @@ None.
 ## 25. Handoff to Next Phase
 
 **The next phase can assume:**
-- `/projects/:projectId/triggers` exists.
-- `projectQueries.validation(client, id, revision)` gives the backend verdict for a revision.
+- `/workflows/:workflowId/triggers` exists.
+- `workflowQueries.validation(client, id, revision)` gives the backend verdict for a revision.
 - `CredentialInput` is the component for credential references.
 - All six trigger types fire in the backend.
 - Event-triggered executions have `trigger_type: "event"` and input `{event: {...}}`.
 
 **Contracts:**
 - `ValidationCode` includes `invalid_trigger_event`.
-- The EVENT config is `{event, source_project_id?}`.
+- The EVENT config is `{event, source_workflow_id?}`.
 - `AKASHA_LIMIT_EVENT_TRIGGER_DEPTH` sets the depth limit.
 
 **Must not change casually:**

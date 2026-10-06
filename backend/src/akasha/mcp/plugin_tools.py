@@ -56,7 +56,7 @@ PackageBase64 = Annotated[
 Force = Annotated[
     bool,
     Field(
-        description="Proceed although projects use the plugin (their"
+        description="Proceed although workflows use the plugin (their"
         " validation, publishing and runs may fail until it is back)."
     ),
 ]
@@ -126,9 +126,9 @@ class PluginDetail(PluginOut):
 
 class PluginUpdateOut(BaseModel):
     plugin: PluginOut
-    # Projects using the plugin (non-empty only with force): their published
+    # Workflows using the plugin (non-empty only with force): their published
     # versions pinned to the old version no longer run.
-    affected_projects: list[str]
+    affected_workflows: list[str]
 
 
 def _check_out(check: PackageCheck) -> PackageCheckOut:
@@ -349,7 +349,7 @@ def register(kit: Kit) -> None:
         """Admin + AKASHA_MCP_PLUGIN_CODE. Replace an installed plugin with
         a new package of the same id (and re-enable it if it was enabled).
         Atomic: on failure the old version is restored. Refused with
-        PLUGIN_IN_USE while projects use it unless force: published versions
+        PLUGIN_IN_USE while workflows use it unless force: published versions
         stay pinned to the old version and refuse to run on the new one."""
         svc = service()
         code_allowed()
@@ -357,7 +357,7 @@ def register(kit: Kit) -> None:
         checked(svc, data)
         record, users = await svc.update_archive(data, force=force)
         return PluginUpdateOut(
-            plugin=PluginOut.from_record(record), affected_projects=list(users)
+            plugin=PluginOut.from_record(record), affected_workflows=list(users)
         )
 
     @kit.tool(title="Enable plugin", idempotent=False)
@@ -379,7 +379,7 @@ def register(kit: Kit) -> None:
         plugin_id: PluginId, force: Force = False
     ) -> RemovePluginResponse:
         """Admin only. Delete an installed plugin. Refused with PLUGIN_IN_USE
-        (listing the projects whose draft or published versions use it)
+        (listing the workflows whose draft or published versions use it)
         unless force."""
         users = await service().remove(plugin_id, force=force)
-        return RemovePluginResponse(plugin_id=plugin_id, affected_projects=list(users))
+        return RemovePluginResponse(plugin_id=plugin_id, affected_workflows=list(users))

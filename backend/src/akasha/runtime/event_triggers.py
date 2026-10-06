@@ -20,16 +20,16 @@ Delivery:
 
 Loop protection (§130/§131): an execution started by an event trigger
 records ``trigger_depth`` = the source execution's depth + 1. A fire that
-would exceed ``max_depth`` is refused and logged, so a project that triggers
+would exceed ``max_depth`` is refused and logged, so a workflow that triggers
 itself on its own completion stops after ``max_depth`` runs.
 
-Authorization: a trigger reacts to events of another project only when the
-trigger project's owner may at least view that project, by the same rule
-as the API (``project_access``): admins every project, members their own
+Authorization: a trigger reacts to events of another workflow only when the
+trigger workflow's owner may at least view that workflow, by the same rule
+as the API (``workflow_access``): admins every workflow, members their own
 and those shared with them. (Editors cannot add a source they cannot see
 themselves: ``AuthorizationService.require_trigger_sources`` at save.)
-Events must not let one user observe or chain onto another user's projects
-(§49). Projects without an owner (operator CLI) may chain among themselves:
+Events must not let one user observe or chain onto another user's workflows
+(§49). Workflows without an owner (operator CLI) may chain among themselves:
 both are admin-only, so no access widens. The check runs at fire time, so a
 demoted or disabled owner, a removed membership or a deleted source takes
 effect immediately.
@@ -41,17 +41,17 @@ from collections.abc import Sequence
 from datetime import datetime, timedelta
 
 from akasha.application.persistence import UnitOfWork
-from akasha.application.projects import UowFactory
 from akasha.application.triggers import ResolvedTrigger, TriggerRegistry, TriggerService
+from akasha.application.workflows import UowFactory
 from akasha.domain.event import Event
-from akasha.domain.identity import project_access
-from akasha.domain.project import Project
+from akasha.domain.identity import workflow_access
 from akasha.domain.trigger import (
     EVENT_SOURCE_FIELD,
     TRIGGERABLE_EVENTS,
     TriggerContext,
     TriggerType,
 )
+from akasha.domain.workflow import Workflow
 from akasha.runtime.scheduler import Clock, Sleep, utc_now
 
 logger = logging.getLogger("akasha.runtime.event_triggers")
@@ -141,24 +141,24 @@ class EventTriggerDispatcher:
             r
             for r in triggers
             if r.trigger.config.get("event") == event.event_type.value
-            and r.trigger.config.get(EVENT_SOURCE_FIELD, r.project_id)
-            == event.project_id
+            and r.trigger.config.get(EVENT_SOURCE_FIELD, r.workflow_id)
+            == event.workflow_id
         ]
         if not matches:
             return 0
         async with self._uow() as uow:
-            source = await uow.projects.get(event.project_id)
+            source = await uow.workflows.get(event.workflow_id)
             depth = 1
             if event.execution_id is not None:
                 execution = await uow.executions.get(event.execution_id)
                 if execution is not None:
                     depth = execution.metadata.trigger_depth + 1
-            # Trigger project -> may it react to the source (other projects).
+            # Trigger workflow -> may it react to the source (other workflows).
             allowed: dict[str, bool] = {}
             for r in matches:
-                if r.project_id not in allowed and r.project_id != event.project_id:
-                    allowed[r.project_id] = await _may_observe(
-                        uow, r.project_id, source
+                if r.workflow_id not in allowed and r.workflow_id != event.workflow_id:
+                    allowed[r.workflow_id] = await _may_observe(
+                        uow, r.workflow_id, source
                     )
         fired = 0
         for resolved in matches:
@@ -192,7 +192,10 @@ class EventTriggerDispatcher:
     ) -> str | None:
         if depth > self._max_depth:
             return "event_trigger_depth_exceeded"
-        if resolved.project_id != event.project_id and not allowed[resolved.project_id]:
+        if (
+            resolved.workflow_id != event.workflow_id
+            and not allowed[resolved.workflow_id]
+        ):
             return "event_trigger_source_denied"
         return None
 
@@ -204,8 +207,8 @@ class EventTriggerDispatcher:
             "event": {
                 "type": event.event_type.value,
                 "event_id": event.event_id,
-                "project_id": event.project_id,
-                "project_version": event.project_version,
+                "workflow_id": event.workflow_id,
+                "workflow_version": event.workflow_version,
                 "execution_id": event.execution_id,
                 "occurred_at": event.occurred_at.isoformat(),
                 "data": dict(event.payload),
@@ -229,11 +232,11 @@ class EventTriggerDispatcher:
         return {
             "event": name,
             "trigger_id": resolved.trigger.id,
-            "project_id": resolved.project_id,
-            "project_version": resolved.version,
+            "workflow_id": resolved.workflow_id,
+            "workflow_version": resolved.version,
             "source_event_id": event.event_id,
             "source_event_type": event.event_type.value,
-            "source_project_id": event.project_id,
+            "source_workflow_id": event.workflow_id,
             "trigger_depth": depth,
             "correlation_id": event.correlation_id,
         }
@@ -255,16 +258,16 @@ class EventTriggerDispatcher:
 
 
 async def _may_observe(
-    uow: UnitOfWork, project_id: str, source: Project | None
+    uow: UnitOfWork, workflow_id: str, source: Workflow | None
 ) -> bool:
-    """Whether project ``project_id``'s owner may react to ``source``."""
-    project = await uow.projects.get(project_id)
-    if source is None or project is None:
+    """Whether workflow ``workflow_id``'s owner may react to ``source``."""
+    workflow = await uow.workflows.get(workflow_id)
+    if source is None or workflow is None:
         return False
-    if project.owner_id is None:  # an ownerless operator project
+    if workflow.owner_id is None:  # an ownerless operator workflow
         return source.owner_id is None
-    owner = await uow.users.get(project.owner_id)
+    owner = await uow.users.get(workflow.owner_id)
     if owner is None or owner.disabled:
         return False
     role = await uow.members.role(source.id, owner.id)
-    return project_access(owner, source.owner_id, role) is not None
+    return workflow_access(owner, source.owner_id, role) is not None

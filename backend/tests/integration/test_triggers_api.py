@@ -20,12 +20,12 @@ from sqlalchemy import text
 from akasha.api.app import create_app
 from akasha.application.credentials import CredentialService
 from akasha.application.executions import ExecutionService
-from akasha.application.projects import ProjectService
 from akasha.application.triggers import (
     TriggerRegistry,
     TriggerService,
     webhook_signature,
 )
+from akasha.application.workflows import WorkflowService
 from akasha.bootstrap import Container
 from akasha.config import Settings
 from akasha.domain.credentials import CredentialKind, Secret
@@ -44,7 +44,7 @@ pytestmark = pytest.mark.usefixtures("clean_db")
 
 ERROR_KEYS = {"code", "message", "details", "request_id"}
 UNKNOWN_ID = "trig_" + "0" * 32
-UNKNOWN_PROJECT = "proj_" + "0" * 32
+UNKNOWN_WORKFLOW = "wf_" + "0" * 32
 # Every webhook trigger in these tests is signed with this credential.
 HOOK_REF, HOOK_SECRET = "credential:hook", "whsec-test-0123456789"
 HOOK_CIPHER = SecretCipher(b"h" * 32)
@@ -65,12 +65,12 @@ async def sign_webhooks(request: httpx.Request) -> None:
         )
 
 
-def invoke_url(project_id: str, trigger_id: str) -> str:
-    return f"/api/v1/projects/{project_id}/triggers/{trigger_id}/invoke"
+def invoke_url(workflow_id: str, trigger_id: str) -> str:
+    return f"/api/v1/workflows/{workflow_id}/triggers/{trigger_id}/invoke"
 
 
-def webhook_url(project_id: str, trigger_id: str) -> str:
-    return f"/api/v1/webhooks/{project_id}/{trigger_id}"
+def webhook_url(workflow_id: str, trigger_id: str) -> str:
+    return f"/api/v1/webhooks/{workflow_id}/{trigger_id}"
 
 
 def uow_of(database: Database) -> SqlAlchemyUnitOfWork:
@@ -79,16 +79,16 @@ def uow_of(database: Database) -> SqlAlchemyUnitOfWork:
 
 @pytest.fixture
 async def api(
-    database: Database, project_service: ProjectService
+    database: Database, workflow_service: WorkflowService
 ) -> AsyncIterator[httpx.AsyncClient]:
-    async with trigger_client(database, project_service) as client:
+    async with trigger_client(database, workflow_service) as client:
         yield client
 
 
 @asynccontextmanager
 async def trigger_client(
     database: Database,
-    project_service: ProjectService,
+    workflow_service: WorkflowService,
     **setting_overrides: Any,
 ) -> AsyncIterator[httpx.AsyncClient]:
     settings = Settings(environment="test", log_level="CRITICAL", **setting_overrides)
@@ -101,7 +101,7 @@ async def trigger_client(
     container = Container(
         settings=settings,
         database=database,
-        projects=project_service,
+        workflows=workflow_service,
         executions=executions,
         triggers=TriggerService(executions),
         trigger_registry=TriggerRegistry(lambda: uow_of(database)),
@@ -152,17 +152,17 @@ async def publish_with(
     api: httpx.AsyncClient,
     triggers: list[dict[str, Any]],
     *,
-    project_id: str | None = None,
+    workflow_id: str | None = None,
     revision: int = 1,
 ) -> tuple[str, int, int]:
     """Create (or replace) the draft and publish; returns
-    (project_id, version, next_expected_revision)."""
-    if project_id is None:
-        project_id = (await api.post("/api/v1/projects", json={"name": "t"})).json()[
+    (workflow_id, version, next_expected_revision)."""
+    if workflow_id is None:
+        workflow_id = (await api.post("/api/v1/workflows", json={"name": "t"})).json()[
             "id"
         ]
     updated = await api.put(
-        f"/api/v1/projects/{project_id}",
+        f"/api/v1/workflows/{workflow_id}",
         json={
             "expected_revision": revision,
             "name": "t",
@@ -171,11 +171,11 @@ async def publish_with(
     )
     assert updated.status_code == 200, updated.text
     published = await api.post(
-        f"/api/v1/projects/{project_id}/publish",
+        f"/api/v1/workflows/{workflow_id}/publish",
         json={"expected_revision": revision + 1},
     )
     assert published.status_code == 201, published.text
-    return project_id, published.json()["version"], revision + 2
+    return workflow_id, published.json()["version"], revision + 2
 
 
 def assert_error(response: httpx.Response, status: int, code: str) -> None:
@@ -189,20 +189,20 @@ def assert_error(response: httpx.Response, status: int, code: str) -> None:
 def assert_execution(
     body: dict[str, Any],
     *,
-    project_id: str,
+    workflow_id: str,
     trigger_type: str,
     trigger_id: str | None,
     correlation_id: str | None = None,
 ) -> None:
     assert set(body) >= {
         "id",
-        "project_id",
+        "workflow_id",
         "version",
         "status",
         "trigger_type",
         "trigger_id",
     }
-    assert body["project_id"] == project_id
+    assert body["workflow_id"] == workflow_id
     assert body["status"] == "queued"
     assert body["trigger_type"] == trigger_type
     assert body["trigger_id"] == trigger_id
@@ -218,7 +218,7 @@ async def test_manual_execute_creates_canonical_execution(
     pid, version, _ = await publish_with(api, [])
 
     response = await api.post(
-        f"/api/v1/projects/{pid}/versions/{version}/execute",
+        f"/api/v1/workflows/{pid}/versions/{version}/execute",
         json={"goal": "run"},
         headers={"x-request-id": "req-manual-1"},
     )
@@ -226,7 +226,7 @@ async def test_manual_execute_creates_canonical_execution(
     assert response.status_code == 201, response.text
     assert_execution(
         response.json(),
-        project_id=pid,
+        workflow_id=pid,
         trigger_type="manual",
         trigger_id=None,
         correlation_id="req-manual-1",
@@ -238,18 +238,18 @@ async def test_manual_execute_creates_canonical_execution(
 
 async def test_manual_execute_unknown_version(api: httpx.AsyncClient) -> None:
     pid, _, _ = await publish_with(api, [])
-    response = await api.post(f"/api/v1/projects/{pid}/versions/99/execute", json={})
-    assert_error(response, 404, "PROJECT_VERSION_NOT_FOUND")
+    response = await api.post(f"/api/v1/workflows/{pid}/versions/99/execute", json={})
+    assert_error(response, 404, "WORKFLOW_VERSION_NOT_FOUND")
 
 
-async def test_manual_execute_over_project_capacity_is_429(
-    database: Database, project_service: ProjectService
+async def test_manual_execute_over_workflow_capacity_is_429(
+    database: Database, workflow_service: WorkflowService
 ) -> None:
     async with trigger_client(
-        database, project_service, limit_active_executions_per_project=1
+        database, workflow_service, limit_active_executions_per_workflow=1
     ) as api:
         pid, version, _ = await publish_with(api, [])
-        url = f"/api/v1/projects/{pid}/versions/{version}/execute"
+        url = f"/api/v1/workflows/{pid}/versions/{version}/execute"
         assert (await api.post(url, json={})).status_code == 201
         response = await api.post(url, json={})
     assert_error(response, 429, "EXECUTION_CAPACITY_EXCEEDED")
@@ -268,7 +268,7 @@ async def test_get_unknown_execution(api: httpx.AsyncClient) -> None:
 async def test_manual_execute_invalid_input_rejected(api: httpx.AsyncClient) -> None:
     pid, version, _ = await publish_with(api, [])
     response = await api.post(
-        f"/api/v1/projects/{pid}/versions/{version}/execute", json=["not", "an-object"]
+        f"/api/v1/workflows/{pid}/versions/{version}/execute", json=["not", "an-object"]
     )
     assert response.status_code == 422
 
@@ -286,7 +286,7 @@ async def test_invoke_api_trigger(api: httpx.AsyncClient) -> None:
     # No X-Request-ID sent: the minted request id is the correlation root.
     assert_execution(
         response.json(),
-        project_id=pid,
+        workflow_id=pid,
         trigger_type="api",
         trigger_id=trigger_id,
         correlation_id=response.headers["x-request-id"],
@@ -303,7 +303,7 @@ async def test_invoke_manual_trigger_allowed(api: httpx.AsyncClient) -> None:
     # No X-Request-ID sent: the minted request id is the correlation root.
     assert_execution(
         response.json(),
-        project_id=pid,
+        workflow_id=pid,
         trigger_type="manual",
         trigger_id=trigger_id,
         correlation_id=response.headers["x-request-id"],
@@ -315,12 +315,12 @@ async def test_invoke_unknown_or_foreign_type_is_404(api: httpx.AsyncClient) -> 
     pid, _, _ = await publish_with(api, [{"id": trigger_id, "trigger_type": "webhook"}])
 
     # Unknown ids and a WEBHOOK trigger alike: the invoke endpoint must not
-    # reveal which mechanisms an id answers to (§49). An unknown project is
-    # stopped earlier, by the project access check.
+    # reveal which mechanisms an id answers to (§49). An unknown workflow is
+    # stopped earlier, by the workflow access check.
     for url in (invoke_url(pid, UNKNOWN_ID), invoke_url(pid, trigger_id)):
         assert_error(await api.post(url), 404, "TRIGGER_NOT_FOUND")
-    response = await api.post(invoke_url(UNKNOWN_PROJECT, trigger_id))
-    assert_error(response, 404, "PROJECT_NOT_FOUND")
+    response = await api.post(invoke_url(UNKNOWN_WORKFLOW, trigger_id))
+    assert_error(response, 404, "WORKFLOW_NOT_FOUND")
 
 
 # -- webhook invocation (§127) -----------------------------------------------
@@ -341,7 +341,7 @@ async def test_webhook_fires_with_payload_as_input(
     assert response.status_code == 202, response.text
     assert_execution(
         response.json(),
-        project_id=pid,
+        workflow_id=pid,
         trigger_type="webhook",
         trigger_id=trigger_id,
         correlation_id="wh-1",
@@ -359,7 +359,7 @@ async def test_webhook_unknown_or_wrong_type_is_404(api: httpx.AsyncClient) -> N
 
     for url in (
         webhook_url(pid, UNKNOWN_ID),
-        webhook_url(UNKNOWN_PROJECT, api_trigger_id),
+        webhook_url(UNKNOWN_WORKFLOW, api_trigger_id),
         webhook_url(pid, api_trigger_id),
     ):
         assert_error(await api.post(url, json={}), 404, "TRIGGER_NOT_FOUND")
@@ -403,7 +403,7 @@ async def test_unparseable_or_too_deep_payloads_are_422_not_500(
 
     for url in (
         invoke_url(pid, api_id),
-        f"/api/v1/projects/{pid}/versions/{version}/execute",
+        f"/api/v1/workflows/{pid}/versions/{version}/execute",
     ):
         response = await api.post(url, content=too_deep, headers=json_headers)
         assert response.status_code == 422, response.text
@@ -411,10 +411,10 @@ async def test_unparseable_or_too_deep_payloads_are_422_not_500(
 
 
 async def test_webhook_payload_limit(
-    database: Database, project_service: ProjectService
+    database: Database, workflow_service: WorkflowService
 ) -> None:
     async with trigger_client(
-        database, project_service, webhook_max_payload_bytes=16
+        database, workflow_service, webhook_max_payload_bytes=16
     ) as api:
         trigger_id = new_id("trig")
         pid, _, _ = await publish_with(
@@ -447,7 +447,7 @@ async def test_republish_retires_old_trigger(api: httpx.AsyncClient) -> None:
     fired = await api.post(webhook_url(pid, trigger_id), json={})
     assert fired.status_code == 202, fired.text
 
-    await publish_with(api, [], project_id=pid, revision=revision)
+    await publish_with(api, [], workflow_id=pid, revision=revision)
 
     assert_error(
         await api.post(webhook_url(pid, trigger_id), json={}),
@@ -496,30 +496,30 @@ async def test_invalid_trigger_configs_block_publish_not_drafts(
 ) -> None:
     """A draft may hold invalid triggers (it must stay editable); validate
     reports them with their location, and publish refuses them."""
-    pid = (await api.post("/api/v1/projects", json={"name": "t"})).json()["id"]
+    pid = (await api.post("/api/v1/workflows", json={"name": "t"})).json()["id"]
     saved = await api.put(
-        f"/api/v1/projects/{pid}",
+        f"/api/v1/workflows/{pid}",
         json={"expected_revision": 1, "name": "t", "draft": draft_with(triggers)},
     )
     assert saved.status_code == 200, saved.text
 
-    issues = (await api.post(f"/api/v1/projects/{pid}/validate")).json()["issues"]
+    issues = (await api.post(f"/api/v1/workflows/{pid}/validate")).json()["issues"]
     assert [(i["code"], i["trigger_id"]) for i in issues] == [
         (code, triggers[-1]["id"])
     ]
 
     published = await api.post(
-        f"/api/v1/projects/{pid}/publish", json={"expected_revision": 2}
+        f"/api/v1/workflows/{pid}/publish", json={"expected_revision": 2}
     )
-    assert_error(published, 422, "PROJECT_VALIDATION_FAILED")
+    assert_error(published, 422, "WORKFLOW_VALIDATION_FAILED")
     assert published.json()["details"]["issues"][0]["code"] == code
 
 
-async def test_same_trigger_id_in_two_projects_is_routed_by_project(
+async def test_same_trigger_id_in_two_workflows_is_routed_by_workflow(
     api: httpx.AsyncClient,
 ) -> None:
-    """D6: trigger ids are unique per project only. A second project that
-    reuses an id must never receive the first project's deliveries."""
+    """D6: trigger ids are unique per workflow only. A second workflow that
+    reuses an id must never receive the first workflow's deliveries."""
     shared = new_id("trig")
     first, _, _ = await publish_with(api, [{"id": shared, "trigger_type": "webhook"}])
     second, _, _ = await publish_with(api, [{"id": shared, "trigger_type": "webhook"}])
@@ -527,15 +527,15 @@ async def test_same_trigger_id_in_two_projects_is_routed_by_project(
     for pid in (first, second):
         response = await api.post(webhook_url(pid, shared), json={"to": pid})
         assert response.status_code == 202, response.text
-        assert response.json()["project_id"] == pid
+        assert response.json()["workflow_id"] == pid
 
 
 async def test_legacy_trigger_configs_stay_loadable_and_isolated(
     api: httpx.AsyncClient, database: Database
 ) -> None:
     """D4: a trigger stored before the Phase 10 schedule rules (any non-empty
-    cron string was accepted) must neither lock its own project nor break
-    other projects' webhooks or schedules."""
+    cron string was accepted) must neither lock its own workflow nor break
+    other workflows' webhooks or schedules."""
     healthy_hook, healthy_tick = new_id("trig"), new_id("trig")
     healthy, _, _ = await publish_with(
         api,
@@ -566,26 +566,26 @@ async def test_legacy_trigger_configs_stay_loadable_and_isolated(
     async with database.engine.begin() as conn:
         await conn.execute(
             text(
-                "UPDATE projects SET draft_triggers = CAST(:t AS JSONB) WHERE id = :p"
+                "UPDATE workflows SET draft_triggers = CAST(:t AS JSONB) WHERE id = :p"
             ),
             {"t": stale, "p": legacy},
         )
         await conn.execute(
             text(
-                "UPDATE project_versions SET triggers = CAST(:t AS JSONB)"
-                " WHERE project_id = :p"
+                "UPDATE workflow_versions SET triggers = CAST(:t AS JSONB)"
+                " WHERE workflow_id = :p"
             ),
             {"t": stale, "p": legacy},
         )
 
-    # The legacy project stays loadable and tells the user what to fix.
-    assert (await api.get(f"/api/v1/projects/{legacy}")).status_code == 200
-    assert (await api.get(f"/api/v1/projects/{legacy}/versions/1")).status_code == 200
-    issues = (await api.post(f"/api/v1/projects/{legacy}/validate")).json()["issues"]
+    # The legacy workflow stays loadable and tells the user what to fix.
+    assert (await api.get(f"/api/v1/workflows/{legacy}")).status_code == 200
+    assert (await api.get(f"/api/v1/workflows/{legacy}/versions/1")).status_code == 200
+    issues = (await api.post(f"/api/v1/workflows/{legacy}/validate")).json()["issues"]
     assert [(i["code"], i["trigger_id"]) for i in issues] == [
         ("invalid_trigger_schedule", legacy_id)
     ]
-    # Other projects are unaffected, and nothing about the legacy config leaks.
+    # Other workflows are unaffected, and nothing about the legacy config leaks.
     fired = await api.post(webhook_url(healthy, healthy_hook), json={})
     assert fired.status_code == 202, fired.text
     assert "garbage" not in fired.text
@@ -783,29 +783,29 @@ async def test_webhook_with_deleted_secret_refuses_every_call(
 async def test_webhook_without_a_secret_cannot_be_published(
     api: httpx.AsyncClient,
 ) -> None:
-    pid = (await api.post("/api/v1/projects", json={"name": "t"})).json()["id"]
+    pid = (await api.post("/api/v1/workflows", json={"name": "t"})).json()["id"]
     draft = draft_with([{"id": new_id("trig"), "trigger_type": "webhook"}])
     draft["triggers"][0]["config"] = {}
     updated = await api.put(
-        f"/api/v1/projects/{pid}",
+        f"/api/v1/workflows/{pid}",
         json={"expected_revision": 1, "name": "t", "draft": draft},
     )
     assert updated.status_code == 200, updated.text
-    validation = await api.post(f"/api/v1/projects/{pid}/validate")
+    validation = await api.post(f"/api/v1/workflows/{pid}/validate")
     codes = [i["code"] for i in validation.json()["issues"]]
     assert codes == ["webhook_secret_required"], validation.text
     published = await api.post(
-        f"/api/v1/projects/{pid}/publish", json={"expected_revision": 2}
+        f"/api/v1/workflows/{pid}/publish", json={"expected_revision": 2}
     )
     assert published.status_code == 422, published.text
 
 
 async def test_webhook_secret_must_be_a_reference(api: httpx.AsyncClient) -> None:
-    pid = (await api.post("/api/v1/projects", json={"name": "t"})).json()["id"]
+    pid = (await api.post("/api/v1/workflows", json={"name": "t"})).json()["id"]
     draft = draft_with([{"id": new_id("trig"), "trigger_type": "webhook"}])
     draft["triggers"][0]["config"] = {"secret_credential": HOOK_SECRET}
     response = await api.put(
-        f"/api/v1/projects/{pid}",
+        f"/api/v1/workflows/{pid}",
         json={"expected_revision": 1, "name": "t", "draft": draft},
     )
     assert_error(response, 422, "PLAINTEXT_SECRET")
@@ -813,12 +813,12 @@ async def test_webhook_secret_must_be_a_reference(api: httpx.AsyncClient) -> Non
 
 
 async def test_oversized_webhook_body_is_rejected_while_streaming(
-    database: Database, project_service: ProjectService
+    database: Database, workflow_service: WorkflowService
 ) -> None:
     """A body with no Content-Length (chunked) is cut off at the cap, before
     the signature is even checked."""
     async with trigger_client(
-        database, project_service, webhook_max_payload_bytes=1024
+        database, workflow_service, webhook_max_payload_bytes=1024
     ) as api:
         trigger_id = new_id("trig")
         pid, _, _ = await publish_with(
@@ -845,16 +845,16 @@ async def test_oversized_webhook_body_is_rejected_while_streaming(
 
 
 async def test_every_request_body_is_capped(
-    database: Database, project_service: ProjectService
+    database: Database, workflow_service: WorkflowService
 ) -> None:
     async with trigger_client(
-        database, project_service, api_max_request_bytes=4096
+        database, workflow_service, api_max_request_bytes=4096
     ) as api:
-        pid = (await api.post("/api/v1/projects", json={"name": "t"})).json()["id"]
+        pid = (await api.post("/api/v1/workflows", json={"name": "t"})).json()["id"]
         big = {"expected_revision": 1, "name": "t", "description": "x" * 8192}
-        response = await api.put(f"/api/v1/projects/{pid}", json=big)
+        response = await api.put(f"/api/v1/workflows/{pid}", json=big)
         assert_error(response, 413, "PAYLOAD_TOO_LARGE")
         within = {"expected_revision": 1, "name": "t", "draft": draft_with([])}
         assert (
-            await api.put(f"/api/v1/projects/{pid}", json=within)
+            await api.put(f"/api/v1/workflows/{pid}", json=within)
         ).status_code == 200

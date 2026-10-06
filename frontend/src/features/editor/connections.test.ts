@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { NodeDefinition, NodePort } from '../../api/nodes'
-import type { Edge, Graph } from '../../api/projects'
+import type { Edge, Graph } from '../../api/workflows'
 import {
     connectionProblem,
     missingInputs,

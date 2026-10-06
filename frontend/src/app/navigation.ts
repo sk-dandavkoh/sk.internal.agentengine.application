@@ -6,11 +6,11 @@ export interface NavItem {
     readonly adminOnly?: boolean
 }
 
-// Top-level product areas. The Editor is reached per project
-// (/projects/:projectId/editor), so it has no entry of its own here.
+// Top-level product areas. The Editor is reached per workflow
+// (/workflows/:workflowId/editor), so it has no entry of its own here.
 export const navItems: readonly NavItem[] = [
     { label: 'Dashboard', path: '/dashboard' },
-    { label: 'Projects', path: '/projects' },
+    { label: 'Workflows', path: '/workflows' },
     { label: 'Executions', path: '/executions' },
     { label: 'Monitoring', path: '/monitoring' },
     { label: 'Reports', path: '/reports' },

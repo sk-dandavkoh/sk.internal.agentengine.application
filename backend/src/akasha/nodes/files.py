@@ -1,6 +1,6 @@
 """File built-ins: core.file_read, core.file_write, core.file_list.
 
-All three work inside the execution's project directory of the
+All three work inside the execution's workflow directory of the
 operator-configured workspace (``AKASHA_WORKSPACE_DIR``); every path goes
 through ``akasha.security.paths.Workspace`` (architecture §64). Without a
 workspace they fail with WORKSPACE_NOT_CONFIGURED. Contents are UTF-8 text:
@@ -63,7 +63,7 @@ class _WorkspaceNode(Node):
                 "WORKSPACE_NOT_CONFIGURED",
             )
         path = self._workspace.resolve(
-            context.project_id, context.inputs.get("path", ".")
+            context.workflow_id, context.inputs.get("path", ".")
         )
         return self._workspace, path
 
@@ -80,11 +80,11 @@ class FileReadNode(_WorkspaceNode):
         metadata=NodeMetadata(
             node_id="core.file_read",
             name="Read File",
-            description="Reads a UTF-8 text file from the project workspace.",
+            description="Reads a UTF-8 text file from the workflow workspace.",
             version=VERSION,
             category="file",
         ),
-        inputs=(_path_in("Path relative to the project workspace."),),
+        inputs=(_path_in("Path relative to the workflow workspace."),),
         outputs=(
             NodeOutput("content", PortType.STRING),
             NodeOutput("size", PortType.NUMBER, description="Size in bytes."),
@@ -116,12 +116,12 @@ class FileWriteNode(_WorkspaceNode):
         metadata=NodeMetadata(
             node_id="core.file_write",
             name="Write File",
-            description="Writes a UTF-8 text file into the project workspace.",
+            description="Writes a UTF-8 text file into the workflow workspace.",
             version=VERSION,
             category="file",
         ),
         inputs=(
-            _path_in("Path relative to the project workspace."),
+            _path_in("Path relative to the workflow workspace."),
             NodeInput("content", PortType.STRING, description="Text to write."),
         ),
         outputs=(
@@ -147,7 +147,7 @@ class FileWriteNode(_WorkspaceNode):
         mode = context.config.get("mode", "overwrite")
         size = await asyncio.to_thread(self._write, path, data, mode)
         return NodeResult(
-            {"path": workspace.relative(context.project_id, path), "size": size}
+            {"path": workspace.relative(context.workflow_id, path), "size": size}
         )
 
     def _write(self, path: Path, data: bytes, mode: str) -> int:
@@ -175,13 +175,13 @@ class FileListNode(_WorkspaceNode):
         metadata=NodeMetadata(
             node_id="core.file_list",
             name="List Files",
-            description="Lists a directory of the project workspace.",
+            description="Lists a directory of the workflow workspace.",
             version=VERSION,
             category="file",
         ),
         inputs=(
             _path_in(
-                "Directory relative to the project workspace; "
+                "Directory relative to the workflow workspace; "
                 "the workspace itself when empty.",
                 required=False,
             ),
@@ -215,12 +215,12 @@ class FileListNode(_WorkspaceNode):
                 "DIRECTORY_NOT_FOUND",
             )
         entries = await asyncio.to_thread(
-            self._list, workspace, context.project_id, path
+            self._list, workspace, context.workflow_id, path
         )
         return NodeResult({"entries": entries})
 
     def _list(
-        self, workspace: Workspace, project_id: str, path: Path
+        self, workspace: Workspace, workflow_id: str, path: Path
     ) -> list[dict[str, Any]]:
         # Sorted for determinism (AGENTS §72); symlinks are listed by name
         # only, never followed, so a link cannot reveal outside sizes.
@@ -231,7 +231,7 @@ class FileListNode(_WorkspaceNode):
             is_dir = stat.S_ISDIR(info.st_mode)
             entries.append(
                 {
-                    "path": workspace.relative(project_id, child),
+                    "path": workspace.relative(workflow_id, child),
                     "type": "directory" if is_dir else "file",
                     "size": 0 if is_dir else info.st_size,
                 }

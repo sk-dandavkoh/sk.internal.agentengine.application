@@ -51,9 +51,9 @@ Explicitly not in scope:
 - The design system (Phase 02).
 - The API client (Phase 03).
 - Domain types, TanStack Query and Zod (Phase 04).
-- All feature areas: dashboard, projects, editor, nodes, executions, authentication and so on (Phases 05–21).
+- All feature areas: dashboard, workflows, editor, nodes, executions, authentication and so on (Phases 05–21).
 
-The session prompt also excluded the dashboard, project management, graph editor, node library, authentication UI and execution UI.
+The session prompt also excluded the dashboard, workflow management, graph editor, node library, authentication UI and execution UI.
 
 ---
 

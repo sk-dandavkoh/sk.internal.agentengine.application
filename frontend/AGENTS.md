@@ -32,14 +32,14 @@ Das Frontend ist die Benutzeroberfläche der Agent Engine.
 Es ist verantwortlich für:
 
 - Navigation
-- Projektübersicht
-- Projektverwaltung
+- Workflowübersicht
+- Workflowverwaltung
 - visuellen Graph Editor
 - Node Library
 - Node Configuration Inspector
 - Graph Validation UX
 - Publish Workflow
-- Project Versions
+- Workflow Versions
 - Execution UI
 - Live Execution
 - Execution Inspector
@@ -56,7 +56,7 @@ Es ist verantwortlich für:
 Das Backend bleibt die autoritative Quelle für:
 
 - Domain State
-- Projektstatus
+- Workflowstatus
 - Graphvalidierung
 - Berechtigungen
 - Credentials
@@ -151,7 +151,7 @@ Diese Zustände dürfen nicht unkontrolliert vermischt werden.
 Beispiel:
 
 ```text
-Backend Project
+Backend Workflow
     ↓
 TanStack Query
     ↓
@@ -175,7 +175,7 @@ src/
 ├── features/
 │   ├── auth/
 │   ├── dashboard/
-│   ├── projects/
+│   ├── workflows/
 │   ├── editor/
 │   ├── nodes/
 │   ├── executions/
@@ -206,7 +206,7 @@ Das Frontend darf keine fachlichen Zustände erfinden.
 Beispielsweise darf ein Frontend nicht selbst entscheiden:
 
 ```text
-Project is publishable
+Workflow is publishable
 ```
 
 nur weil lokale UI-Validierung erfolgreich ist.
@@ -225,7 +225,7 @@ Dasselbe gilt für:
     
 -   Node Status
     
--   Project Version
+-   Workflow Version
     
 -   Credentials
     
@@ -247,8 +247,8 @@ Direkte `fetch`-Aufrufe in Feature-Komponenten sind grundsätzlich zu vermeiden.
 Nicht:
 
 ```tsx
-function ProjectPage() {
-  const data = await fetch("/api/v1/projects");
+function WorkflowPage() {
+  const data = await fetch("/api/v1/workflows");
 }
 ```
 
@@ -292,7 +292,7 @@ Beispielsweise:
 ```text
 src/api/
 ├── client.ts
-├── projects.ts
+├── workflows.ts
 ├── executions.ts
 ├── nodes.ts
 ├── credentials.ts
@@ -321,7 +321,7 @@ Für kritische API-Grenzen soll Runtime Validation verwendet werden, insbesonder
     
 -   Node Contracts
     
--   Project Packages
+-   Workflow Packages
     
 -   Execution Events
     
@@ -333,7 +333,7 @@ Ungültige Serverdaten müssen kontrolliert behandelt werden.
 Nicht einfach:
 
 ```ts
-return response.json() as Project;
+return response.json() as Workflow;
 ```
 
 wenn die Struktur nicht anderweitig garantiert ist.
@@ -374,9 +374,9 @@ Query Keys müssen stabil und semantisch sein.
 Beispielsweise:
 
 ```ts
-["projects"]
-["projects", projectId]
-["projects", projectId, "versions"]
+["workflows"]
+["workflows", workflowId]
+["workflows", workflowId, "versions"]
 ["executions", executionId]
 ```
 
@@ -392,8 +392,8 @@ Beispiel:
 
 ```text
 Server State:
-Project
-ProjectVersion
+Workflow
+WorkflowVersion
 Execution
 NodeDefinition
 
@@ -426,10 +426,10 @@ Beispielhafte Bereiche:
 ```text
 /login
 /dashboard
-/projects
-/projects/:projectId
-/projects/:projectId/editor
-/projects/:projectId/versions
+/workflows
+/workflows/:workflowId
+/workflows/:workflowId/editor
+/workflows/:workflowId/versions
 /executions
 /executions/:executionId
 /monitoring
@@ -766,7 +766,7 @@ Saved Draft State
 Published Version
 ```
 
-Ein Nutzer kann Änderungen machen, ohne dass dadurch automatisch eine neue Project Version entsteht.
+Ein Nutzer kann Änderungen machen, ohne dass dadurch automatisch eine neue Workflow Version entsteht.
 
 Save/Autosave und Publish sind unterschiedliche Operationen.
 
@@ -910,7 +910,7 @@ Validation Errors müssen strukturiert dargestellt werden.
 Ein Fehler sollte nach Möglichkeit referenzieren können:
 
 ```text
-Project
+Workflow
 Node
 Port
 Edge
@@ -954,9 +954,9 @@ Das Frontend darf eine erfolgreiche lokale Validation nicht mit einem erfolgreic
 
 ----------
 
-# 35. Project Versions
+# 35. Workflow Versions
 
-Project Versions sind immutable.
+Workflow Versions sind immutable.
 
 Das UI muss klar zwischen:
 
@@ -983,8 +983,8 @@ Mindestens:
 
 ```text
 Execution ID
-Project
-Project Version
+Workflow
+Workflow Version
 Trigger
 Status
 Start
@@ -1383,7 +1383,7 @@ Für komplexe Fehler sind Inline-Fehler oder Error Panels geeigneter.
 
 Destruktive Aktionen benötigen klare UI-Bestätigung, beispielsweise:
 
--   Project Delete
+-   Workflow Delete
     
 -   Version Delete, sofern erlaubt
     
@@ -1665,7 +1665,7 @@ User-generated Inhalte können enthalten:
     
 -   Node Config
     
--   Project Names
+-   Workflow Names
     
 -   Descriptions
     
@@ -1875,7 +1875,7 @@ Login
  ↓
 Dashboard
  ↓
-Create Project
+Create Workflow
  ↓
 Open Editor
  ↓
@@ -1990,7 +1990,7 @@ Besonders kritisch:
 
 -   Dashboard
     
--   Project List
+-   Workflow List
     
 -   Execution Inspector
     
@@ -2101,7 +2101,7 @@ Relevant:
     
 -   Request/Correlation ID
     
--   Project ID
+-   Workflow ID
     
 -   Execution ID
     
@@ -2178,7 +2178,7 @@ Mögliche Mechanismen:
 -   Unsaved Changes Warning
     
 
-Nicht heimlich sensible Project-Daten dauerhaft im Browser speichern.
+Nicht heimlich sensible Workflow-Daten dauerhaft im Browser speichern.
 
 ----------
 
@@ -2319,7 +2319,7 @@ UI darf nicht so aussehen, als sei die Ressource gelöscht.
 
 ----------
 
-# 94. Project Editor und Backend Revisions
+# 94. Workflow Editor und Backend Revisions
 
 Wenn das Backend Revisionen/Optimistic Concurrency unterstützt, muss das Frontend diese verwenden.
 
@@ -2336,7 +2336,7 @@ Features sollen möglichst eigenständig bleiben.
 Beispielsweise:
 
 ```text
-projects/
+workflows/
 editor/
 executions/
 credentials/
@@ -2368,10 +2368,10 @@ gehören in Shared/UI.
 Ein:
 
 ```text
-ProjectPublishDialog
+WorkflowPublishDialog
 ```
 
-gehört in das Project/Publish Feature.
+gehört in das Workflow/Publish Feature.
 
 ----------
 
@@ -2546,7 +2546,7 @@ Insbesondere:
 ```text
 Role
 Permission
-Project Access
+Workflow Access
 Credential Access
 Execution Access
 Plugin Actions

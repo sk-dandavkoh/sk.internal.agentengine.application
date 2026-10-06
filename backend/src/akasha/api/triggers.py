@@ -1,9 +1,9 @@
 """Trigger mechanism endpoints: thin HTTP adapters over application services.
 
-- POST /projects/{project_id}/versions/{version}/execute : manual run (§126)
-- POST /projects/{project_id}/triggers/{trigger_id}/invoke : configured
+- POST /workflows/{workflow_id}/versions/{version}/execute : manual run (§126)
+- POST /workflows/{workflow_id}/triggers/{trigger_id}/invoke : configured
   MANUAL/API triggers
-- POST /webhooks/{project_id}/{trigger_id} : external webhook call (§127),
+- POST /webhooks/{workflow_id}/{trigger_id} : external webhook call (§127),
   authenticated by an HMAC-SHA256 signature of the raw body
   (``X-Akasha-Signature: sha256=<hex>``) under the trigger's secret
   credential
@@ -12,10 +12,10 @@ Observing the created execution: ``akasha.api.executions``.
 
 Webhooks are the one public route (their own router): external systems
 call them without a user session. Everything else needs a session with
-access to the project or execution in the path.
+access to the workflow or execution in the path.
 
-Trigger ids are unique only within a project, so every trigger URL carries
-the project id. All three endpoints end in ``TriggerService`` →
+Trigger ids are unique only within a workflow, so every trigger URL carries
+the workflow id. All three endpoints end in ``TriggerService`` →
 ``ExecutionService`` (§32). Nothing here runs a graph; webhooks in particular
 never execute synchronously (§127). The execution is recorded as QUEUED
 and dispatched to the workers (Phase 22): the response never waits for the
@@ -88,10 +88,10 @@ def _context(
     )
 
 
-def _not_found(project_id: str, trigger_id: str) -> TriggerNotFoundError:
+def _not_found(workflow_id: str, trigger_id: str) -> TriggerNotFoundError:
     return TriggerNotFoundError(
         "Trigger not found.",
-        details={"project_id": project_id, "trigger_id": trigger_id},
+        details={"workflow_id": workflow_id, "trigger_id": trigger_id},
     )
 
 
@@ -102,18 +102,18 @@ def create_triggers_router() -> APIRouter:
     router = APIRouter(tags=["triggers"], responses=errors)
 
     @router.post(
-        "/projects/{project_id}/versions/{version}/execute",
+        "/workflows/{workflow_id}/versions/{version}/execute",
         status_code=status.HTTP_201_CREATED,
     )
     async def execute_version(
-        project_id: str,
+        workflow_id: str,
         version: VersionNumber,
         request: Request,
         svc: Triggers,
         body: JsonObject = None,
     ) -> ExecutionDetail:
         execution = await svc.fire_manual(
-            project_id,
+            workflow_id,
             version,
             input=body,
             correlation_id=request_id(request),
@@ -121,22 +121,22 @@ def create_triggers_router() -> APIRouter:
         return ExecutionDetail.from_domain(execution)
 
     @router.post(
-        "/projects/{project_id}/triggers/{trigger_id}/invoke",
+        "/workflows/{workflow_id}/triggers/{trigger_id}/invoke",
         status_code=status.HTTP_201_CREATED,
     )
     async def invoke_trigger(
-        project_id: str,
+        workflow_id: str,
         trigger_id: str,
         request: Request,
         registry: Registry,
         svc: Triggers,
         body: JsonObject = None,
     ) -> ExecutionDetail:
-        resolved = await registry.resolve(project_id, trigger_id)
+        resolved = await registry.resolve(workflow_id, trigger_id)
         if resolved is None or resolved.trigger.trigger_type not in INVOCABLE_TYPES:
             # Unknown ids and wrong-type ids get the same 404, so a caller
             # cannot learn which mechanism owns an id (§49).
-            raise _not_found(project_id, trigger_id)
+            raise _not_found(workflow_id, trigger_id)
         context = _context(request, resolved.trigger.trigger_type, dict(body or {}))
         return ExecutionDetail.from_domain(await svc.fire(resolved, context))
 
@@ -152,20 +152,20 @@ def create_webhooks_router() -> APIRouter:
     router = APIRouter(tags=["triggers"], responses=errors)
 
     @router.post(
-        "/webhooks/{project_id}/{trigger_id}", status_code=status.HTTP_202_ACCEPTED
+        "/webhooks/{workflow_id}/{trigger_id}", status_code=status.HTTP_202_ACCEPTED
     )
     async def webhook(
-        project_id: str,
+        workflow_id: str,
         trigger_id: str,
         request: Request,
         registry: Registry,
         svc: Triggers,
     ) -> ExecutionDetail:
         resolved = await registry.resolve(
-            project_id, trigger_id, trigger_type=TriggerType.WEBHOOK
+            workflow_id, trigger_id, trigger_type=TriggerType.WEBHOOK
         )
         if resolved is None:
-            raise _not_found(project_id, trigger_id)
+            raise _not_found(workflow_id, trigger_id)
         limit = request.app.state.container.settings.webhook_max_payload_bytes
         raw = await read_limited_body(
             request,

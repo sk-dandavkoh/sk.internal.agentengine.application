@@ -29,7 +29,7 @@ interface Draft {
     dependencies: object[]
 }
 
-function project(draft: Draft, revision = 1) {
+function workflow(draft: Draft, revision = 1) {
     return {
         id: 'p1',
         name: 'Leads',
@@ -117,9 +117,9 @@ async function fakeBackend(
                     port_compatibility: { json: ['json', 'json[]'] },
                 },
             })
-        if (path === '/api/v1/projects/p1' && method === 'GET')
-            return route.fulfill({ json: project(draft, revision) })
-        if (path === '/api/v1/projects/p1' && method === 'PUT') {
+        if (path === '/api/v1/workflows/p1' && method === 'GET')
+            return route.fulfill({ json: workflow(draft, revision) })
+        if (path === '/api/v1/workflows/p1' && method === 'PUT') {
             const body = request.postDataJSON() as {
                 expected_revision: number
                 draft: Draft
@@ -137,7 +137,7 @@ async function fakeBackend(
             revision += 1
             draft = body.draft
             saved.push(body.draft)
-            return route.fulfill({ json: project(draft, revision) })
+            return route.fulfill({ json: workflow(draft, revision) })
         }
         return route.fulfill({
             status: 404,
@@ -158,7 +158,7 @@ const node = (p: Page, name: RegExp) =>
 
 test('renders, zooms, drags and saves a draft graph', async ({ page: p }) => {
     const saved = await fakeBackend(p)
-    await p.goto('/projects/p1/editor')
+    await p.goto('/workflows/p1/editor')
 
     await expect(
         p.getByRole('heading', { level: 1, name: 'Draft editor: Leads' }),
@@ -222,16 +222,16 @@ test('renders, zooms, drags and saves a draft graph', async ({ page: p }) => {
     // Undo is still available after saving, and leaving now asks first.
     await p.getByRole('button', { name: 'Undo' }).click()
     await expect(p.getByText('Unsaved changes')).toBeVisible()
-    await p.getByRole('link', { name: 'Back to project' }).click()
+    await p.getByRole('link', { name: 'Back to workflow' }).click()
     const leave = p.getByRole('dialog', { name: 'Leave with unsaved changes?' })
     await expect(leave).toBeVisible()
     await leave.getByRole('button', { name: 'Stay in editor' }).click()
-    await expect(p).toHaveURL(/\/projects\/p1\/editor$/)
+    await expect(p).toHaveURL(/\/workflows\/p1\/editor$/)
 })
 
 test('drags a node from the library onto the canvas', async ({ page: p }) => {
     const saved = await fakeBackend(p)
-    await p.goto('/projects/p1/editor')
+    await p.goto('/workflows/p1/editor')
     const library = p.getByRole('region', { name: 'Node library' })
     await expect(library.getByText('2 of 2 nodes')).toBeVisible()
 
@@ -359,7 +359,7 @@ test('connects, refuses, reconnects and deletes edges by dragging; they persist'
     page: p,
 }) => {
     const saved = await fakeBackend(p, connectable())
-    await p.goto('/projects/p1/editor')
+    await p.goto('/workflows/p1/editor')
     await expect(node(p, /^Sink one/)).toBeVisible()
     await p.getByRole('button', { name: 'Fit View' }).click()
     const edges = p.locator('.react-flow__edge')
@@ -465,7 +465,7 @@ test('box-selects several nodes, then duplicates and deletes them', async ({
     page: p,
 }) => {
     const saved = await fakeBackend(p, connectable())
-    await p.goto('/projects/p1/editor')
+    await p.goto('/workflows/p1/editor')
     await expect(node(p, /^Sink two/)).toBeVisible()
     await p.getByRole('button', { name: 'Fit View' }).click()
 
@@ -549,7 +549,7 @@ test('stays usable with a graph at the node limit', async ({ page: p }) => {
             port_compatibility: { json: ['json', 'json[]'] },
         },
     })
-    await p.goto('/projects/p1/editor')
+    await p.goto('/workflows/p1/editor')
     await expect(p.locator('.react-flow__node')).toHaveCount(500)
     // Every edge is valid: no problem labels.
     await expect(p.locator('.edge-invalid')).toHaveCount(0)
@@ -584,7 +584,7 @@ test('stays usable with a graph at the node limit', async ({ page: p }) => {
 
 test('builds and saves a graph by keyboard alone', async ({ page: p }) => {
     const saved = await fakeBackend(p)
-    await p.goto('/projects/p1/editor')
+    await p.goto('/workflows/p1/editor')
     const graphSize = p
         .getByRole('status')
         .filter({ hasText: /^\d+ nodes, \d+ connections$/ })
@@ -642,7 +642,7 @@ for (const width of [390, 768, 1024, 1280, 1600])
     }) => {
         await fakeBackend(p)
         await p.setViewportSize({ width, height: 900 })
-        await p.goto('/projects/p1/editor')
+        await p.goto('/workflows/p1/editor')
         await expect(node(p, /Lead in/)).toBeVisible()
 
         const canvas = await p

@@ -10,7 +10,7 @@ The session prompt adds more areas: LLM output, report and log rendering, plugin
 
 **Actually implemented.**
 
-- **Path traversal through route ids (pre-existing defect, fixed):** `ApiClient.requestWithBody` (`frontend/src/api/client.ts`) now refuses any request path with a `.` or `..` segment. Before the fix, a crafted URL such as `/projects/../editor` let the route param `..` turn `POST /api/v1/projects/../publish` into `POST /api/v1/publish`. A test against a real local HTTP server reproduced this before the fix.
+- **Path traversal through route ids (pre-existing defect, fixed):** `ApiClient.requestWithBody` (`frontend/src/api/client.ts`) now refuses any request path with a `.` or `..` segment. Before the fix, a crafted URL such as `/workflows/../editor` let the route param `..` turn `POST /api/v1/workflows/../publish` into `POST /api/v1/publish`. A test against a real local HTTP server reproduced this before the fix.
 - **Content Security Policy:** a Vite plugin in `frontend/vite.config.ts` injects a strict CSP `<meta>` into the production `index.html` only. ADR 0002 had explicitly deferred CSP to this phase.
 - **Regression guards in ESLint** (`frontend/eslint.config.js`), applied to production code. They forbid:
   - `dangerouslySetInnerHTML`, `innerHTML`, `outerHTML`, `insertAdjacentHTML` and `document.write`;
@@ -56,7 +56,7 @@ Acceptance criteria (roadmap §29):
 
 ### API layer
 
-- `ApiClient.requestWithBody` rejects any path with a `.` or `..` segment before it builds the URL or calls `fetch`. The error is an `ApiError` of kind `not_found` with the standard fallback message. Every service module routes through this method, so this single guard covers every endpoint (`projects`, `executions`, `credentials`, `plugins`, reports, ...).
+- `ApiClient.requestWithBody` rejects any path with a `.` or `..` segment before it builds the URL or calls `fetch`. The error is an `ApiError` of kind `not_found` with the standard fallback message. Every service module routes through this method, so this single guard covers every endpoint (`workflows`, `executions`, `credentials`, `plugins`, reports, ...).
 
 ### Build / browser policy
 
@@ -77,7 +77,7 @@ Acceptance criteria (roadmap §29):
 - `src/api/client.node.test.ts`: new `describe('path segments from untrusted input')` with three cases (§12).
 - `tests/e2e/fixtures.ts` (new): a `test` extended with the auto fixture `cspViolations`, re-exporting `expect`.
 - `tests/e2e/security.spec.ts` (new): proves CSP enforcement in the production bundle.
-- `tests/e2e/{dashboard,editor,projects,smoke,ui}.spec.ts` and `tests/fullstack/projects.spec.ts`: import `test`/`expect` from `fixtures.ts` instead of `@playwright/test`. Type imports are unchanged.
+- `tests/e2e/{dashboard,editor,workflows,smoke,ui}.spec.ts` and `tests/fullstack/workflows.spec.ts`: import `test`/`expect` from `fixtures.ts` instead of `@playwright/test`. Type imports are unchanged.
 
 ### Documentation
 
@@ -88,14 +88,14 @@ Acceptance criteria (roadmap §29):
 | File | Change | Reason |
 |---|---|---|
 | `frontend/src/api/client.ts` | Modified (+9) | Dot-segment guard in `requestWithBody` (§10). |
-| `frontend/src/api/client.node.test.ts` | Modified (+29) | Regression tests for the guard; imports `getProject`, `publishProject`. |
+| `frontend/src/api/client.node.test.ts` | Modified (+29) | Regression tests for the guard; imports `getWorkflow`, `publishWorkflow`. |
 | `frontend/vite.config.ts` | Modified (+35/−2) | `CONTENT_SECURITY_POLICY` constant and the build-only `akasha-csp` plugin. |
 | `frontend/index.html` | Modified (+1) | Referrer policy meta. |
 | `frontend/eslint.config.js` | Modified (+39) | XSS-sink, dynamic-code and browser-storage lint guards. |
 | `frontend/tests/e2e/fixtures.ts` | Created | Auto fixture that fails any test on a CSP violation. |
 | `frontend/tests/e2e/security.spec.ts` | Created | Proves the CSP blocks injected inline scripts and handlers. |
-| `frontend/tests/e2e/dashboard.spec.ts`, `editor.spec.ts`, `projects.spec.ts`, `smoke.spec.ts`, `ui.spec.ts` | Modified (import lines only) | Run under the CSP fixture. |
-| `frontend/tests/fullstack/projects.spec.ts` | Modified (import lines only) | Runs under the CSP fixture against the real backend, including the live WebSocket. |
+| `frontend/tests/e2e/dashboard.spec.ts`, `editor.spec.ts`, `workflows.spec.ts`, `smoke.spec.ts`, `ui.spec.ts` | Modified (import lines only) | Run under the CSP fixture. |
+| `frontend/tests/fullstack/workflows.spec.ts` | Modified (import lines only) | Runs under the CSP fixture against the real backend, including the live WebSocket. |
 | `frontend/README.md` | Modified (+31) | New "Security" section. |
 | `docs/deployment.md` | Modified (+16) | Proxy headers for the UI. |
 
@@ -123,7 +123,7 @@ Acceptance criteria (roadmap §29):
 
 - **Context:** route params are attacker-influenced (crafted links), and `encodeURIComponent` does not encode `.`.
 - **Chosen approach:** one check in `requestWithBody`, the method every HTTP call goes through.
-- **Alternatives:** validating ids per route, or per service `path()` helper (`projects.ts`, `executions.ts`, `credentials.ts`, `plugins.ts`). Rejected: four places plus every future one, and a sibling would be missed.
+- **Alternatives:** validating ids per route, or per service `path()` helper (`workflows.ts`, `executions.ts`, `credentials.ts`, `plugins.ts`). Rejected: four places plus every future one, and a sibling would be missed.
 - **Consequences:** no request path may legitimately contain a `.` or `..` segment. No current endpoint does.
 
 ### Decision 3: Security regression guards as lint rules
@@ -140,12 +140,12 @@ Not applicable. No domain types, Zod schemas, DTOs or persisted data changed.
 
 - **No backend API, WebSocket or event contract changes.**
 - **Client-side behavior change:** `ApiClient.request`/`requestWithBody` now throw `ApiError{kind: 'not_found'}` without a network request when the path has a `.` or `..` segment.
-  - Callers already handle `not_found`; for example, the editor shows "Project not found".
+  - Callers already handle `not_found`; for example, the editor shows "Workflow not found".
   - This only affects malformed or crafted ids, which no real backend id matches. Backend ids are prefixed tokens such as `p_…` and `exec_…`, and credential names match `[a-z0-9][a-z0-9._-]{0,63}` (a name can contain dots but cannot be exactly `.` or `..`).
 
 ## 8. Implementation Details
 
-- **Guard placement:** the check runs after `requestId` is generated, so the thrown error carries a request id like every other `ApiError`. It runs before the timeout signal and `fetch`, so nothing is sent. It splits the *unencoded-dot* path, which is `baseUrl`-relative and built by the service `path()` helpers. Encoded slashes (`%2F`) stay inside one segment, so `../a.b` becomes `/projects/..%2Fa.b` and is allowed. The test verifies this.
+- **Guard placement:** the check runs after `requestId` is generated, so the thrown error carries a request id like every other `ApiError`. It runs before the timeout signal and `fetch`, so nothing is sent. It splits the *unencoded-dot* path, which is `baseUrl`-relative and built by the service `path()` helpers. Encoded slashes (`%2F`) stay inside one segment, so `../a.b` becomes `/workflows/..%2Fa.b` and is allowed. The test verifies this.
 - **Live WebSocket** (`src/api/live.ts`): it builds its URL itself and does not use the guard. Its only caller, `useLiveExecution(execution.id, …)` in `ExecutionDetailPage.tsx`, passes the id the backend returned for an execution that loaded successfully, not a route param. A crafted id therefore fails at `GET /executions/{id}` (now guarded) before any WebSocket opens.
 - **CSP meta placement:** `head-prepend` puts the CSP before `<meta charset>`. The charset declaration is still within the first 1024 bytes, which is what the HTML spec requires. The CSP precedes every `<script>` and `<link rel="stylesheet">` it governs.
 - **Why `style-src 'self'` works with React and React Flow:** React applies `style` props through the CSSOM (`element.style.x = …`), which CSP does not restrict. React Flow 12 ships its CSS as a file (`GraphCanvas-*.css`) and injects no `<style>` elements. The E2E editor specs (drag, zoom, connect, minimap) run under the fixture with zero violations.
@@ -155,7 +155,7 @@ Not applicable. No domain types, Zod schemas, DTOs or persisted data changed.
 ## 9. Findings
 
 ### Finding 1: Dot segments in route ids redirect API requests
-- **Impact:** MEDIUM. A crafted link could make the UI send a same-origin request carrying the session cookie and CSRF header to a different endpoint. All mutations need explicit user action (buttons, confirm dialogs), and the user would also need the matching role. For example, the publish button on a `..` project id would `POST /api/v1/publish`, which does not exist today. No concrete exploitable chain was found, but the primitive is real.
+- **Impact:** MEDIUM. A crafted link could make the UI send a same-origin request carrying the session cookie and CSRF header to a different endpoint. All mutations need explicit user action (buttons, confirm dialogs), and the user would also need the matching role. For example, the publish button on a `..` workflow id would `POST /api/v1/publish`, which does not exist today. No concrete exploitable chain was found, but the primitive is real.
 - **Resolution:** FIXED (§10).
 - **Notes:** pre-existing since the API layer (Phase 01/02).
 
@@ -197,8 +197,8 @@ Not applicable. No domain types, Zod schemas, DTOs or persisted data changed.
 - **Resolution:** OPEN (§21).
 - **Notes:**
   - `tests/e2e/smoke.spec.ts` "deep links to nested and unknown routes resolve client-side" failed in 2 of about 11 local runs. It was never failing during implementation runs.
-  - **Root cause:** the test stubs only `/api/v1/auth/session`. The editor's `GET /api/v1/projects/p_1` passes through the Vite preview proxy to `AKASHA_API_PROXY_TARGET` (default `127.0.0.1:8000`).
-  - On this machine a Portainer container (`0.0.0.0:8000`) is listening there and answers `404`. The assertion `getByRole('heading', { level: 1, name: 'Editor' })` matches the transient loading header "Draft editor" (substring match). When the 404 arrives first, the page shows "Project not found" instead and the assertion times out.
+  - **Root cause:** the test stubs only `/api/v1/auth/session`. The editor's `GET /api/v1/workflows/p_1` passes through the Vite preview proxy to `AKASHA_API_PROXY_TARGET` (default `127.0.0.1:8000`).
+  - On this machine a Portainer container (`0.0.0.0:8000`) is listening there and answers `404`. The assertion `getByRole('heading', { level: 1, name: 'Editor' })` matches the transient loading header "Draft editor" (substring match). When the 404 arrives first, the page shows "Workflow not found" instead and the assertion times out.
   - The test is pre-existing, and its only change in this phase is the import line. It depends on developer-machine state (AGENTS §16).
 
 ### Finding 7: No backend gap
@@ -229,7 +229,7 @@ Problems introduced *during* this phase and fixed before completion:
 ## 11. Fixes Applied
 
 1. **Dot-segment request redirection.**
-   - **Symptom:** `publishProject(client, '..')` hit the server at another path.
+   - **Symptom:** `publishWorkflow(client, '..')` hit the server at another path.
    - **Root cause:** see §10.
    - **Implementation:** a 9-line guard in `client.ts`.
    - **Verification:** new tests, full unit suite (467/467), E2E and full-stack suites.
@@ -246,9 +246,9 @@ Problems introduced *during* this phase and fixed before completion:
 ### Unit / component tests (Vitest)
 
 - **New tests** (`src/api/client.node.test.ts`, against a real `node:http` server on 127.0.0.1):
-  - "never sends a request whose id is \".\"" — `publishProject(client(), '.')` → `ApiError.kind === 'not_found'`, server hit count 0.
+  - "never sends a request whose id is \".\"" — `publishWorkflow(client(), '.')` → `ApiError.kind === 'not_found'`, server hit count 0.
   - The same for `".."`.
-  - "still encodes ids that merely contain dots or slashes" — `getProject(client(), '../a.b')` reaches `/api/v1/projects/..%2Fa.b`.
+  - "still encodes ids that merely contain dots or slashes" — `getWorkflow(client(), '../a.b')` reaches `/api/v1/workflows/..%2Fa.b`.
 - **Result:** 37 files, 467 tests passed (`npm run check`, final run).
 
 ### E2E tests (Playwright, production bundle via `vite preview`, API stubbed per spec)
@@ -281,7 +281,7 @@ Problems introduced *during* this phase and fixed before completion:
 
 | Quality Gate | Result | Notes |
 |---|---|---|
-| Formatter | PASS | `npm run format:check`: "All matched files use Prettier code style!" One intermediate failure on `tests/fullstack/projects.spec.ts` after the import edit; fixed with `prettier --write`. |
+| Formatter | PASS | `npm run format:check`: "All matched files use Prettier code style!" One intermediate failure on `tests/fullstack/workflows.spec.ts` after the import edit; fixed with `prettier --write`. |
 | Linter | PASS | `npm run lint` (ESLint, type-checked strict set plus new security rules). |
 | Type Checker | PASS | `npm run typecheck` (`tsc -b`). Intermediate failures in E2E files fixed (§10). |
 | Unit Tests | PASS | 467/467. |
@@ -357,7 +357,7 @@ All four criteria pass. The status is COMPLETE WITH LIMITATIONS because of the d
 
 - **Framing:** clickjacking protection exists only when the operator's proxy sends `frame-ancestors 'none'` (or `X-Frame-Options`). The bundle alone cannot enforce it.
 - **No CSP under `npm run dev`:** only production builds carry the policy.
-- **Chromium-only check:** the CSP fixture detects violations by Chromium's console wording ("Content Security Policy"). The E2E project is Chromium only. Other browsers would need a different detection method, such as listening to `securitypolicyviolation` events.
+- **Chromium-only check:** the CSP fixture detects violations by Chromium's console wording ("Content Security Policy"). The E2E workflow is Chromium only. Other browsers would need a different detection method, such as listening to `securitypolicyviolation` events.
 - **Narrow `img-src 'self'`:** future features showing `data:`/`blob:` images or remote images, such as plugin icons, need a deliberate policy change.
 - **Unguarded WebSocket URL:** the live WebSocket URL (`live.ts`) does not pass through the dot-segment guard. It only ever receives a backend-confirmed execution id (§8).
 - **Residual XSS impact:** described in §15 and ADR 0002.
@@ -380,7 +380,7 @@ All four criteria pass. The status is COMPLETE WITH LIMITATIONS because of the d
 
 - Branch `main`, HEAD `64c11d3` (frontend phase 22 — developer experience).
 - Working tree before this report:
-  - **Modified (13):** `docs/deployment.md`, `frontend/README.md`, `frontend/eslint.config.js`, `frontend/index.html`, `frontend/src/api/client.node.test.ts`, `frontend/src/api/client.ts`, `frontend/tests/e2e/{dashboard,editor,projects,smoke,ui}.spec.ts`, `frontend/tests/fullstack/projects.spec.ts`, `frontend/vite.config.ts`.
+  - **Modified (13):** `docs/deployment.md`, `frontend/README.md`, `frontend/eslint.config.js`, `frontend/index.html`, `frontend/src/api/client.node.test.ts`, `frontend/src/api/client.ts`, `frontend/tests/e2e/{dashboard,editor,workflows,smoke,ui}.spec.ts`, `frontend/tests/fullstack/workflows.spec.ts`, `frontend/vite.config.ts`.
   - **Untracked:** `frontend/tests/e2e/fixtures.ts`, `frontend/tests/e2e/security.spec.ts`.
 - Plus this report: `docs/reports/frontend/phase-23-frontend-security-hardening.md` (untracked).
 - `git diff --stat`: 13 files, +169/−9.

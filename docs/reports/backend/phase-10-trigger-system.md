@@ -28,24 +28,24 @@ trigger type implements its own execution engine.*
     - schedule rules via `schedule_problem` / `cron_problem`: cron must
       parse, be deterministic and be able to fire; intervals must lie
       between 1 s and 1 year;
-    - unique trigger ids per project (`DUPLICATE_TRIGGER_ID`).
+    - unique trigger ids per workflow (`DUPLICATE_TRIGGER_ID`).
   - `ValidationIssue` gained a `trigger_id` location field.
 - **Application** (`akasha.application.triggers`):
-  - `TriggerRegistry`, scoped by project, resolves triggers on the *latest
+  - `TriggerRegistry`, scoped by workflow, resolves triggers on the *latest
     published version*.
   - `TriggerService` (`fire`, `fire_manual`): its only effect is
     `ExecutionService.create_execution`.
-- **Persistence:** `ProjectVersionRepository.list_latest(project_id=None)`.
+- **Persistence:** `WorkflowVersionRepository.list_latest(workflow_id=None)`.
   No schema change.
 - **Runtime:** `TriggerScheduler`, an in-process CRON/INTERVAL scheduler:
   - injectable clock and sleep;
   - owned by the `Container`, started by the FastAPI lifespan;
-  - state keyed by (project, trigger), with a per-trigger error boundary;
+  - state keyed by (workflow, trigger), with a per-trigger error boundary;
   - an unschedulable trigger is parked instead of being retried each tick.
 - **API:**
-  - `POST /api/v1/projects/{project_id}/versions/{version}/execute`
-  - `POST /api/v1/projects/{project_id}/triggers/{trigger_id}/invoke`
-  - `POST /api/v1/webhooks/{project_id}/{trigger_id}` (202)
+  - `POST /api/v1/workflows/{workflow_id}/versions/{version}/execute`
+  - `POST /api/v1/workflows/{workflow_id}/triggers/{trigger_id}/invoke`
+  - `POST /api/v1/webhooks/{workflow_id}/{trigger_id}` (202)
   - `GET /api/v1/executions/{execution_id}`
 - **Configuration:** three `AKASHA_*` settings.
 - **Dependency:** `croniter 6.2.4`.
@@ -196,27 +196,27 @@ trigger type implements its own execution engine.*
   - new `ValidationCode`s `DUPLICATE_TRIGGER_ID` and
     `INVALID_TRIGGER_SCHEDULE`;
   - `ValidationIssue.trigger_id` (optional location).
-- **`domain/project.py` (modified):**
+- **`domain/workflow.py` (modified):**
   - `validate_triggers(triggers)`: duplicate ids and schedule problems, each
     with its `trigger_id`.
-  - `ProjectDraft.validate` includes it, so publishing is blocked.
-  - `ProjectVersion.validate` (the runtime's pre-run check) deliberately
+  - `WorkflowDraft.validate` includes it, so publishing is blocked.
+  - `WorkflowVersion.validate` (the runtime's pre-run check) deliberately
     does not.
 
 ### Persistence
-- `ProjectVersionRepository.list_latest(*, project_id=None) ->
-  Sequence[tuple[str, ProjectVersion]]`: the latest published version of
-  every project, or of one project. Implemented in SQLAlchemy as a
-  `max(version) GROUP BY project_id` subquery joined back to
-  `project_versions` and ordered by `project_id`.
+- `WorkflowVersionRepository.list_latest(*, workflow_id=None) ->
+  Sequence[tuple[str, WorkflowVersion]]`: the latest published version of
+  every workflow, or of one workflow. Implemented in SQLAlchemy as a
+  `max(version) GROUP BY workflow_id` subquery joined back to
+  `workflow_versions` and ordered by `workflow_id`.
 - No schema change and no migration.
 
 ### Application (`application/triggers.py`, new)
 - `TriggerRegistry`:
-  - `resolve(project_id, trigger_id, *, trigger_type=None)` loads only that
-    project's latest version;
+  - `resolve(workflow_id, trigger_id, *, trigger_type=None)` loads only that
+    workflow's latest version;
   - `list_scheduled()` returns the enabled CRON/INTERVAL triggers of all
-    latest versions, ordered by (trigger id, project id).
+    latest versions, ordered by (trigger id, workflow id).
 - `TriggerService`:
   - `fire(resolved, context)` rejects a disabled trigger (409) and a context
     type that differs from the trigger type (`DomainValidationError`);
@@ -228,7 +228,7 @@ trigger type implements its own execution engine.*
 
 ### Runtime (`runtime/scheduler.py`, new)
 - `TriggerScheduler(registry, service, *, clock, poll_seconds=1.0, sleep)`.
-- The state is `_due: {(project_id, trigger_id): (spec, next_due |
+- The state is `_due: {(workflow_id, trigger_id): (spec, next_due |
   None)}`:
   - the spec is `"cron <expr>"` or `"interval <value>"`;
   - a changed spec re-arms the trigger;
@@ -243,15 +243,15 @@ trigger type implements its own execution engine.*
 
 ### API
 - `api/triggers.py` (new): the four endpoints of §7.
-  - Trigger URLs are scoped by project.
+  - Trigger URLs are scoped by workflow.
   - Webhook body errors — malformed JSON, invalid UTF-8, nesting too deep for
     the parser — map to 422.
   - Header allowlist.
   - `PayloadTooLargeError` (413).
 - `api/trigger_schemas.py` (new): `ExecutionDetail`.
 - `api/routes.py` mounts the router.
-- `api/project_schemas.py`: `ValidationIssueOut.trigger_id`.
-- `application/projects.py`: `issue_payload` includes `trigger_id`.
+- `api/workflow_schemas.py`: `ValidationIssueOut.trigger_id`.
+- `application/workflows.py`: `issue_payload` includes `trigger_id`.
 
 ### Composition and configuration
 - `Container`:
@@ -280,15 +280,15 @@ Tracked files changed: 18 files, +516/−22.
 | `backend/src/akasha/domain/cron.py` | Created (52 lines) | `cron_problem`, `next_fire` |
 | `backend/src/akasha/domain/trigger.py` | Modified (+100/−5) | Construction rules, `schedule_problem`, limits, `TriggerContext` with depth check |
 | `backend/src/akasha/domain/graph_validation.py` | Modified (+4) | 2 new validation codes; `ValidationIssue.trigger_id` |
-| `backend/src/akasha/domain/project.py` | Modified (+41/−5) | `validate_triggers`; wired into `ProjectDraft.validate`; `ProjectVersion.validate` docstring |
-| `backend/src/akasha/application/triggers.py` | Created (172) | Registry (scoped by project), service, errors |
-| `backend/src/akasha/application/persistence.py` | Modified (+13) | `list_latest(project_id=None)` protocol |
-| `backend/src/akasha/application/projects.py` | Modified (+1) | `issue_payload` includes `trigger_id` |
+| `backend/src/akasha/domain/workflow.py` | Modified (+41/−5) | `validate_triggers`; wired into `WorkflowDraft.validate`; `WorkflowVersion.validate` docstring |
+| `backend/src/akasha/application/triggers.py` | Created (172) | Registry (scoped by workflow), service, errors |
+| `backend/src/akasha/application/persistence.py` | Modified (+13) | `list_latest(workflow_id=None)` protocol |
+| `backend/src/akasha/application/workflows.py` | Modified (+1) | `issue_payload` includes `trigger_id` |
 | `backend/src/akasha/infrastructure/persistence.py` | Modified (+31/−1) | SQLAlchemy `list_latest` |
 | `backend/src/akasha/runtime/scheduler.py` | Created (156) | `TriggerScheduler` |
 | `backend/src/akasha/api/triggers.py` | Created (183) | Execute / invoke / webhook / get-execution routes |
 | `backend/src/akasha/api/trigger_schemas.py` | Created (34) | `ExecutionDetail` |
-| `backend/src/akasha/api/project_schemas.py` | Modified (+1) | `ValidationIssueOut.trigger_id` |
+| `backend/src/akasha/api/workflow_schemas.py` | Modified (+1) | `ValidationIssueOut.trigger_id` |
 | `backend/src/akasha/api/routes.py` | Modified (+2) | Mount the trigger router |
 | `backend/src/akasha/api/app.py` | Modified (+1) | Lifespan starts container background work |
 | `backend/src/akasha/bootstrap.py` | Modified (+50/−5) | Wiring; scheduler task ownership |
@@ -300,9 +300,9 @@ Tracked files changed: 18 files, +516/−22.
 | `backend/tests/runtime/test_scheduler.py` | Created (345) | 15 scheduler tests |
 | `backend/tests/integration/test_triggers_api.py` | Created (652) | 22 HTTP + PostgreSQL tests |
 | `backend/tests/domain/test_trigger_credentials_plugin.py` | Modified (+141/−3) | 57 items (Phase 09: 23) |
-| `backend/tests/domain/test_project.py` | Modified (+41) | 3 trigger-validation tests |
+| `backend/tests/domain/test_workflow.py` | Modified (+41) | 3 trigger-validation tests |
 | `backend/tests/test_lifecycle.py` | Modified (+35) | 2 new tests; wiring test extended |
-| `backend/tests/integration/test_projects_api.py` | Modified (+3) | The pinned issue wire shape includes `trigger_id` (deliberate additive contract change) |
+| `backend/tests/integration/test_workflows_api.py` | Modified (+3) | The pinned issue wire shape includes `trigger_id` (deliberate additive contract change) |
 | `docs/architecture.md` | Modified (+5/−3) | §125 rules |
 | `docs/reports/backend/phase-10-trigger-system.md` | Created | This report |
 
@@ -317,7 +317,7 @@ Tracked files changed: 18 files, +516/−22.
 ### A1 — Triggers resolve to the latest published version
 
 #### Decision
-A trigger is live only on the latest published version of its project.
+A trigger is live only on the latest published version of its workflow.
 Publishing retires older versions' triggers, and drafts never fire.
 
 #### Context
@@ -341,7 +341,7 @@ The smallest rule that is deterministic and never touches a draft.
 #### Consequences
 - Republishing without a trigger retires its endpoint.
 - Webhook URLs survive a republish while the draft keeps the id.
-- Project status (`DISABLED`) is not consulted (F7).
+- Workflow status (`DISABLED`) is not consulted (F7).
 
 ### A2 — Trigger types are mechanisms, not classes
 
@@ -351,8 +351,8 @@ entity and `TriggerType` enum remain the only trigger concept.
 
 | Roadmap name | Implemented as |
 |---|---|
-| ManualTrigger | `POST /projects/{p}/versions/{v}/execute` (ad hoc) and `POST /projects/{p}/triggers/{t}/invoke` (configured MANUAL) |
-| APITrigger | `POST /projects/{p}/triggers/{t}/invoke` |
+| ManualTrigger | `POST /workflows/{p}/versions/{v}/execute` (ad hoc) and `POST /workflows/{p}/triggers/{t}/invoke` (configured MANUAL) |
+| APITrigger | `POST /workflows/{p}/triggers/{t}/invoke` |
 | WebhookTrigger | `POST /webhooks/{p}/{t}` |
 | CronTrigger, IntervalTrigger | `TriggerScheduler` |
 
@@ -393,17 +393,17 @@ persisted trigger has always satisfied. The added rules are:
 The first implementation enforced them at construction. Stored drafts and
 versions are rebuilt through the same constructors, so older data stopped
 loading:
-- the registry scan failed for all projects (D4);
-- an affected project's draft could not even be loaded to fix it
+- the registry scan failed for all workflows (D4);
+- an affected workflow's draft could not even be loaded to fix it
   (`update_draft` loads it first).
 
 The codebase already had the opposite precedent. `validate_dependencies`:
 "a malformed constraint is a validation issue, not a construction error:
-already persisted projects must stay loadable to be fixed".
+already persisted workflows must stay loadable to be fixed".
 
 #### Chosen Approach
 - `schedule_problem` / `cron_problem` / `validate_triggers` run inside
-  `ProjectDraft.validate`, so `/validate` reports them and publish refuses.
+  `WorkflowDraft.validate`, so `/validate` reports them and publish refuses.
 - Construction additionally rejects only NaN and infinity. PostgreSQL JSONB
   cannot store them, so no stored data can contain them.
 
@@ -420,27 +420,27 @@ Follows the existing precedent. Stored data stays loadable and fixable.
 - A draft may contain invalid triggers; `PUT` accepts them.
 - Versions published before these rules may contain invalid schedules. The
   scheduler parks them (A5).
-- Trigger issues are not part of `ProjectVersion.validate`, so a run never
+- Trigger issues are not part of `WorkflowVersion.validate`, so a run never
   depends on how it was triggered.
 
-### A4 — Trigger ids are unique per project; addressing is scoped by project
+### A4 — Trigger ids are unique per workflow; addressing is scoped by workflow
 
 This decision was made during the follow-up fix.
 
 #### Decision
-- Trigger ids must be unique within a project (`DUPLICATE_TRIGGER_ID` blocks
+- Trigger ids must be unique within a workflow (`DUPLICATE_TRIGGER_ID` blocks
   publishing).
-- Webhook and invoke URLs carry the project id.
-- The registry resolves within one project.
-- Scheduler state is keyed by (project id, trigger id).
+- Webhook and invoke URLs carry the workflow id.
+- The registry resolves within one workflow.
+- Scheduler state is keyed by (workflow id, trigger id).
 
 #### Context
-Duplicate ids were accepted inside one draft and across projects.
-Resolution scanned all projects and returned the first match, so a second
-project could capture another project's webhook deliveries (D6).
+Duplicate ids were accepted inside one draft and across workflows.
+Resolution scanned all workflows and returned the first match, so a second
+workflow could capture another workflow's webhook deliveries (D6).
 
 #### Chosen Approach
-The project id is part of each trigger URL; per-draft uniqueness is a
+The workflow id is part of each trigger URL; per-draft uniqueness is a
 publish gate.
 
 #### Alternatives Considered
@@ -450,15 +450,15 @@ publish gate.
   clients choose.
 
 #### Reason
-No coordination across projects is needed. A second project can never
-receive another project's deliveries, even with colliding ids.
+No coordination across workflows is needed. A second workflow can never
+receive another workflow's deliveries, even with colliding ids.
 
 #### Consequences
 - **URL change.** Old: `/triggers/{id}/invoke`, `/webhooks/{id}`. New:
-  `/projects/{p}/triggers/{t}/invoke`, `/webhooks/{p}/{t}`. The old URLs
+  `/workflows/{p}/triggers/{t}/invoke`, `/webhooks/{p}/{t}`. The old URLs
   were never committed or consumed.
-- **Resolution cost.** Webhook/invoke resolution now loads one project's
-  latest version instead of every project's.
+- **Resolution cost.** Webhook/invoke resolution now loads one workflow's
+  latest version instead of every workflow's.
 
 ### A5 — In-process scheduler owned by the Container
 
@@ -473,7 +473,7 @@ Workers arrive in Phase 22; §73 anticipates a separate scheduler service.
 A poll loop with an injectable clock and sleep, and a pure `tick()` pass.
 The follow-up fix added:
 - a per-trigger error boundary;
-- (project, trigger) keys;
+- (workflow, trigger) keys;
 - a schedule spec in the state, so a changed type or schedule re-arms
   immediately;
 - parking for schedules that cannot be computed.
@@ -578,7 +578,7 @@ Payloads nested deeper than 64 levels are rejected with 422.
 | INTERVAL | Number, not a bool, `> 0` | Also finite (NaN/inf rejected; JSONB can never store them) |
 | EVENT / others | Unchanged | Unchanged |
 
-### New publish-time rules (`validate_triggers` in `ProjectDraft.validate`)
+### New publish-time rules (`validate_triggers` in `WorkflowDraft.validate`)
 
 | Code | Rule | Location |
 |---|---|---|
@@ -587,7 +587,7 @@ Payloads nested deeper than 64 levels are rejected with 422.
 
 - Messages carry no config values. This respects the "locations only" rule of
   `ValidationIssue`.
-- `ProjectVersion.validate`, the runtime's pre-run check, does not include
+- `WorkflowVersion.validate`, the runtime's pre-run check, does not include
   trigger rules.
 
 ### New value object `TriggerContext` (`domain/trigger.py`, frozen)
@@ -608,7 +608,7 @@ Payloads nested deeper than 64 levels are rejected with 422.
 - Application: `ResolvedTrigger`, `TriggerNotFoundError`,
   `TriggerDisabledError`.
 - API: `ExecutionDetail`.
-- Repository protocol: `list_latest(*, project_id=None)`.
+- Repository protocol: `list_latest(*, workflow_id=None)`.
 
 ### Database and serialization
 - No table, column, index or constraint changed. No migration.
@@ -634,7 +634,7 @@ The following applies to all four endpoints:
 - There is no authentication, like all of `/api/v1` until Phase 20.
 - Without a database, the endpoints answer `CONFIGURATION_ERROR` (500).
 
-### `POST /api/v1/projects/{project_id}/versions/{version}/execute`
+### `POST /api/v1/workflows/{workflow_id}/versions/{version}/execute`
 - **Purpose:** manual run of a published version (§126).
 - **Request:**
   - optional JSON object body, which becomes `Execution.input`;
@@ -643,7 +643,7 @@ The following applies to all four endpoints:
 - **Response:** 201 `ExecutionDetail` with `trigger_type: "manual"`,
   `trigger_id: null`, `status: "queued"`.
 - **Errors:**
-  - 404 `PROJECT_VERSION_NOT_FOUND`.
+  - 404 `WORKFLOW_VERSION_NOT_FOUND`.
   - 422 `VALIDATION_ERROR`:
     - a body that is not a JSON object (tested; the status only is
       asserted);
@@ -655,22 +655,22 @@ The following applies to all four endpoints:
   - 400 `HTTP_ERROR`: FastAPI cannot parse the body at all (e.g. 50,000
     nested `[`).
 
-### `POST /api/v1/projects/{project_id}/triggers/{trigger_id}/invoke`
+### `POST /api/v1/workflows/{workflow_id}/triggers/{trigger_id}/invoke`
 - **Purpose:** programmatic invocation of a configured API or MANUAL
   trigger.
 - **Request:** optional JSON object body; optional `x-request-id`.
 - **Response:** 201 `ExecutionDetail` with `trigger_type` "api" or "manual"
   and `trigger_id` set.
 - **Errors:**
-  - 404 `TRIGGER_NOT_FOUND`, with `details = {project_id, trigger_id}`. The
+  - 404 `TRIGGER_NOT_FOUND`, with `details = {workflow_id, trigger_id}`. The
     following cases are deliberately indistinguishable:
-    - an unknown project or trigger;
+    - an unknown workflow or trigger;
     - a trigger that exists only in a draft or a retired version;
     - a trigger of another type.
   - 409 `TRIGGER_DISABLED`.
   - 422/400 as for `/execute`.
 
-### `POST /api/v1/webhooks/{project_id}/{trigger_id}`
+### `POST /api/v1/webhooks/{workflow_id}/{trigger_id}`
 - **Purpose:** an external webhook delivery to a WEBHOOK trigger (§127).
 - **Request:**
   - raw body of any content type, parsed with `json.loads`;
@@ -700,8 +700,8 @@ The following applies to all four endpoints:
 | Field | Type | Source |
 |---|---|---|
 | `id` | string | `Execution.id` |
-| `project_id` | string | `Execution.project_id` |
-| `version` | int | `project_version.version` |
+| `workflow_id` | string | `Execution.workflow_id` |
+| `version` | int | `workflow_version.version` |
 | `status` | string (plain string in OpenAPI — F16) | `ExecutionStatus` value, e.g. `"queued"` |
 | `trigger_type` | `TriggerType` enum | metadata |
 | `trigger_id` | string or null | metadata |
@@ -709,20 +709,20 @@ The following applies to all four endpoints:
 | `created_at` | datetime | `Execution.created_at` |
 
 ### Changed existing contracts
-- **Validation issues** (`POST /projects/{id}/validate` and the
-  `details.issues` of `PROJECT_VALIDATION_FAILED`):
+- **Validation issues** (`POST /workflows/{id}/validate` and the
+  `details.issues` of `WORKFLOW_VALIDATION_FAILED`):
   - every issue now carries `trigger_id` (null for graph and dependency
     issues). This is additive;
-  - the pinned-shape test in `test_projects_api.py` was updated
+  - the pinned-shape test in `test_workflows_api.py` was updated
     accordingly;
   - new code values: `duplicate_trigger_id`, `invalid_trigger_schedule`.
-- **Draft triggers** (`PUT /projects/{id}`):
+- **Draft triggers** (`PUT /workflows/{id}`):
   - the construction rules are the Phase 02 rules plus finite intervals;
   - invalid schedules and duplicate ids are *accepted into the draft*;
   - `/validate` reports them, and `publish` answers 422
-    `PROJECT_VALIDATION_FAILED`.
+    `WORKFLOW_VALIDATION_FAILED`.
 - **Trigger ids** are still chosen by the client (`<prefix>_<32 hex>`). They
-  must be unique within a project, not globally.
+  must be unique within a workflow, not globally.
 
 ### New error codes
 - `TRIGGER_NOT_FOUND` (404), `TRIGGER_DISABLED` (409), `PAYLOAD_TOO_LARGE`
@@ -732,7 +732,7 @@ The following applies to all four endpoints:
 - The four endpoints are new. Their URLs changed once during this phase
   (A4); no consumer existed.
 - The validation-issue change is additive.
-- No change to project CRUD, node, plugin or SDK contracts.
+- No change to workflow CRUD, node, plugin or SDK contracts.
 - No WebSocket or event contracts exist yet.
 
 ---
@@ -742,8 +742,8 @@ The following applies to all four endpoints:
 ### Control flow
 
 ```text
-POST /projects/{p}/versions/{v}/execute ─► TriggerService.fire_manual ────────┐
-POST /projects/{p}/triggers/{t}/invoke ─► TriggerRegistry.resolve(p, t) ─► fire ─┤
+POST /workflows/{p}/versions/{v}/execute ─► TriggerService.fire_manual ────────┐
+POST /workflows/{p}/triggers/{t}/invoke ─► TriggerRegistry.resolve(p, t) ─► fire ─┤
 POST /webhooks/{p}/{t} ─► TriggerRegistry.resolve(p, t, WEBHOOK) ─► fire ───────┤
 TriggerScheduler.tick ─► TriggerRegistry.list_scheduled ─► fire ─────────────────┤
                                                                                 ▼
@@ -754,7 +754,7 @@ TriggerScheduler.tick ─► TriggerRegistry.list_scheduled ─► fire ──�
 ```
 
 ### Resolution and transactions
-- `resolve` reads `list_latest(project_id=p)`, i.e. one row, in a read-only
+- `resolve` reads `list_latest(workflow_id=p)`, i.e. one row, in a read-only
   unit of work.
 - Creation happens in a separate write unit of work.
 - A publish between the two can make the resolved version non-latest. The
@@ -781,7 +781,7 @@ TriggerScheduler.tick ─► TriggerRegistry.list_scheduled ─► fire ──�
   "too deep" for a list nested 20,000 levels without overflowing (tested).
 
 ### Scheduler semantics
-- **Key:** `(project_id, trigger_id)`.
+- **Key:** `(workflow_id, trigger_id)`.
 - **Spec:** `"cron <expr>"` or `"interval <repr(value)>"`. `repr` avoids a
   float conversion that could raise on huge integers.
 - **First sight, or a changed spec:** the scheduler sets `(spec, None)` and
@@ -831,7 +831,7 @@ TriggerScheduler.tick ─► TriggerRegistry.list_scheduled ─► fire ──�
 ### Extending the system
 To add a mechanism:
 1. Build a `TriggerContext`.
-2. Resolve with `TriggerRegistry.resolve(project_id, trigger_id, ...)`, or
+2. Resolve with `TriggerRegistry.resolve(workflow_id, trigger_id, ...)`, or
    add a query there.
 3. Call `TriggerService.fire`.
 
@@ -844,11 +844,11 @@ entry point.
 
 Resolution values below reflect the final state after the follow-up fix.
 
-### F1 — `ProjectVersion` has no project id
+### F1 — `WorkflowVersion` has no workflow id
 
 #### Finding
-`ProjectVersion` does not carry its `project_id`. The first draft of the
-registry referenced a non-existent `version.project_ref`.
+`WorkflowVersion` does not carry its `workflow_id`. The first draft of the
+registry referenced a non-existent `version.workflow_ref`.
 
 #### Impact
 LOW
@@ -857,7 +857,7 @@ LOW
 WORKAROUND
 
 #### Notes
-`list_latest` returns `(project_id, version)` pairs.
+`list_latest` returns `(workflow_id, version)` pairs.
 
 ### F2 — Cron expressions that can never fire were accepted
 
@@ -915,7 +915,7 @@ FIXED
 #### Finding
 Tightening construction rules broke loading of stored data (D4).
 - Verified before the fix on PostgreSQL: one row with cron `garbage` made
-  registry calls fail for every project, and another project's webhook
+  registry calls fail for every workflow, and another workflow's webhook
   answered 422 with `details: {"cron": "garbage"}`.
 
 #### Impact
@@ -930,28 +930,28 @@ FIXED (A3)
 ### F6 — Duplicate trigger ids; client-chosen ids may be guessable
 
 #### Finding
-- Duplicate ids were accepted inside one draft and across projects.
-- The first match by project-id order won, so deliveries could be captured
-  by another project (D6).
+- Duplicate ids were accepted inside one draft and across workflows.
+- The first match by workflow-id order won, so deliveries could be captured
+  by another workflow (D6).
 
 #### Impact
 HIGH
 
 #### Resolution
-- FIXED: duplicates (a publish gate) and cross-project routing (A4).
+- FIXED: duplicates (a publish gate) and cross-workflow routing (A4).
 - OPEN: guessable client-chosen ids.
 
 #### Notes
 - Ids are still chosen by the client (any `<prefix>_<32 hex>`, e.g. all
   zeros), and `GET` returns them.
-- Anyone who knows a project id and a trigger id can fire the trigger. This
+- Anyone who knows a workflow id and a trigger id can fire the trigger. This
   remains until webhook and API authentication exist (Phases 13/20/25).
 
-### F7 — Project status is not consulted
+### F7 — Workflow status is not consulted
 
 #### Finding
 Vision §7 says "Disabled: automatic triggers are deactivated". No use case
-sets `DISABLED`, and the registry does not read projects.
+sets `DISABLED`, and the registry does not read workflows.
 
 #### Impact
 LOW (latent)
@@ -980,7 +980,7 @@ That inaccuracy is FIXED.
 - `uv run mypy .` checks the tests too.
 - The integration `uow` fixture (`Callable[[],
   AbstractAsyncContextManager[...]]`) is not assignable to
-  `akasha.application.projects.UowFactory`.
+  `akasha.application.workflows.UowFactory`.
 
 #### Impact
 LOW
@@ -1116,12 +1116,12 @@ HIGH
 #### Resolution
 FIXED (A8)
 
-### F19 — The strict construction rules also locked projects (found during the fix)
+### F19 — The strict construction rules also locked workflows (found during the fix)
 
 #### Finding
-With the first implementation, a project whose draft held a
+With the first implementation, a workflow whose draft held a
 pre-Phase-10 trigger could not be loaded. `update_draft` (`PUT`) loads the
-project first, so the project could not even be fixed through the API.
+workflow first, so the workflow could not even be fixed through the API.
 
 #### Impact
 HIGH
@@ -1130,7 +1130,7 @@ HIGH
 FIXED (A3)
 
 #### Notes
-Found by inspection. The test now shows that `GET` project, `GET` version
+Found by inspection. The test now shows that `GET` workflow, `GET` version
 and `validate` work for such data.
 
 ### F20 — croniter accepts Unicode decimal digits
@@ -1170,7 +1170,7 @@ new shape and still asserts the exact key set. It was not weakened.
 |---|---|---|---|---|---|
 | B1 | `tick()` counted failed fires as successful | The exception was swallowed, but the fire was still counted | Only successful fires count (now part of `_step`) | `test_failed_fire_does_not_break_the_pass` | `runtime/scheduler.py` |
 | B2 | `run()` would stop forever on the first exception from `tick()`, unnoticed | No exception boundary around `tick()` | `try`/`except` + `trigger_tick_failed` log | `test_survives_a_broken_tick` | `runtime/scheduler.py` |
-| B3 | The registry draft used the non-existent `version.project_ref` | Assumed that `ProjectVersion` knows its project | `list_latest` returns `(project_id, version)` pairs | Registry tests | `application/triggers.py` |
+| B3 | The registry draft used the non-existent `version.workflow_ref` | Assumed that `WorkflowVersion` knows its workflow | `list_latest` returns `(workflow_id, version)` pairs | Registry tests | `application/triggers.py` |
 
 ### Defects found in the review (first report) and fixed in the follow-up
 
@@ -1180,12 +1180,12 @@ since this phase.
 
 | # | Problem | Root cause | Fix | Regression tests |
 |---|---|---|---|---|
-| D1 | One trigger that cannot be scheduled made every tick fail; every trigger sorted after it (other projects included) never fired | `_arm`/`_is_due` ran outside the per-trigger `try` | A per-trigger error boundary around arm, due and fire. A schedule that cannot be computed is parked, so it is logged once | `test_unschedulable_trigger_is_parked_and_logged_once` (3 cases: interval `1e12`, cron `0 0 31 2 *`, cron `not a cron`); scheduler part of `test_legacy_trigger_configs_stay_loadable_and_isolated` |
-| D2 | A trigger id republished with another type made every tick fail with `KeyError` | State was keyed by id only, and the type-specific dictionaries went out of sync | One state map keyed by (project, trigger) that holds the schedule spec. A changed spec re-arms | `test_type_change_under_same_id_rearms`, `test_changed_schedule_rearms_from_now` |
+| D1 | One trigger that cannot be scheduled made every tick fail; every trigger sorted after it (other workflows included) never fired | `_arm`/`_is_due` ran outside the per-trigger `try` | A per-trigger error boundary around arm, due and fire. A schedule that cannot be computed is parked, so it is logged once | `test_unschedulable_trigger_is_parked_and_logged_once` (3 cases: interval `1e12`, cron `0 0 31 2 *`, cron `not a cron`); scheduler part of `test_legacy_trigger_configs_stay_loadable_and_isolated` |
+| D2 | A trigger id republished with another type made every tick fail with `KeyError` | State was keyed by id only, and the type-specific dictionaries went out of sync | One state map keyed by (workflow, trigger) that holds the schedule spec. A changed spec re-arms | `test_type_change_under_same_id_rearms`, `test_changed_schedule_rearms_from_now` |
 | D3 | Validation accepted configurations that cannot be scheduled (F2, F4) and the non-deterministic `R` (F3) | The croniter object was built, but no fire time was ever computed; intervals had no upper bound or finiteness check | `cron_problem` (5 fields, no `H`/`R`, a fire time must exist). Intervals must lie in [1 s, 1 year] (publish gate) and be finite (construction) | `TestScheduleProblem` (28 items), `test_interval_requires_positive_finite_seconds`, `test_unschedulable_triggers_are_issues_with_location`, `test_invalid_trigger_configs_block_publish_not_drafts` |
-| D4 | Previously valid stored configurations broke resolution and scheduling for all projects and disclosed another project's configuration; the affected project could not be fixed (F5, F19) | The Phase 10 rules were enforced at construction, which also runs while loading stored data | The rules became publish-time validation issues (A3); resolution is scoped by project (A4) | `test_legacy_trigger_configs_stay_loadable_and_isolated` |
+| D4 | Previously valid stored configurations broke resolution and scheduling for all workflows and disclosed another workflow's configuration; the affected workflow could not be fixed (F5, F19) | The Phase 10 rules were enforced at construction, which also runs while loading stored data | The rules became publish-time validation issues (A3); resolution is scoped by workflow (A4) | `test_legacy_trigger_configs_stay_loadable_and_isolated` |
 | D5 | Some webhook bodies returned 500: 50,000 nested `[` (parser overflow); invalid UTF-8 (by inspection); about 500 levels (deepcopy in `Execution.create`, F18) | Only `JSONDecodeError` was caught; there was no depth limit | The route catches `ValueError`/`RecursionError` → 422. `TriggerContext` limits nesting to 64 (A8) | `test_unparseable_or_too_deep_payloads_are_422_not_500`, `test_payload_depth_limit`, `test_depth_check_survives_pathological_nesting` |
-| D6 | Duplicate trigger ids were accepted; resolution picked the project whose id sorted first | No uniqueness rule; resolution was global | `DUPLICATE_TRIGGER_ID` publish gate; project-scoped URLs, registry and scheduler keys (A4) | `test_duplicate_trigger_ids_are_an_issue`, `test_invalid_trigger_configs_block_publish_not_drafts[duplicate]`, `test_same_trigger_id_in_two_projects_is_routed_by_project`, `test_resolution_is_scoped_by_project`, `test_list_scheduled_keeps_same_id_in_two_projects`, `test_same_trigger_id_in_two_projects_fires_both` |
+| D6 | Duplicate trigger ids were accepted; resolution picked the workflow whose id sorted first | No uniqueness rule; resolution was global | `DUPLICATE_TRIGGER_ID` publish gate; workflow-scoped URLs, registry and scheduler keys (A4) | `test_duplicate_trigger_ids_are_an_issue`, `test_invalid_trigger_configs_block_publish_not_drafts[duplicate]`, `test_same_trigger_id_in_two_workflows_is_routed_by_workflow`, `test_resolution_is_scoped_by_workflow`, `test_list_scheduled_keeps_same_id_in_two_workflows`, `test_same_trigger_id_in_two_workflows_fires_both` |
 
 ### Test and tooling problems
 
@@ -1195,7 +1195,7 @@ since this phase.
 | P2 | Test-authoring errors caught by mypy/ruff: a variable read before assignment, missing imports, a missing `@asynccontextmanager`, `NodeResult()` without `outputs`, `Graph` imported from the wrong module, fakes not matching the expected types, the `uow` fixture passed to services (F9) | Fixed. Fakes subclass the protocols or the concrete classes (one `cast`). The only new `type: ignore` is a deliberate string-coercion test | Test code |
 | P3 | Lint findings (E501, F401, RUF059) and formatter reflows, including the joining of implicit string concatenations during the follow-up | Fixed | Source and tests |
 | P4 | mypy rejected the untyped croniter | Override (F10) | `pyproject.toml` |
-| P5 | The follow-up broke `test_validate_reports_structured_issues` (a pinned issue shape) | A deliberate, additive contract change; test updated (F21) | `tests/integration/test_projects_api.py` |
+| P5 | The follow-up broke `test_validate_reports_structured_issues` (a pinned issue shape) | A deliberate, additive contract change; test updated (F21) | `tests/integration/test_workflows_api.py` |
 
 ### Pre-existing problems discovered
 
@@ -1234,12 +1234,12 @@ See §10. Verification: the listed tests.
   `[0, 1, 1, 1]` over 4 ticks and only one `scheduled_trigger_failed`
   record is logged.
 
-### 3. D2 — state keyed by (project, trigger) with a schedule spec
+### 3. D2 — state keyed by (workflow, trigger) with a schedule spec
 - **Symptom:** a CRON → INTERVAL republish under the same id → `KeyError`
   on every tick.
 - **Root cause:** separate per-type dictionaries keyed by the id alone.
 - **Implementation:** one dictionary,
-  `_due[(project_id, trigger_id)] = (spec, next_due | None)`. A spec that
+  `_due[(workflow_id, trigger_id)] = (spec, next_due | None)`. A spec that
   differs from the stored one re-arms from `now`.
 - **Verification:**
   - `test_type_change_under_same_id_rearms`: no exception; fires on the new
@@ -1262,14 +1262,14 @@ See §10. Verification: the listed tests.
 - **Implementation:**
   - The Phase 10 rules moved from construction to `validate_triggers`
     (A3).
-  - Webhook/invoke resolution is scoped by project (A4), so another
-    project's data is never loaded for a request.
+  - Webhook/invoke resolution is scoped by workflow (A4), so another
+    workflow's data is never loaded for a request.
 - **Verification:** `test_legacy_trigger_configs_stay_loadable_and_isolated`
-  on PostgreSQL. A project row and version row were rewritten to cron
+  on PostgreSQL. A workflow row and version row were rewritten to cron
   `garbage`. Then:
-  - `GET` project → 200, `GET` version → 200;
+  - `GET` workflow → 200, `GET` version → 200;
   - `validate` reports `invalid_trigger_schedule` with the trigger id;
-  - the other project's webhook → 202, with no `garbage` in the response;
+  - the other workflow's webhook → 202, with no `garbage` in the response;
   - the scheduler fires the healthy interval trigger while the legacy cron
     stays parked.
 
@@ -1283,19 +1283,19 @@ See §10. Verification: the listed tests.
   - unit tests: depth 64 is accepted, depth 65 rejected; 20,000 nested
     lists are rejected without a stack overflow.
 
-### 7. D6 — project-scoped trigger addressing
+### 7. D6 — workflow-scoped trigger addressing
 - **Implementation:**
   - `DUPLICATE_TRIGGER_ID` in `validate_triggers`;
-  - `resolve(project_id, trigger_id)` via `list_latest(project_id=…)`;
-  - URLs `/projects/{p}/triggers/{t}/invoke` and `/webhooks/{p}/{t}`;
-  - scheduler keys `(project_id, trigger_id)`;
-  - `list_scheduled` ordered by (trigger id, project id).
+  - `resolve(workflow_id, trigger_id)` via `list_latest(workflow_id=…)`;
+  - URLs `/workflows/{p}/triggers/{t}/invoke` and `/webhooks/{p}/{t}`;
+  - scheduler keys `(workflow_id, trigger_id)`;
+  - `list_scheduled` ordered by (trigger id, workflow id).
 - **Verification:** the 6 tests listed in §10 D6.
 
 ### 8. Documentation corrections in touched files
 - `domain/cron.py`: the dialect is now described accurately.
 - `api/triggers.py`: the "runtime picks it up" statement was corrected.
-- Architecture §125: project scoping and publish-gate rules.
+- Architecture §125: workflow scoping and publish-gate rules.
 
 ---
 
@@ -1306,18 +1306,18 @@ See §10. Verification: the listed tests.
 | Module | Items | New in Phase 10 |
 |---|---|---|
 | `tests/domain/test_trigger_credentials_plugin.py` | 57 | 34 (Phase 09: 23) |
-| `tests/domain/test_project.py` | 23 | 3 |
+| `tests/domain/test_workflow.py` | 23 | 3 |
 | `tests/application/test_trigger_service.py` | 12 | 12 |
 | `tests/runtime/test_scheduler.py` | 15 | 15 |
 | `tests/test_lifecycle.py` | 5 | 2 |
 | `tests/integration/test_triggers_api.py` | 22 | 22 |
-| `tests/integration/test_projects_api.py` | 37 | 0 (1 test changed, F21) |
+| `tests/integration/test_workflows_api.py` | 37 | 0 (1 test changed, F21) |
 | **Whole suite** | **841** | **88** (Phase 09: 753) |
 
 - The suite splits into 681 non-integration and 160 integration items.
 - The first implementation added 45 items (798). The follow-up added 43
   more: +26 domain trigger tests (net, after replacing the old cron-syntax
-  construction tests), +3 project validation, +2 registry, +6 scheduler,
+  construction tests), +3 workflow validation, +2 registry, +6 scheduler,
   +6 integration.
 
 ### Unit tests
@@ -1337,7 +1337,7 @@ See §10. Verification: the listed tests.
   list handled without overflow.
 - `TestTriggerValidation`: duplicate ids produce an issue with a location;
   schedule issues are listed in draft order; trigger issues are absent from
-  `ProjectVersion.validate`.
+  `WorkflowVersion.validate`.
 
 **Application** (in-memory fakes that implement the repository protocols
 explicitly)
@@ -1349,9 +1349,9 @@ explicitly)
   - retirement by a newer version;
   - drafts never resolve;
   - the type filter;
-  - project scoping (the same id in 2 projects, and an unknown project);
+  - workflow scoping (the same id in 2 workflows, and an unknown workflow);
   - `list_scheduled` filtering and order;
-  - the same id in 2 projects kept apart.
+  - the same id in 2 workflows kept apart.
 
 **Scheduler** (`FakeClock` and an injected sleep; no real sleeping)
 - Interval: boundaries and context fields; missed runs skipped.
@@ -1359,7 +1359,7 @@ explicitly)
 - Pruning and re-arming; a changed schedule re-arms from `now`; a failed
   fire does not break the pass.
 - `TestIsolation`: 3 unschedulable configurations parked and logged once; a
-  type change re-arms; the same id in two projects fires for both.
+  type change re-arms; the same id in two workflows fires for both.
 - `run()`: cancellation, and it survives a broken tick.
 - `poll_seconds` is validated.
 
@@ -1376,20 +1376,20 @@ through `httpx.ASGITransport`:
 | Test | Verifies |
 |---|---|
 | `test_manual_execute_creates_canonical_execution` | 201, `manual`, `trigger_id` null, `correlation_id` from `x-request-id`; `GET /executions/{id}` |
-| `test_manual_execute_unknown_version` | 404 `PROJECT_VERSION_NOT_FOUND` |
+| `test_manual_execute_unknown_version` | 404 `WORKFLOW_VERSION_NOT_FOUND` |
 | `test_get_unknown_execution` | 404 `EXECUTION_NOT_FOUND` |
 | `test_manual_execute_invalid_input_rejected` | JSON array → 422 (status only) |
 | `test_invoke_api_trigger` / `test_invoke_manual_trigger_allowed` | 201 with `trigger_id` |
-| `test_invoke_unknown_or_foreign_type_is_404` | Unknown trigger, unknown project and WEBHOOK id → identical 404 |
+| `test_invoke_unknown_or_foreign_type_is_404` | Unknown trigger, unknown workflow and WEBHOOK id → identical 404 |
 | `test_webhook_fires_with_payload_as_input` | 202; `correlation_id`; the persisted input equals the body |
-| `test_webhook_unknown_or_wrong_type_is_404` | Unknown trigger, unknown project and API id → 404 |
+| `test_webhook_unknown_or_wrong_type_is_404` | Unknown trigger, unknown workflow and API id → 404 |
 | `test_webhook_rejects_non_object_payload` | Malformed JSON, JSON array → 422 |
 | `test_unparseable_or_too_deep_payloads_are_422_not_500` | D5 on all three mechanisms |
 | `test_webhook_payload_limit` | 413 |
 | `test_disabled_trigger_is_409` | 409 |
 | `test_republish_retires_old_trigger` | 202, then 404 after republishing without the trigger |
-| `test_invalid_trigger_configs_block_publish_not_drafts` (3 cases) | `PUT` 200 → `validate` reports code and `trigger_id` → publish 422 `PROJECT_VALIDATION_FAILED` |
-| `test_same_trigger_id_in_two_projects_is_routed_by_project` | Each project's URL creates its own project's execution |
+| `test_invalid_trigger_configs_block_publish_not_drafts` (3 cases) | `PUT` 200 → `validate` reports code and `trigger_id` → publish 422 `WORKFLOW_VALIDATION_FAILED` |
+| `test_same_trigger_id_in_two_workflows_is_routed_by_workflow` | Each workflow's URL creates its own workflow's execution |
 | `test_legacy_trigger_configs_stay_loadable_and_isolated` | D4 (see §11.5) |
 | `test_triggered_execution_runs_through_the_same_runtime` | A webhook-created execution runs to `COMPLETED` through `ExecutionRuntime` |
 | `test_scheduler_fires_interval_trigger_into_db` | Fake clock; exactly 1 `queued` row with trigger metadata |
@@ -1403,7 +1403,7 @@ that no traceback appears. The exceptions:
 
 ### Infrastructure tests
 - PostgreSQL 17.2 via Testcontainers for all 160 integration tests.
-- `list_latest` with and without `project_id` is exercised through the
+- `list_latest` with and without `workflow_id` is exercised through the
   registry.
 - No Redis.
 
@@ -1411,10 +1411,10 @@ that no traceback appears. The exceptions:
 - None exist yet (backend/AGENTS §64).
 
 ### Security tests
-- 404 uniformity for unknown and wrong-type ids, and unknown projects.
+- 404 uniformity for unknown and wrong-type ids, and unknown workflows.
 - 413, 409, and 422 for malformed, invalid UTF-8 and too-deep payloads.
-- Cross-project routing (D6).
-- No cross-project configuration leak (D4 test asserts that `garbage` is
+- Cross-workflow routing (D6).
+- No cross-workflow configuration leak (D4 test asserts that `garbage` is
   absent).
 - No stack traces in error bodies.
 - **Not asserted:** the header allowlist. The webhook test sends an
@@ -1426,8 +1426,8 @@ that no traceback appears. The exceptions:
 |---|---|---|
 | A bad trigger sorted first (interval `1e12`, cron `0 0 31 2 *`) | Every tick raised; the healthy trigger fired 0 times | The healthy trigger fires; the bad one is parked and logged once (test) |
 | Same id republished CRON → INTERVAL | `KeyError` on every tick | Re-armed (test) |
-| Duplicate ids in one draft / in two projects | Accepted; resolved to the project sorting first | Draft accepted, `validate` issue, publish 422; each project routed to its own trigger (tests) |
-| Stored cron `garbage` in one project (PostgreSQL) | Registry calls failed for all projects; another project's webhook got 422 disclosing `{"cron": "garbage"}` | Loadable; issue reported; other projects unaffected (test) |
+| Duplicate ids in one draft / in two workflows | Accepted; resolved to the workflow sorting first | Draft accepted, `validate` issue, publish 422; each workflow routed to its own trigger (tests) |
+| Stored cron `garbage` in one workflow (PostgreSQL) | Registry calls failed for all workflows; another workflow's webhook got 422 disclosing `{"cron": "garbage"}` | Loadable; issue reported; other workflows unaffected (test) |
 | Webhook with 50,000 × `[` | 500 `INTERNAL_ERROR` | 422 `DOMAIN_VALIDATION_ERROR` |
 | Webhook with depth 501 (~1 KB) | Not probed; deepcopy fails from about 500 levels, so 500 is inferred | 422 "trigger payload is nested too deeply" |
 | Webhook with invalid UTF-8 | Not probed; `UnicodeDecodeError` was not caught (inspection) | 422 |
@@ -1435,11 +1435,11 @@ that no traceback appears. The exceptions:
 | `/invoke`, `/execute` with depth 64 / depth 100 | Not probed | 201 / 422 `DOMAIN_VALIDATION_ERROR`. Pydantic accepts depth 100, and `TriggerContext` rejects it |
 | `/invoke`, `/execute` with 50,000 × `[` | 400 `HTTP_ERROR` | Not re-probed; unchanged code path |
 | Webhook with NaN; `x-request-id` of 200 characters; the same delivery twice | 422; 422 (F13); 2 executions (F15) | Not re-probed; code paths unchanged apart from the URL |
-| `/openapi.json` | 4 paths; no webhook body; `status` a plain string | Project-scoped paths present; `ValidationIssueOut` includes `trigger_id`; webhook body and `status` enum still missing (F16) |
+| `/openapi.json` | 4 paths; no webhook body; `status` a plain string | Workflow-scoped paths present; `ValidationIssueOut` includes `trigger_id`; webhook body and `status` enum still missing (F16) |
 
 ### Flakiness
 - The phase-specific modules ran 3 times in a row (the 5 trigger modules
-  plus `tests/domain/test_project.py`): 134 passed each time, in
+  plus `tests/domain/test_workflow.py`): 134 passed each time, in
   10.37–11.03 s.
 
 ### Not covered by tests
@@ -1469,7 +1469,7 @@ that no traceback appears. The exceptions:
 | Type checker (`uv run mypy .`, strict, src + tests) | PASS | No issues in 99 source files |
 | Unit tests | PASS | 681 non-integration items |
 | Integration tests | PASS | 160 items (PostgreSQL 17.2, Testcontainers), 22 of them in `test_triggers_api.py` |
-| API tests | PASS | `test_triggers_api.py`, `test_projects_api.py` |
+| API tests | PASS | `test_triggers_api.py`, `test_workflows_api.py` |
 | Full suite (`uv run pytest`) | PASS | 841 passed, 0 failed, 0 skipped, 1 warning (the existing `StarletteDeprecationWarning`), 76.73 s. During the follow-up one run had 1 failure (F21: pinned issue shape); that contract change was deliberate and the test was updated |
 | E2E tests | N/A | None exist yet |
 | Build (`uv build`) | PASS | sdist 282,972 B and wheel 98,418 B built into `%TEMP%\opencode\phase10-build`, then deleted. This build was not run during the first implementation (§24) |
@@ -1497,7 +1497,7 @@ that no traceback appears. The exceptions:
 | Prompt: converge on the existing Execution Service **and Runtime** | PASS, with a note | Proven through the runtime by a test; the deployment has no runtime caller yet (F8, Phase 22) |
 | Prompt: tests for every trigger type | PASS | Manual, API, webhook, cron, interval |
 | Session: every supported trigger creates the same canonical Execution | PASS | One creation path and one metadata schema. Identical `ExecutionDetail` fields for manual/API/webhook; database rows for interval (cron: count) |
-| Session: tests for duplicate/invalid trigger configurations | PASS | Duplicates: `test_duplicate_trigger_ids_are_an_issue`, `test_invalid_trigger_configs_block_publish_not_drafts[…duplicate…]`, `test_same_trigger_id_in_two_projects_is_routed_by_project`, `test_resolution_is_scoped_by_project`, `test_same_trigger_id_in_two_projects_fires_both`. Invalid: see above |
+| Session: tests for duplicate/invalid trigger configurations | PASS | Duplicates: `test_duplicate_trigger_ids_are_an_issue`, `test_invalid_trigger_configs_block_publish_not_drafts[…duplicate…]`, `test_same_trigger_id_in_two_workflows_is_routed_by_workflow`, `test_resolution_is_scoped_by_workflow`, `test_same_trigger_id_in_two_workflows_fires_both`. Invalid: see above |
 | Session: event-trigger boundary without unrelated event infrastructure | PARTIAL | See the details after this table. Does not block |
 | Session: no sleep-based scheduler tests; deterministic clock/scheduler | PASS | `FakeClock`, injected sleep, `tick()`. No real sleep in the new tests (only a 30 s `wait_for` guard) |
 | Session: quality gates pass | PASS | §13 |
@@ -1534,22 +1534,22 @@ Details for the event-trigger boundary row:
 
 ### Webhook authentication
 - None: no signature and no secret (Phases 13/20/25).
-- The project id and the trigger id are the only barrier, and both are
+- The workflow id and the trigger id are the only barrier, and both are
   guessable:
   - clients choose trigger ids;
   - any `<prefix>_<32 hex>` is accepted, including all zeros;
-  - `GET` on projects returns both ids.
+  - `GET` on workflows returns both ids.
 
-### Cross-project isolation (fixed, D4/D6)
-- Webhook and invoke resolution load only the addressed project's latest
+### Cross-workflow isolation (fixed, D4/D6)
+- Webhook and invoke resolution load only the addressed workflow's latest
   version.
-- A colliding trigger id in another project can no longer capture
+- A colliding trigger id in another workflow can no longer capture
   deliveries.
-- Another project's stored data can no longer fail a request or leak into
+- Another workflow's stored data can no longer fail a request or leak into
   its error body (tested: no `garbage` in the response).
 
 ### Information disclosure
-- Wrong-type ids, unknown ids and unknown projects all get identical 404
+- Wrong-type ids, unknown ids and unknown workflows all get identical 404
   responses (tested).
 - Error bodies contain no stack traces (tested).
 - Validation issues carry trigger ids but no configuration values.
@@ -1574,7 +1574,7 @@ Details for the event-trigger boundary row:
 - There is no rate limiting (§108, Phase 25).
 - 1-second interval triggers can create executions without limit
   (Phase 24).
-- A single bad schedule can no longer stall other projects' scheduling
+- A single bad schedule can no longer stall other workflows' scheduling
   (D1 fixed).
 
 ### Logging
@@ -1594,18 +1594,18 @@ Details for the event-trigger boundary row:
 ## 16. Performance Considerations
 
 ### Resolution
-- `resolve(project_id, trigger_id)` loads **one** row: the addressed
-  project's latest version.
-- The first implementation loaded the latest version of *every* project for
+- `resolve(workflow_id, trigger_id)` loads **one** row: the addressed
+  workflow's latest version.
+- The first implementation loaded the latest version of *every* workflow for
   each webhook or invoke call.
 
 ### Scheduler scan
-- `list_scheduled()` still loads the latest version row of every project,
+- `list_scheduled()` still loads the latest version row of every workflow,
   graph included, on every tick. With the defaults that is once per second
   per process.
 - The limit is marked with a `ponytail:` comment in
   `infrastructure/persistence.py`.
-- The `(project_id, version)` unique index is available for the join. No
+- The `(workflow_id, version)` unique index is available for the join. No
   `EXPLAIN` was run.
 
 ### Tick cost
@@ -1641,12 +1641,12 @@ Details for the event-trigger boundary row:
 
 | File | Reason | What was documented |
 |---|---|---|
-| `docs/architecture.md` §125 | The resolution rule was undefined; then the follow-up decisions (A3, A4) | Configured on the draft; resolves to the latest published version; drafts never fire; ids unique per project, URLs carry the project id; schedule and uniqueness rules are publish-blocking validation issues; no catch-up |
+| `docs/architecture.md` §125 | The resolution rule was undefined; then the follow-up decisions (A3, A4) | Configured on the draft; resolves to the latest published version; drafts never fire; ids unique per workflow, URLs carry the workflow id; schedule and uniqueness rules are publish-blocking validation issues; no catch-up |
 | `backend/src/akasha/domain/trigger.py` (docstring) | Construction vs. publish-time rules | Why the stricter rules are validation issues |
 | `backend/src/akasha/domain/cron.py` (docstring) | The first version claimed "POSIX only" and "always schedulable" (F2, F3) | The accepted croniter dialect; the `H`/`R` rejection; the fixed probe start |
-| `backend/src/akasha/domain/project.py` (docstrings) | Trigger validation | `validate_triggers`; why `ProjectVersion.validate` leaves out trigger rules |
-| `backend/src/akasha/api/triggers.py` (docstring) | The first version said "the runtime picks it up" (F8) | Project-scoped URLs; QUEUED until workers exist |
-| `backend/src/akasha/application/persistence.py`, `application/triggers.py`, `runtime/scheduler.py` (docstrings) | New behavior | `list_latest(project_id=…)`, project-scoped resolution, the scheduler's state and parking |
+| `backend/src/akasha/domain/workflow.py` (docstrings) | Trigger validation | `validate_triggers`; why `WorkflowVersion.validate` leaves out trigger rules |
+| `backend/src/akasha/api/triggers.py` (docstring) | The first version said "the runtime picks it up" (F8) | Workflow-scoped URLs; QUEUED until workers exist |
+| `backend/src/akasha/application/persistence.py`, `application/triggers.py`, `runtime/scheduler.py` (docstrings) | New behavior | `list_latest(workflow_id=…)`, workflow-scoped resolution, the scheduler's state and parking |
 | `docs/reports/backend/phase-10-trigger-system.md` | Phase report | This document; it replaces the first version, which listed D1–D6 as open |
 
 ### Still outdated (not done)
@@ -1707,7 +1707,7 @@ Details for the event-trigger boundary row:
 | Distributed scheduling, persisted schedule state, a catch-up policy | In-process until workers exist | 22 / 23 / 26 | Workers | No |
 | Metrics | Observability phase | 12 | — | No |
 | Cron timezone support | Not requested | Not assigned | — | No |
-| Gating triggers on project status | No status use cases exist | Not assigned | Status transitions | No |
+| Gating triggers on workflow status | No status use cases exist | Not assigned | Status transitions | No |
 
 ---
 
@@ -1730,7 +1730,7 @@ Missed runs are skipped; each trigger fires at most once per tick.
 ### L4 — Invalid schedules in older published versions are parked
 - A version published before these rules may contain a schedule that
   cannot be computed. The scheduler parks it and logs once, until the
-  project republishes with a changed schedule.
+  workflow republishes with a changed schedule.
 - A legacy interval below 1 s fires at most once per tick.
 
 ### L5 — Invalid triggers are allowed in drafts
@@ -1743,8 +1743,8 @@ them.
   and `#`.
 - Unicode decimal digits are also accepted (F20).
 
-### L7 — The scheduler scans every project
-It reads every project's latest version row on every tick.
+### L7 — The scheduler scans every workflow
+It reads every workflow's latest version row on every tick.
 
 ### L8 — Race between resolution and creation
 A publish between resolution and creation can run the version that was just
@@ -1752,7 +1752,7 @@ retired.
 
 ### L9 — No trigger listing endpoint
 No endpoint lists triggers. The webhook URL follows a convention
-(`/api/v1/webhooks/{project_id}/{trigger_id}`) and is not returned by any
+(`/api/v1/webhooks/{workflow_id}/{trigger_id}`) and is not returned by any
 endpoint.
 
 ### L10 — Webhook body handling
@@ -1773,8 +1773,8 @@ node-level detail and no input.
 API and webhook triggers carry no authentication, and the ids are
 guessable (F6).
 
-### L14 — Project status is ignored
-Trigger resolution ignores project status (F7).
+### L14 — Workflow status is ignored
+Trigger resolution ignores workflow status (F7).
 
 ---
 
@@ -1784,10 +1784,10 @@ Trigger resolution ignores project status (F7).
 
 | # | Issue | Resolution |
 |---|---|---|
-| OI1 | D1 + D3: one unschedulable trigger stalled scheduling across projects | FIXED: a per-trigger error boundary, parking, publish-time schedule rules |
-| OI2 | D2: `KeyError` after a type change under the same id | FIXED: state keyed by (project, trigger) with a spec; re-arms on change |
-| OI3 | D4: stored data became unloadable; cross-project outage and disclosure | FIXED: rules moved to validation issues; resolution scoped by project |
-| OI4 | D6: duplicate trigger ids; cross-project capture | FIXED: `DUPLICATE_TRIGGER_ID` publish gate; project-scoped addressing |
+| OI1 | D1 + D3: one unschedulable trigger stalled scheduling across workflows | FIXED: a per-trigger error boundary, parking, publish-time schedule rules |
+| OI2 | D2: `KeyError` after a type change under the same id | FIXED: state keyed by (workflow, trigger) with a spec; re-arms on change |
+| OI3 | D4: stored data became unloadable; cross-workflow outage and disclosure | FIXED: rules moved to validation issues; resolution scoped by workflow |
+| OI4 | D6: duplicate trigger ids; cross-workflow capture | FIXED: `DUPLICATE_TRIGGER_ID` publish gate; workflow-scoped addressing |
 | OI5 | D5: deeply nested webhook bodies returned 500 | FIXED: parse errors → 422; 64-level depth limit |
 
 ### Still open
@@ -1797,7 +1797,7 @@ Trigger resolution ignores project status (F7).
 | OI6 | F13: an invalid `x-request-id` rejects the request | Legitimate webhooks can be rejected | LOW | `api/triggers.py` | Drop or truncate invalid correlation ids for external mechanisms | 12 or a follow-up |
 | OI7 | F16: OpenAPI has no webhook body and no `status` enum, and no test covers the new paths | The frontend contract is ambiguous | LOW | `api/` | Document the body; add the enum; add an OpenAPI test | Before frontend Phase 18 |
 | OI8 | Outdated documentation (§17) | Misleads future developers | LOW | README, docstrings | Update `backend/README.md`, the runtime component map, `domain/__init__.py` | Next documentation pass |
-| OI9 | F7: project status is not consulted | Latent | LOW | `application/triggers.py` | Consult `Project.status` once status transitions exist | When status use cases are added |
+| OI9 | F7: workflow status is not consulted | Latent | LOW | `application/triggers.py` | Consult `Workflow.status` once status transitions exist | When status use cases are added |
 | OI10 | F17: tick-level failures are logged on every poll | Log noise while the database is down | LOW | `runtime/scheduler.py` | Rate-limit repeated tick-failure logs | 12 |
 | OI11 | F6: client-chosen, guessable trigger ids, and no webhook authentication | Anyone who knows the ids can fire | MEDIUM | API / security | Webhook signatures or secrets through credential references; server-generated or unguessable ids | 13 / 20 / 25 |
 
@@ -1808,10 +1808,10 @@ F12, F14 and F15 are intentionally deferred and tracked in §19.
 ## 22. Architectural / Product Decisions
 
 ### Version resolution and trigger addressing
-- A trigger resolves to the **latest published version** of its project.
+- A trigger resolves to the **latest published version** of its workflow.
   Drafts never fire (A1, §125).
-- Trigger ids are **unique per project, not globally**. Every trigger URL
-  carries the project id, and scheduler state is keyed by (project id,
+- Trigger ids are **unique per workflow, not globally**. Every trigger URL
+  carries the workflow id, and scheduler state is keyed by (workflow id,
   trigger id) (A4).
 - A webhook URL survives a republish only while the draft keeps the trigger
   id.
@@ -1821,7 +1821,7 @@ F12, F14 and F15 are intentionally deferred and tracked in §19.
   errors** (A3). This follows the `validate_dependencies` precedent.
   - Construction may be tightened only for values that can never have been
     persisted (e.g. NaN/inf, which JSONB rejects).
-- Trigger rules gate **publishing only**. `ProjectVersion.validate`, the
+- Trigger rules gate **publishing only**. `WorkflowVersion.validate`, the
   runtime's pre-run check, ignores them: a run never depends on how it was
   triggered.
 - Schedules must be **deterministic and able to fire**: croniter's `H`/`R`
@@ -1854,8 +1854,8 @@ F12, F14 and F15 are intentionally deferred and tracked in §19.
 - Headers pass through an allowlist and are never persisted.
 - `GET /api/v1/executions/{execution_id}` is the minimal observation
   endpoint §126 requires.
-- The manual run is the project-scoped `POST
-  /projects/{p}/versions/{v}/execute`.
+- The manual run is the workflow-scoped `POST
+  /workflows/{p}/versions/{v}/execute`.
 
 ---
 
@@ -1891,10 +1891,10 @@ F12, F14 and F15 are intentionally deferred and tracked in §19.
 - **Domain:**
   - `TriggerContext` with a depth limit;
   - cron and schedule validation as publish gates;
-  - unique trigger ids per project;
+  - unique trigger ids per workflow;
   - `ValidationIssue.trigger_id`.
-- **Application:** a registry scoped by project; `TriggerService`.
-- **Persistence:** `list_latest(project_id=None)`.
+- **Application:** a registry scoped by workflow; `TriggerService`.
+- **Persistence:** `list_latest(workflow_id=None)`.
 - **Runtime:** `TriggerScheduler` with per-trigger isolation, spec-based
   re-arming and parking.
 - **API:** the four endpoints.
@@ -1939,7 +1939,7 @@ F12, F14 and F15 are intentionally deferred and tracked in §19.
 | "failed ticks/fires logged and survived" | End-of-implementation summary | Not true before the follow-up (D1/D2). Now true per trigger; tick-level failures are still logged each poll (F17) |
 | "unguessable trigger-id URLs" | End-of-implementation summary | Clients choose ids, and they are guessable (F6, OI11) |
 | D5 threshold "50,000 nested `[`" | First report | About 500 levels (~1 KB) sufficed (F18) |
-| D4 described as a registry and `GET version` problem | First report | It also locked the affected project's draft (F19) |
+| D4 described as a registry and `GET version` problem | First report | It also locked the affected workflow's draft (F19) |
 | D1–D6 listed as OPEN | First report | FIXED (§10–§11) |
 
 **Phase Status:** COMPLETE WITH LIMITATIONS
@@ -1959,9 +1959,9 @@ The next phase is Phase 11, the Event System.
     §14 lists that event; the Phase 11 roadmap list does not.
 - `ExecutionMetadata` carries `trigger_type`, `trigger_id` and
   `correlation_id`.
-- `TriggerRegistry.resolve(project_id, trigger_id, trigger_type=…)` and
+- `TriggerRegistry.resolve(workflow_id, trigger_id, trigger_type=…)` and
   `list_scheduled()`.
-- `ProjectVersionRepository.list_latest(project_id=None)`.
+- `WorkflowVersionRepository.list_latest(workflow_id=None)`.
 - Validation issues carry `trigger_id`.
 - The codes `duplicate_trigger_id` and `invalid_trigger_schedule` exist.
 
@@ -1975,10 +1975,10 @@ The next phase is Phase 11, the Event System.
    errors.
 
 ### Must not change casually
-- The §125 rules: latest-version resolution, project-scoped ids and URLs,
+- The §125 rules: latest-version resolution, workflow-scoped ids and URLs,
   publish-gate validation.
-- The URL shapes `/api/v1/webhooks/{project_id}/{trigger_id}` and
-  `/api/v1/projects/{project_id}/triggers/{trigger_id}/invoke`.
+- The URL shapes `/api/v1/webhooks/{workflow_id}/{trigger_id}` and
+  `/api/v1/workflows/{workflow_id}/triggers/{trigger_id}/invoke`.
 - The error codes `TRIGGER_NOT_FOUND`, `TRIGGER_DISABLED`,
   `PAYLOAD_TOO_LARGE` and the two validation codes.
 - The fields of `ExecutionDetail` and the `trigger_id` field of validation
@@ -1992,7 +1992,7 @@ The next phase is Phase 11, the Event System.
 - No consumer of `QUEUED` executions.
 - No authentication.
 - Cron only in UTC.
-- The scheduler scans every project's latest version on every tick.
+- The scheduler scans every workflow's latest version on every tick.
 
 ### Prerequisites for Phase 11
 - None block it.

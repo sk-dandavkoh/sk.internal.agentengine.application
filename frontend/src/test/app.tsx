@@ -42,7 +42,7 @@ export const noSession = () =>
     apiError(401, 'AUTHENTICATION_REQUIRED', 'Authentication required.')
 
 /**
- * Stubs `fetch` with `handlers`, keyed `"GET /projects"` (path below
+ * Stubs `fetch` with `handlers`, keyed `"GET /workflows"` (path below
  * /api/v1). Unknown routes answer 404. Signed in as `testUser` unless
  * `GET /auth/session` is overridden. Returns the request log (without the
  * session checks).

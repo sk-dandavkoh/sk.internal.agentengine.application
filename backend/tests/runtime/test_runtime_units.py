@@ -30,7 +30,7 @@ from akasha.domain.node import (
     PortType,
 )
 from akasha.domain.primitives import new_id
-from akasha.domain.project import Dependency, ProjectDraft
+from akasha.domain.workflow import Dependency, WorkflowDraft
 from akasha.errors import ConfigurationError
 from akasha.runtime.executor import execute_node
 from akasha.runtime.plan import ExecutionGraphInvalidError, load_plan
@@ -73,8 +73,8 @@ def ctx(inputs: Mapping[str, Any] | None = None) -> NodeExecutionContext:
         execution_id=new_id("exec"),
         node_execution_id=new_id("nexec"),
         node_instance_id=new_id("node"),
-        project_id=new_id("proj"),
-        project_version="1",
+        workflow_id=new_id("wf"),
+        workflow_version="1",
         config={},
         inputs=inputs or {},
         logger=logging.getLogger("test"),
@@ -236,8 +236,8 @@ def diamond() -> tuple[Execution, dict[str, str]]:
         graph.add_node(n)
     graph.add_edge(Edge(s2.id, "out", c.id, "items"))
     graph.add_edge(Edge(s1.id, "out", c.id, "items"))
-    version = ProjectDraft(graph=graph).publish(version=1)
-    execution = Execution.create(new_id("proj"), version)
+    version = WorkflowDraft(graph=graph).publish(version=1)
+    execution = Execution.create(new_id("wf"), version)
     execution.enqueue()
     execution.start()
     return execution, {"s1": s1.id, "s2": s2.id, "c": c.id}
@@ -251,7 +251,7 @@ def finish(execution: Execution, node_id: str, outputs: dict[str, Any]) -> None:
 
 def test_plan_roots_and_dependencies() -> None:
     execution, ids = diamond()
-    plan = load_plan(execution.project_version, CATALOG)
+    plan = load_plan(execution.workflow_version, CATALOG)
     assert plan.roots == sorted([ids["s1"], ids["s2"]])
     assert plan.downstream[ids["s1"]] == (ids["c"],)
     assert plan.downstream[ids["c"]] == ()
@@ -259,7 +259,7 @@ def test_plan_roots_and_dependencies() -> None:
 
 def test_node_becomes_ready_only_after_every_upstream_completed() -> None:
     execution, ids = diamond()
-    plan = load_plan(execution.project_version, CATALOG)
+    plan = load_plan(execution.workflow_version, CATALOG)
     finish(execution, ids["s1"], {"out": "a"})
     assert plan.readiness(ids["c"], execution) is None  # s2 still open
     finish(execution, ids["s2"], {"out": ["b", "c"]})
@@ -269,7 +269,7 @@ def test_node_becomes_ready_only_after_every_upstream_completed() -> None:
 def test_skipped_upstream_kills_its_edge_but_a_live_edge_still_feeds() -> None:
     """Merge semantics: one live edge into a multiple input is enough."""
     execution, ids = diamond()
-    plan = load_plan(execution.project_version, CATALOG)
+    plan = load_plan(execution.workflow_version, CATALOG)
     execution.skip_node(ids["s2"])
     assert plan.readiness(ids["c"], execution) is None
     finish(execution, ids["s1"], {"out": "a"})
@@ -282,7 +282,7 @@ def test_skipped_upstream_kills_its_edge_but_a_live_edge_still_feeds() -> None:
 
 def test_all_edges_dead_means_skipped() -> None:
     execution, ids = diamond()
-    plan = load_plan(execution.project_version, CATALOG)
+    plan = load_plan(execution.workflow_version, CATALOG)
     execution.skip_node(ids["s1"])
     execution.skip_node(ids["s2"])
     assert plan.readiness(ids["c"], execution) is _N.SKIPPED
@@ -306,11 +306,11 @@ def test_omitted_control_flow_output_is_a_dead_edge() -> None:
         graph.add_node(n)
     graph.add_edge(Edge(branch.id, "yes", pair.id, "a"))
     graph.add_edge(Edge(branch.id, "no", pair.id, "b"))
-    execution = Execution.create(new_id("proj"), ProjectDraft(graph).publish(version=1))
+    execution = Execution.create(new_id("wf"), WorkflowDraft(graph).publish(version=1))
     execution.enqueue()
     execution.start()
     plan = load_plan(
-        execution.project_version, {"test.branch": BRANCH, "test.pair": PAIR}
+        execution.workflow_version, {"test.branch": BRANCH, "test.pair": PAIR}
     )
 
     finish(execution, branch.id, {"yes": "y"})
@@ -321,7 +321,7 @@ def test_omitted_control_flow_output_is_a_dead_edge() -> None:
 def test_declared_dependency_versions_are_rechecked_at_load() -> None:
     execution, _ = diamond()
     version = replace(
-        execution.project_version,
+        execution.workflow_version,
         dependencies=(Dependency("node", "test.source", ">=2.0.0"),),
     )
     with pytest.raises(ExecutionGraphInvalidError) as err:
@@ -333,19 +333,19 @@ def test_declared_dependency_versions_are_rechecked_at_load() -> None:
 
 def test_pinned_plugin_versions_must_match_exactly_at_load() -> None:
     execution, _ = diamond()
-    pinned = replace(execution.project_version, plugin_versions={"acme": "1.0.0"})
+    pinned = replace(execution.workflow_version, plugin_versions={"acme": "1.0.0"})
     assert load_plan(pinned, CATALOG, {"acme": "1.0.0"}).roots
     for enabled, code in (({"acme": "1.0.1"}, "incompatible"), ({}, "missing")):
         with pytest.raises(ExecutionGraphInvalidError) as err:
             load_plan(pinned, CATALOG, enabled)
         assert [i.code.value for i in err.value.result.issues] == [f"{code}_dependency"]
     # Versions published before pinning carry none and run as before.
-    assert load_plan(execution.project_version, CATALOG, {}).roots
+    assert load_plan(execution.workflow_version, CATALOG, {}).roots
 
 
 def test_inputs_collect_in_edge_order_and_defaults_are_private_copies() -> None:
     execution, ids = diamond()
-    plan = load_plan(execution.project_version, CATALOG)
+    plan = load_plan(execution.workflow_version, CATALOG)
     finish(execution, ids["s1"], {"out": "a"})
     finish(execution, ids["s2"], {"out": ["b", "c"]})
 
@@ -364,7 +364,7 @@ def test_inputs_collect_in_edge_order_and_defaults_are_private_copies() -> None:
 def test_invalid_graph_is_rejected_with_structured_issues() -> None:
     execution, _ = diamond()
     with pytest.raises(ExecutionGraphInvalidError) as err:
-        load_plan(execution.project_version, {"test.source": SOURCE})
+        load_plan(execution.workflow_version, {"test.source": SOURCE})
     assert {i.code.value for i in err.value.result.issues} == {"unknown_node_type"}
     assert err.value.code == "EXECUTION_GRAPH_INVALID"
 

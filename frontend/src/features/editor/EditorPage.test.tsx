@@ -23,7 +23,7 @@ const AT = '2026-10-02T08:00:00Z'
 const ID_A = `node_${'a'.repeat(32)}`
 const ID_B = `node_${'b'.repeat(32)}`
 
-function project(overrides: object = {}) {
+function workflow(overrides: object = {}) {
     return {
         id: 'p1',
         name: 'Leads',
@@ -114,13 +114,16 @@ interface PutBody {
 }
 
 /** A backend whose PUT enforces revisions like the real one. */
-function backend(overrides: Record<string, Handler> = {}, initial = project()) {
+function backend(
+    overrides: Record<string, Handler> = {},
+    initial = workflow(),
+) {
     let current = initial
     const puts: PutBody[] = []
     const requests = stubBackend({
-        'GET /projects/p1': () => ok(current),
+        'GET /workflows/p1': () => ok(current),
         'GET /nodes': () => catalog,
-        'PUT /projects/p1': (_url, init) => {
+        'PUT /workflows/p1': (_url, init) => {
             const body = JSON.parse(init.body as string) as PutBody
             puts.push(body)
             if (body.expected_revision !== current.revision)
@@ -149,7 +152,7 @@ function backend(overrides: Record<string, Handler> = {}, initial = project()) {
 }
 
 async function openEditor() {
-    const view = renderRoute('/projects/p1/editor')
+    const view = renderRoute('/workflows/p1/editor')
     await screen.findByRole('heading', {
         level: 1,
         name: 'Draft editor: Leads',
@@ -223,10 +226,10 @@ describe('EditorPage', () => {
         ).toHaveTextContent('value')
     })
 
-    it('an unpublished project says nothing has been published', async () => {
+    it('an unpublished workflow says nothing has been published', async () => {
         backend({
-            'GET /projects/p1': () =>
-                ok(project({ status: 'draft', current_version: 0 })),
+            'GET /workflows/p1': () =>
+                ok(workflow({ status: 'draft', current_version: 0 })),
         })
         await openEditor()
         expect(
@@ -381,11 +384,11 @@ describe('EditorPage', () => {
         let fail = true
         const put = vi.fn()
         backend({
-            'PUT /projects/p1': () => {
+            'PUT /workflows/p1': () => {
                 put()
                 return fail
                     ? apiError(500, 'INTERNAL_ERROR', 'Database unavailable.')
-                    : ok(project({ revision: 4 }))
+                    : ok(workflow({ revision: 4 }))
             },
         })
         await openEditor()
@@ -440,16 +443,16 @@ describe('EditorPage', () => {
         const { router } = await openEditor()
         await moveNodeA()
 
-        fireEvent.click(screen.getByRole('link', { name: 'Back to project' }))
+        fireEvent.click(screen.getByRole('link', { name: 'Back to workflow' }))
         const dialog = await screen.findByRole('dialog', {
             name: 'Leave with unsaved changes?',
         })
         fireEvent.click(
             within(dialog).getByRole('button', { name: 'Stay in editor' }),
         )
-        expect(router.state.location.pathname).toBe('/projects/p1/editor')
+        expect(router.state.location.pathname).toBe('/workflows/p1/editor')
 
-        fireEvent.click(screen.getByRole('link', { name: 'Back to project' }))
+        fireEvent.click(screen.getByRole('link', { name: 'Back to workflow' }))
         fireEvent.click(
             within(
                 await screen.findByRole('dialog', {
@@ -458,16 +461,16 @@ describe('EditorPage', () => {
             ).getByRole('button', { name: 'Leave without saving' }),
         )
         await waitFor(() => {
-            expect(router.state.location.pathname).toBe('/projects/p1')
+            expect(router.state.location.pathname).toBe('/workflows/p1')
         })
     })
 
     it('leaves without asking when everything is saved', async () => {
         backend()
         const { router } = await openEditor()
-        fireEvent.click(screen.getByRole('link', { name: 'Back to project' }))
+        fireEvent.click(screen.getByRole('link', { name: 'Back to workflow' }))
         await waitFor(() => {
-            expect(router.state.location.pathname).toBe('/projects/p1')
+            expect(router.state.location.pathname).toBe('/workflows/p1')
         })
     })
 
@@ -498,15 +501,15 @@ describe('EditorPage', () => {
             'INTERNAL_ERROR',
             'Database unavailable.',
         )
-        backend({ 'GET /projects/p1': () => reply })
-        renderRoute('/projects/p1/editor')
+        backend({ 'GET /workflows/p1': () => reply })
+        renderRoute('/workflows/p1/editor')
 
         expect(
             await screen.findByRole('heading', {
-                name: 'Could not load the project draft',
+                name: 'Could not load the workflow draft',
             }),
         ).toBeInTheDocument()
-        reply = ok(project())
+        reply = ok(workflow())
         fireEvent.click(button('Retry'))
         expect(
             await screen.findByRole('heading', { name: 'Draft editor: Leads' }),
@@ -515,7 +518,7 @@ describe('EditorPage', () => {
 
     it('explains view-only access instead of offering edits a viewer cannot save', async () => {
         const { puts } = backend({
-            'GET /projects/p1/members': () =>
+            'GET /workflows/p1/members': () =>
                 ok({ access: 'view', owner: null, members: [] }),
         })
         await openEditor()
@@ -527,14 +530,14 @@ describe('EditorPage', () => {
         expect(puts).toEqual([])
     })
 
-    it('shows not found for an unknown project', async () => {
+    it('shows not found for an unknown workflow', async () => {
         backend({
-            'GET /projects/p1': () =>
-                apiError(404, 'PROJECT_NOT_FOUND', 'Nope.'),
+            'GET /workflows/p1': () =>
+                apiError(404, 'WORKFLOW_NOT_FOUND', 'Nope.'),
         })
-        renderRoute('/projects/p1/editor')
+        renderRoute('/workflows/p1/editor')
         expect(
-            await screen.findByRole('heading', { name: 'Project not found' }),
+            await screen.findByRole('heading', { name: 'Workflow not found' }),
         ).toBeInTheDocument()
     })
 
@@ -801,7 +804,7 @@ describe('Graph editing', () => {
     })
 
     function graphBackend(edges: ReturnType<typeof wire>[] = []) {
-        const base = project()
+        const base = workflow()
         return backend(
             { 'GET /nodes': () => nodes },
             {
@@ -1129,7 +1132,7 @@ const VERSION = {
     description: 'Qualifies leads',
     published_at: AT,
     published_by: null,
-    graph: project().draft.graph,
+    graph: workflow().draft.graph,
     triggers: [],
     dependencies: [],
     files: [],
@@ -1155,12 +1158,12 @@ function publishBackend({
             return answer()
         }
     const server = backend({
-        'POST /projects/p1/validate': pinned('validate', validate),
-        'POST /projects/p1/publish': pinned(
+        'POST /workflows/p1/validate': pinned('validate', validate),
+        'POST /workflows/p1/publish': pinned(
             'publish',
             publish ??
                 (() => {
-                    // Like the backend: saving the project advances the revision.
+                    // Like the backend: saving the workflow advances the revision.
                     server.patch({
                         current_version: server.current().current_version + 1,
                     })
@@ -1246,7 +1249,7 @@ describe('Validate and publish', () => {
         expect(await panel().findByText('5 errors')).toBeInTheDocument()
         expect(
             panel().getByText(
-                'Nodes: 2 · Connections: 1 · Triggers: 1 · Project: 1',
+                'Nodes: 2 · Connections: 1 · Triggers: 1 · Workflow: 1',
             ),
         ).toBeInTheDocument()
         expect(panel().getByRole('button', { name: 'Publish…' })).toBeDisabled()
@@ -1369,8 +1372,8 @@ describe('Validate and publish', () => {
             publish: () => ({
                 status: 422,
                 body: {
-                    code: 'PROJECT_VALIDATION_FAILED',
-                    message: 'The project draft contains validation errors.',
+                    code: 'WORKFLOW_VALIDATION_FAILED',
+                    message: 'The workflow draft contains validation errors.',
                     details: { issues: [ISSUES[0]] },
                     request_id: 'r',
                 },

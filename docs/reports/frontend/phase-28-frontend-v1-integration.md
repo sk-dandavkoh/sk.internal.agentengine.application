@@ -16,12 +16,12 @@ Then the real-backend coverage was checked against each area Phase 28 names, wit
 
 | # | Finding | Class | Resolution |
 |---|---------|-------|------------|
-| 1 | No real-backend test showed that a **member** is refused admin areas and other users' projects by the backend, rather than only by the UI. | Coverage gap | `tests/fullstack/roles.spec.ts`. A member signs in through the form. `/credentials` and `/plugins` get a 403 from the backend and show "Admin access required". A crafted `POST /credentials` from the page with the session cookie gets a 403. Another user's project gets a 404 and shows "Project not found". No product defect. |
+| 1 | No real-backend test showed that a **member** is refused admin areas and other users' workflows by the backend, rather than only by the UI. | Coverage gap | `tests/fullstack/roles.spec.ts`. A member signs in through the form. `/credentials` and `/plugins` get a 403 from the backend and show "Admin access required". A crafted `POST /credentials` from the page with the session cookie gets a 403. Another user's workflow gets a 404 and shows "Workflow not found". No product defect. |
 | 2 | Settings → change password had no real-backend test. | Coverage gap | Same spec. A wrong current password is a field error, not a sign-out. A successful change keeps this session and revokes the member's other session (401); the backend accepts the new password. No product defect. |
 | 3 | Plugins page had no functional real-backend test. | Coverage gap | Same spec. The admin view shows exactly what `GET /plugins` returned (trust warning, uploads-off notice, empty registry). No product defect. |
 | 4 | The root `README.md` did not say where the run, test and deploy instructions are, and its tree listed `pnpm-lock.yaml`. The project uses npm. | Documentation | A quick-start pointer to `backend/README.md`, `frontend/README.md` and `docs/deployment.md`. The lockfile entry is corrected. |
 
-While the spec was being written, two of its early assertions were found to be wrong. Playwright's `page.request` does not send the `SameSite=Strict` session cookie, so it got a 401 instead of the intended 403. A project-list check written the same way would have passed for the wrong reason. Both checks now run inside the page with `fetch`, the way the existing session spec does. No assertion was weakened.
+While the spec was being written, two of its early assertions were found to be wrong. Playwright's `page.request` does not send the `SameSite=Strict` session cookie, so it got a 401 instead of the intended 403. A workflow-list check written the same way would have passed for the wrong reason. Both checks now run inside the page with `fetch`, the way the existing session spec does. No assertion was weakened.
 
 **No product code changed in this phase.** No critical or blocking defect was found.
 
@@ -29,7 +29,7 @@ While the spec was being written, two of its early assertions were found to be w
 
 The full V1 journey runs through the UI against Backend V1 (`journey.spec.ts`, one test of steps):
 
-- login → dashboard → create project → draft editor;
+- login → dashboard → create workflow → draft editor;
 - node library → add, configure and connect nodes → save;
 - manual trigger → validate → publish (immutable version) → run from the trigger;
 - live execution to the end → inspector (nodes, logs, graph) → monitoring (figures checked against the backend summary);
@@ -41,8 +41,8 @@ Areas, by feature folder (details in `frontend/README.md`):
 |---|---|
 | Authentication, session expiry, logout | `features/auth` (`/login`, `RequireSession`) |
 | Dashboard | `features/dashboard` (`/dashboard`) |
-| Projects, import/export | `features/projects` (`/projects`, `/projects/:id`) |
-| Draft editor: graph, node library, node inspector, connections, undo/redo, copy/paste, autosave, validate and publish | `features/editor` (`/projects/:id/editor`) |
+| Workflows, import/export | `features/workflows` (`/workflows`, `/workflows/:id`) |
+| Draft editor: graph, node library, node inspector, connections, undo/redo, copy/paste, autosave, validate and publish | `features/editor` (`/workflows/:id/editor`) |
 | Versions, comparison, restore, clone | `features/versions` |
 | Triggers (all six types) | `features/triggers` |
 | Executions, live updates, inspector, logs | `features/executions` |
@@ -60,7 +60,7 @@ Areas, by feature folder (details in `frontend/README.md`):
 - **State boundaries:**
   - server state lives only in the query cache;
   - navigable UI state lives in the URL;
-  - editor state is a pure reducer (`editorState.ts`), persisted only through `useUpdateProject` with `expected_revision`;
+  - editor state is a pure reducer (`editorState.ts`), persisted only through `useUpdateWorkflow` with `expected_revision`;
   - session state is one query (`['auth','session']`);
   - there is no global client store.
 - **Graph editor:** React Flow, controlled by the editor state. Connection rules come from the backend's node contracts and `port_compatibility` table, and the backend's `/validate` is authoritative. Separate files hold the canvas, library, inspector, connections panel and validation panel.
@@ -99,8 +99,8 @@ Every gate was run twice: once before any change, once on the final tree. The fu
 
 - `journey.spec.ts`: the V1 journey (§1).
 - `credentials.spec.ts`: a credential is referenced, exported without its secret and reported missing on import; a corrupt package is refused.
-- `projects.spec.ts`:
-  - project lifecycle and stale-revision conflict;
+- `workflows.spec.ts`:
+  - workflow lifecycle and stale-revision conflict;
   - node library and inspector against the backend registry;
   - drag-connect and the backend port rule;
   - validate → fix → publish;
@@ -113,7 +113,7 @@ Every gate was run twice: once before any change, once on the final tree. The fu
 - `roles.spec.ts` (new): member permission errors, Settings password change, Plugins.
 - `a11y.spec.ts`: every screen in both themes.
 
-**Stubbed (35, all pass):** the editor's drag, pan, box-select and keyboard-only build; the editor at the node limit and at 390 to 1600 px; dialogs, menus, tooltips and toasts; CSP enforcement; an unreachable backend; a chunk removed by a newer release; dashboard and project layouts on mobile.
+**Stubbed (35, all pass):** the editor's drag, pan, box-select and keyboard-only build; the editor at the node limit and at 390 to 1600 px; dialogs, menus, tooltips and toasts; CSP enforcement; an unreachable backend; a chunk removed by a newer release; dashboard and workflow layouts on mobile.
 
 ## 6. Accessibility results
 
@@ -131,9 +131,9 @@ Every gate was run twice: once before any change, once on the final tree. The fu
 
 | Requirement | Evidence |
 |---|---|
-| Backend authorization cannot be bypassed | `roles.spec.ts`: backend 403 on admin areas and on a crafted write, 404 on another user's project. `projects.spec.ts`: 401 without a session. |
+| Backend authorization cannot be bypassed | `roles.spec.ts`: backend 403 on admin areas and on a crafted write, 404 on another user's workflow. `workflows.spec.ts`: 401 without a session. |
 | Credential values never exposed | `credentials.spec.ts`: not in the export package or in any response the page received. `CredentialsPage.test.tsx`: not in the DOM, storage, URL, request URLs, console or query/mutation cache. |
-| Session token not readable by scripts | HttpOnly `SameSite=Strict` cookie; `document.cookie` is empty; nothing in storage (`projects.spec.ts`). |
+| Session token not readable by scripts | HttpOnly `SameSite=Strict` cookie; `document.cookie` is empty; nothing in storage (`workflows.spec.ts`). |
 | Published versions immutable | Read-only version pages; restore and clone never touch the version; the backend has no version write. Checked in the full-stack versions spec. |
 | Frontend does not fabricate state | Status, validity and live state come from refetched backend data. The live view refetches on events and does not derive state from them. |
 | XSS | All data is rendered as React text. ESLint bans `dangerouslySetInnerHTML`, `innerHTML`, `eval` and `new Function`. The strict CSP is enforced in every E2E spec, and injected inline scripts do not run (`security.spec.ts`). |
@@ -161,8 +161,8 @@ Every gate was run twice: once before any change, once on the final tree. The fu
 - The UI must be served at the host root; a sub-path deployment is not supported.
 - No favicon.
 - No client-side error telemetry. Requests are correlated server-side by `X-Request-ID`.
-- Aggregates the backend does not provide are not shown: dashboard-wide token and cost totals, trigger and provider breakdowns, queue depth, and which projects use a credential.
-- Trigger and project-level validation issues are listed but have no editor surface to jump to.
+- Aggregates the backend does not provide are not shown: dashboard-wide token and cost totals, trigger and provider breakdowns, queue depth, and which workflows use a credential.
+- Trigger and workflow-level validation issues are listed but have no editor surface to jump to.
 - The full-stack suite uses fixed ports (8765 and 4174) and one worker, so it cannot run in parallel with itself.
 
 ## 11. Explicitly deferred (not implemented)

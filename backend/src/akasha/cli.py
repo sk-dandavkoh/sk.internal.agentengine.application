@@ -8,14 +8,14 @@ from importing SQLAlchemy or FastAPI.
 Trust model: the CLI runs on the engine host with the engine's own
 configuration (``AKASHA_*``: database URL, encryption key, plugin
 directory). Whoever can run it can already read the database, so it acts
-with operator (admin) authority and has no login. Projects it creates or
+with operator (admin) authority and has no login. Workflows it creates or
 imports have no owner, which the API treats as admin-only.
 
 Output: results go to stdout, as text or with ``--json`` as JSON (the API's
 schemas where one exists); errors and logs go to stderr, redacted.
 
 Exit codes: 0 success; 1 the operation failed (engine error, invalid
-project, execution not completed, file error); 2 usage error; 70 an
+workflow, execution not completed, file error); 2 usage error; 70 an
 unexpected internal error.
 """
 
@@ -36,18 +36,18 @@ from typing import Any
 from pydantic import ValidationError
 
 from akasha import __version__
-from akasha.api.project_schemas import (
-    ImportProjectResponse,
-    ProjectPage,
-    ProjectSummary,
-    ProjectVersionSummary,
+from akasha.api.workflow_schemas import (
+    ImportWorkflowResponse,
     ValidationResponse,
+    WorkflowPage,
+    WorkflowSummary,
+    WorkflowVersionSummary,
 )
 from akasha.application.executions import ExecutionService
-from akasha.application.packages import ProjectPackageService
+from akasha.application.packages import WorkflowPackageService
 from akasha.application.plugins import remove_plugin
-from akasha.application.projects import ProjectService
 from akasha.application.triggers import TriggerService
+from akasha.application.workflows import WorkflowService
 from akasha.bootstrap import Container, create_container
 from akasha.config import Settings, load_settings
 from akasha.domain.execution import Execution, ExecutionStatus
@@ -116,11 +116,11 @@ def _db(c: Container) -> Database:
     return _need(c.database, "AKASHA_DATABASE_URL")
 
 
-def _projects(c: Container) -> ProjectService:
-    return _need(c.projects, "AKASHA_DATABASE_URL")
+def _workflows(c: Container) -> WorkflowService:
+    return _need(c.workflows, "AKASHA_DATABASE_URL")
 
 
-def _packages(c: Container) -> ProjectPackageService:
+def _packages(c: Container) -> WorkflowPackageService:
     return _need(c.packages, "AKASHA_DATABASE_URL")
 
 
@@ -144,33 +144,35 @@ def _enabled_plugins(c: Container) -> Mapping[str, str]:
     return {} if c.plugins is None else c.plugins.versions
 
 
-# -- projects -------------------------------------------------------------
+# -- workflows -------------------------------------------------------------
 
 
-async def project_create(args: Args, c: Container) -> int:
-    project = await _projects(c).create_project(args.name, description=args.description)
+async def workflow_create(args: Args, c: Container) -> int:
+    workflow = await _workflows(c).create_workflow(
+        args.name, description=args.description
+    )
     _emit(
         args,
-        ProjectSummary.from_domain(project).model_dump(mode="json"),
-        f"created project {project.id} ({project.name})",
+        WorkflowSummary.from_domain(workflow).model_dump(mode="json"),
+        f"created workflow {workflow.id} ({workflow.name})",
     )
     return EXIT_OK
 
 
-async def project_list(args: Args, c: Container) -> int:
-    page = await _projects(c).list_projects(offset=args.offset, limit=args.limit)
+async def workflow_list(args: Args, c: Container) -> int:
+    page = await _workflows(c).list_workflows(offset=args.offset, limit=args.limit)
     rows = [(p.id, p.current_version, p.revision, p.name) for p in page.items]
     more = f"\n(more: --offset {args.offset + args.limit})" if page.has_more else ""
     _emit(
         args,
-        ProjectPage.from_page(page).model_dump(mode="json"),
+        WorkflowPage.from_page(page).model_dump(mode="json"),
         _table(rows, ("ID", "VERSION", "REVISION", "NAME")) + more,
     )
     return EXIT_OK
 
 
-async def project_validate(args: Args, c: Container) -> int:
-    result = await _projects(c).validate_project(args.project_id)
+async def workflow_validate(args: Args, c: Container) -> int:
+    result = await _workflows(c).validate_workflow(args.workflow_id)
     response = ValidationResponse.from_domain(result)
     lines = [
         f"{i.code.value}: {i.message}" + (f" (node {i.node_id})" if i.node_id else "")
@@ -181,26 +183,26 @@ async def project_validate(args: Args, c: Container) -> int:
     return EXIT_OK if result.ok else EXIT_FAILED
 
 
-async def project_publish(args: Args, c: Container) -> int:
-    version = await _projects(c).publish_project(
-        args.project_id, expected_revision=args.expected_revision
+async def workflow_publish(args: Args, c: Container) -> int:
+    version = await _workflows(c).publish_workflow(
+        args.workflow_id, expected_revision=args.expected_revision
     )
     _emit(
         args,
-        ProjectVersionSummary.from_domain(version).model_dump(mode="json"),
-        f"published {args.project_id} version {version.version}",
+        WorkflowVersionSummary.from_domain(version).model_dump(mode="json"),
+        f"published {args.workflow_id} version {version.version}",
     )
     return EXIT_OK
 
 
-async def project_run(args: Args, c: Container) -> int:
+async def workflow_run(args: Args, c: Container) -> int:
     """Create a manual execution and run it here to a terminal state,
     without dispatching it to workers. Ctrl-C cancels it cooperatively."""
     version = args.version
     if version is None:
-        version = (await _projects(c).get_project(args.project_id)).current_version
+        version = (await _workflows(c).get_workflow(args.workflow_id)).current_version
     execution = await _triggers(c).fire_manual(
-        args.project_id, version, input=args.input, dispatch=False
+        args.workflow_id, version, input=args.input, dispatch=False
     )
     if not args.json:
         print(f"running {execution.id} (version {version})", file=sys.stderr)
@@ -227,10 +229,10 @@ async def project_run(args: Args, c: Container) -> int:
     return _show_execution(args, await _executions(c).get_execution(execution.id))
 
 
-async def project_import(args: Args, c: Container) -> int:
-    result = await _packages(c).import_project(await _read_file(args.file))
-    response = ImportProjectResponse.from_domain(result)
-    lines = [f"imported project {result.project.id} ({result.project.name})"]
+async def workflow_import(args: Args, c: Container) -> int:
+    result = await _packages(c).import_workflow(await _read_file(args.file))
+    response = ImportWorkflowResponse.from_domain(result)
+    lines = [f"imported workflow {result.workflow.id} ({result.workflow.name})"]
     lines += [f"issue {i.code.value}: {i.message}" for i in response.validation.issues]
     if result.missing_credentials:
         missing = ", ".join(result.missing_credentials)
@@ -239,8 +241,8 @@ async def project_import(args: Args, c: Container) -> int:
     return EXIT_OK
 
 
-async def project_export(args: Args, c: Container) -> int:
-    data = await _packages(c).export_project(args.project_id, version=args.version)
+async def workflow_export(args: Args, c: Container) -> int:
+    data = await _packages(c).export_workflow(args.workflow_id, version=args.version)
     await asyncio.to_thread(Path(args.output).write_bytes, data)
     _emit(
         args,
@@ -254,11 +256,11 @@ async def project_export(args: Args, c: Container) -> int:
 
 
 def _execution_payload(e: Execution) -> dict[str, Any]:
-    graph = e.project_version.graph
+    graph = e.workflow_version.graph
     return {
         "id": e.id,
-        "project_id": e.project_id,
-        "version": e.project_version.version,
+        "workflow_id": e.workflow_id,
+        "version": e.workflow_version.version,
         "status": e.status.value,
         "trigger_type": e.metadata.trigger_type.value,
         "correlation_id": e.metadata.correlation_id,
@@ -290,12 +292,12 @@ def _execution_payload(e: Execution) -> dict[str, Any]:
 def _show_execution(args: Args, e: Execution) -> int:
     rows: list[tuple[str, object]] = [
         ("execution", e.id),
-        ("project", f"{e.project_id} v{e.project_version.version}"),
+        ("workflow", f"{e.workflow_id} v{e.workflow_version.version}"),
         ("status", e.status.value),
     ]
     if e.error is not None:
         rows.append(("error", redact_text(f"{e.error.code}: {e.error.message}")))
-    graph = e.project_version.graph
+    graph = e.workflow_version.graph
     for n in sorted(e.node_executions.values(), key=lambda n: n.node_id):
         instance = graph.nodes.get(n.node_id)
         rows.append((f"  {instance.label if instance else n.node_id}", n.status.value))
@@ -463,12 +465,12 @@ async def plugin_install(args: Args, c: Container) -> int:
 
 async def plugin_remove(args: Args, c: Container) -> int:
     users = await remove_plugin(
-        _plugins(c), _projects(c), args.plugin_id, force=args.force
+        _plugins(c), _workflows(c), args.plugin_id, force=args.force
     )
     text = f"removed {args.plugin_id}"
     if users:
-        text += f"\nwarning: these projects can no longer run: {', '.join(users)}"
-    _emit(args, {"plugin_id": args.plugin_id, "affected_projects": list(users)}, text)
+        text += f"\nwarning: these workflows can no longer run: {', '.join(users)}"
+    _emit(args, {"plugin_id": args.plugin_id, "affected_workflows": list(users)}, text)
     return EXIT_OK
 
 
@@ -587,32 +589,32 @@ def build_parser() -> argparse.ArgumentParser:
         handler=None, json=False
     )
 
-    project = groups.add_parser("project", help="projects").add_subparsers(
+    workflow = groups.add_parser("workflow", help="workflows").add_subparsers(
         dest="command", required=True, metavar="COMMAND"
     )
-    p = command(project, "create", project_create, "create an empty project")
+    p = command(workflow, "create", workflow_create, "create an empty workflow")
     p.add_argument("name")
     p.add_argument("--description", default="")
-    p = command(project, "list", project_list, "list projects")
+    p = command(workflow, "list", workflow_list, "list workflows")
     p.add_argument("--offset", type=int, default=0)
     p.add_argument("--limit", type=int, default=50)
-    p = command(project, "validate", project_validate, "validate the draft")
-    p.add_argument("project_id")
-    p = command(project, "publish", project_publish, "publish the draft")
-    p.add_argument("project_id")
+    p = command(workflow, "validate", workflow_validate, "validate the draft")
+    p.add_argument("workflow_id")
+    p = command(workflow, "publish", workflow_publish, "publish the draft")
+    p.add_argument("workflow_id")
     p.add_argument(
         "--expected-revision", type=int, help="fail if the draft changed since"
     )
-    p = command(project, "run", project_run, "run a published version here")
-    p.add_argument("project_id")
+    p = command(workflow, "run", workflow_run, "run a published version here")
+    p.add_argument("workflow_id")
     p.add_argument("--version", type=int, help="default: latest published")
     p.add_argument(
         "--input", type=_json_object, default=None, help="JSON object or @file"
     )
-    p = command(project, "import", project_import, "import a project package")
+    p = command(workflow, "import", workflow_import, "import a workflow package")
     p.add_argument("file")
-    p = command(project, "export", project_export, "export a project package")
-    p.add_argument("project_id")
+    p = command(workflow, "export", workflow_export, "export a workflow package")
+    p.add_argument("workflow_id")
     p.add_argument("--version", type=int, help="default: the draft")
     p.add_argument("-o", "--output", required=True)
 
@@ -637,7 +639,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = command(plugin, "remove", plugin_remove, "remove a plugin")
     p.add_argument("plugin_id")
     p.add_argument(
-        "--force", action="store_true", help="remove even if projects use it"
+        "--force", action="store_true", help="remove even if workflows use it"
     )
 
     execution = groups.add_parser("execution", help="executions").add_subparsers(

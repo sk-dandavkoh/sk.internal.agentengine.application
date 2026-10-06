@@ -1,24 +1,27 @@
 import { z } from 'zod'
 import { ApiError } from '../../api/errors'
-import { validationIssueSchema, type ValidationIssue } from '../../api/projects'
+import {
+    validationIssueSchema,
+    type ValidationIssue,
+} from '../../api/workflows'
 
 // Where a backend validation issue points in the editor. The issues
 // themselves are the backend's verdict; nothing here re-validates.
 
-export type IssueScope = 'node' | 'connection' | 'trigger' | 'project'
+export type IssueScope = 'node' | 'connection' | 'trigger' | 'workflow'
 
 export const SCOPE_LABELS: Record<IssueScope, string> = {
     node: 'Nodes',
     connection: 'Connections',
     trigger: 'Triggers',
-    project: 'Project',
+    workflow: 'Workflow',
 }
 
 export function issueScope(issue: ValidationIssue): IssueScope {
     if (issue.node_id !== null) return 'node'
     if (issue.edge !== null) return 'connection'
     if (issue.trigger_id !== null) return 'trigger'
-    return 'project'
+    return 'workflow'
 }
 
 /** Issues per node id, for markers on the canvas and the node list. */
@@ -35,13 +38,13 @@ const publishFailureSchema = z.object({
 })
 
 /**
- * The issues a refused publish (422 PROJECT_VALIDATION_FAILED) reports;
+ * The issues a refused publish (422 WORKFLOW_VALIDATION_FAILED) reports;
  * null for any other failure, or details not matching the contract.
  */
 export function publishIssues(error: unknown): ValidationIssue[] | null {
     if (
         !(error instanceof ApiError) ||
-        error.code !== 'PROJECT_VALIDATION_FAILED'
+        error.code !== 'WORKFLOW_VALIDATION_FAILED'
     )
         return null
     const parsed = publishFailureSchema.safeParse(error.details)

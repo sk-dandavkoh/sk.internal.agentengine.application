@@ -138,8 +138,8 @@ Working tree: 48 entries changed against `9fdbae7` (41 tracked files with +1018/
 | `frontend/src/app/{AppLayout,RouteErrorBoundary}.test.tsx` | Modified | Providers for `SessionMenu`; mock the real pages instead of the deleted placeholder |
 | `frontend/src/features/{credentials,dashboard,executions}/*.test.tsx` | Modified | A 401 now means session end (§9 F4); frames carry no token |
 | `frontend/tests/e2e/session.ts` | Created | Session stub for the stubbed E2E suite |
-| `frontend/tests/e2e/{dashboard,editor,projects,smoke,ui}.spec.ts` | Modified | Use the session stub; new theme-pin check |
-| `frontend/tests/fullstack/projects.spec.ts` | Modified | Sign in by cookie instead of an injected bearer header; 3 new auth specs |
+| `frontend/tests/e2e/{dashboard,editor,workflows,smoke,ui}.spec.ts` | Modified | Use the session stub; new theme-pin check |
+| `frontend/tests/fullstack/workflows.spec.ts` | Modified | Sign in by cookie instead of an injected bearer header; 3 new auth specs |
 | `frontend/tests/fullstack/backend.ts` | Created | Node port of `backend.sh` |
 | `frontend/tests/fullstack/backend.sh` | Deleted (staged) | Could not run on Windows |
 | `frontend/tests/fullstack/teardown.ts` | Modified | Comment reference |
@@ -330,7 +330,7 @@ New API models in `api/auth.py`:
 
 ### F5: removing queries while pages are mounted leaves data in the cache
 - **Impact:** MEDIUM (privacy across a user switch). **Resolution:** FIXED.
-- The first implementation removed queries in the logout `onSuccess`. The logout test showed a `projects` query surviving.
+- The first implementation removed queries in the logout `onSuccess`. The logout test showed a `workflows` query surviving.
 - The removal moved into the guard's post-commit effect.
 
 ### F6: the placeholder route machinery was dead
@@ -389,7 +389,7 @@ New API models in `api/auth.py`:
 - a visitor without a session goes to `/login` and no page data is requested;
 - session restoration on reload;
 - backend 500 on the session check: error state, retry, then the dashboard;
-- cookie login returns to `/projects?q=x`; the body has `cookie: true`; no token and, after unmount, no password in the caches;
+- cookie login returns to `/workflows?q=x`; the body has `cookie: true`; no token and, after unmount, no password in the caches;
 - invalid credentials message;
 - throttled message;
 - `/login` while signed in redirects to the dashboard;

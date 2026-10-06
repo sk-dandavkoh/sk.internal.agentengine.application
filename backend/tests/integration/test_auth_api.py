@@ -3,8 +3,8 @@ HTTP stack and PostgreSQL (nothing mocked but the clock).
 
 Covers setup, login, invalid credentials, sessions (expiry, logout,
 revocation), password handling, the brute-force throttle, default-deny
-route protection, admin-only areas and the project ownership boundary
-across every project-, execution- and report-scoped route.
+route protection, admin-only areas and the workflow ownership boundary
+across every workflow-, execution- and report-scoped route.
 """
 
 import asyncio
@@ -23,10 +23,10 @@ from sqlalchemy import text
 from akasha.api.app import create_app
 from akasha.application.credentials import CredentialService
 from akasha.application.executions import ExecutionService
-from akasha.application.packages import ProjectPackageService
-from akasha.application.projects import ProjectService
+from akasha.application.packages import WorkflowPackageService
 from akasha.application.reports import ReportService
 from akasha.application.triggers import TriggerRegistry, TriggerService
+from akasha.application.workflows import WorkflowService
 from akasha.bootstrap import Container
 from akasha.config import Settings
 from akasha.domain.identity import Role
@@ -89,8 +89,8 @@ async def env(
     container = Container(
         settings=settings,
         database=database,
-        projects=ProjectService(uow, node_definitions),
-        packages=ProjectPackageService(uow, node_definitions),
+        workflows=WorkflowService(uow, node_definitions),
+        packages=WorkflowPackageService(uow, node_definitions),
         executions=executions,
         reports=ReportService(uow),
         triggers=TriggerService(executions),
@@ -329,7 +329,7 @@ async def test_missing_or_invalid_token_is_401(
 ) -> None:
     await env.admin()
     headers = {} if authorization is None else {"Authorization": authorization}
-    response = await env.client.get("/api/v1/projects", headers=headers)
+    response = await env.client.get("/api/v1/workflows", headers=headers)
     assert_error(response, 401, "AUTHENTICATION_REQUIRED")
     assert response.headers["www-authenticate"] == "Bearer"
 
@@ -452,11 +452,11 @@ async def test_the_cookie_counts_only_with_the_csrf_header(env: Env) -> None:
     browser without SameSite) but cannot add the header."""
     await env.admin()
     cookie = session_cookie(await cookie_login(env))
-    response = await env.client.get("/api/v1/projects", headers=cookie)
+    response = await env.client.get("/api/v1/workflows", headers=cookie)
     assert_error(response, 401, "AUTHENTICATION_REQUIRED")
     response = await env.client.post("/api/v1/auth/logout", headers=cookie)
     assert_error(response, 401, "AUTHENTICATION_REQUIRED")
-    ok = await env.client.get("/api/v1/projects", headers={**UI, **cookie})
+    ok = await env.client.get("/api/v1/workflows", headers={**UI, **cookie})
     assert ok.status_code == 200
 
 
@@ -844,7 +844,7 @@ PUBLIC_ROUTES = {
     ("GET", "/api/v1/auth/setup"),
     ("POST", "/api/v1/auth/setup"),
     ("POST", "/api/v1/auth/login"),
-    ("POST", "/api/v1/webhooks/{project_id}/{trigger_id}"),
+    ("POST", "/api/v1/webhooks/{workflow_id}/{trigger_id}"),
     ("GET", "/health"),
     ("GET", "/ready"),
 }
@@ -931,17 +931,17 @@ async def test_metrics_access(env: Env) -> None:
 
 @dataclass
 class Owned:
-    project_id: str
+    workflow_id: str
     trigger_id: str
     webhook_id: str
     execution_id: str
 
 
-async def owned_project(env: Env, owner: dict[str, str]) -> Owned:
-    """A published project with an API and a webhook trigger, one execution."""
+async def owned_workflow(env: Env, owner: dict[str, str]) -> Owned:
+    """A published workflow with an API and a webhook trigger, one execution."""
     trigger_id, webhook_id = new_id("trig"), new_id("trig")
     created = await env.client.post(
-        "/api/v1/projects", json={"name": "private"}, headers=owner
+        "/api/v1/workflows", json={"name": "private"}, headers=owner
     )
     pid = created.json()["id"]
     draft = draft_with(
@@ -951,23 +951,23 @@ async def owned_project(env: Env, owner: dict[str, str]) -> Owned:
         ]
     )
     updated = await env.client.put(
-        f"/api/v1/projects/{pid}",
+        f"/api/v1/workflows/{pid}",
         json={"expected_revision": 1, "name": "private", "draft": draft},
         headers=owner,
     )
     assert updated.status_code == 200, updated.text
-    published = await env.client.post(f"/api/v1/projects/{pid}/publish", headers=owner)
+    published = await env.client.post(f"/api/v1/workflows/{pid}/publish", headers=owner)
     assert published.status_code == 201, published.text
     run = await env.client.post(
-        f"/api/v1/projects/{pid}/versions/1/execute", json={}, headers=owner
+        f"/api/v1/workflows/{pid}/versions/1/execute", json={}, headers=owner
     )
     assert run.status_code == 201, run.text
     return Owned(pid, trigger_id, webhook_id, run.json()["id"])
 
 
 def scoped_requests(o: Owned) -> list[tuple[str, str, dict[str, Any]]]:
-    """Every project/execution-scoped operation, as (method, url, kwargs)."""
-    p = f"/api/v1/projects/{o.project_id}"
+    """Every workflow/execution-scoped operation, as (method, url, kwargs)."""
+    p = f"/api/v1/workflows/{o.workflow_id}"
     return [
         ("GET", p, {}),
         ("PUT", p, {"json": {"expected_revision": 3, "name": "x", "draft": {}}}),
@@ -989,33 +989,33 @@ def scoped_requests(o: Owned) -> list[tuple[str, str, dict[str, Any]]]:
     ]
 
 
-async def test_members_cannot_see_or_touch_other_members_projects(
+async def test_members_cannot_see_or_touch_other_members_workflows(
     env: Env, database: Database
 ) -> None:
     admin = await env.admin()
     alice = await env.member(admin, "alice")
     bob = await env.member(admin, "bob")
-    owned = await owned_project(env, alice)
+    owned = await owned_workflow(env, alice)
     before = await row(
         database,
-        "SELECT revision, current_version FROM projects WHERE id = :id",
-        id=owned.project_id,
+        "SELECT revision, current_version FROM workflows WHERE id = :id",
+        id=owned.workflow_id,
     )
     executions_before = (await row(database, "SELECT count(*) FROM executions"))[0]
 
     for method, url, kwargs in scoped_requests(owned):
         response = await env.client.request(method, url, headers=bob, **kwargs)
         # 404, not 403: bob cannot even learn the ids exist.
-        code = "EXECUTION_NOT_FOUND" if "executions/" in url else "PROJECT_NOT_FOUND"
+        code = "EXECUTION_NOT_FOUND" if "executions/" in url else "WORKFLOW_NOT_FOUND"
         assert_error(response, 404, code)
         assert "private" not in response.text
 
-    listed = (await env.client.get("/api/v1/projects", headers=bob)).json()
+    listed = (await env.client.get("/api/v1/workflows", headers=bob)).json()
     assert listed["items"] == []
     after = await row(
         database,
-        "SELECT revision, current_version FROM projects WHERE id = :id",
-        id=owned.project_id,
+        "SELECT revision, current_version FROM workflows WHERE id = :id",
+        id=owned.workflow_id,
     )
     assert tuple(after) == tuple(before)
     assert (await row(database, "SELECT count(*) FROM executions"))[0] == (
@@ -1026,84 +1026,84 @@ async def test_members_cannot_see_or_touch_other_members_projects(
 async def test_owner_and_admin_have_access(env: Env) -> None:
     admin = await env.admin()
     alice = await env.member(admin, "alice")
-    owned = await owned_project(env, alice)
+    owned = await owned_workflow(env, alice)
     for headers in (alice, admin):
         for method, url, kwargs in scoped_requests(owned):
             if method in ("PUT", "DELETE", "POST") and not url.endswith(
                 ("/validate", "/execute", "/invoke")
             ):
-                continue  # mutations are covered by the project API tests
+                continue  # mutations are covered by the workflow API tests
             response = await env.client.request(method, url, headers=headers, **kwargs)
             assert response.status_code in (200, 201), (url, response.text)
     alice_ids = [
         p["id"]
-        for p in (await env.client.get("/api/v1/projects", headers=alice)).json()[
+        for p in (await env.client.get("/api/v1/workflows", headers=alice)).json()[
             "items"
         ]
     ]
-    assert alice_ids == [owned.project_id]
-    admin_projects = (await env.client.get("/api/v1/projects", headers=admin)).json()
-    assert [p["owner_id"] for p in admin_projects["items"]] == [
+    assert alice_ids == [owned.workflow_id]
+    admin_workflows = (await env.client.get("/api/v1/workflows", headers=admin)).json()
+    assert [p["owner_id"] for p in admin_workflows["items"]] == [
         (await me(env, alice)).json()["id"]
     ]
 
 
-async def test_imported_projects_belong_to_the_importer(env: Env) -> None:
+async def test_imported_workflows_belong_to_the_importer(env: Env) -> None:
     admin = await env.admin()
     alice = await env.member(admin, "alice")
     bob = await env.member(admin, "bob")
-    owned = await owned_project(env, alice)
+    owned = await owned_workflow(env, alice)
     package = await env.client.get(
-        f"/api/v1/projects/{owned.project_id}/export", headers=alice
+        f"/api/v1/workflows/{owned.workflow_id}/export", headers=alice
     )
     imported = await env.client.post(
-        "/api/v1/projects/import",
+        "/api/v1/workflows/import",
         content=package.content,
         headers={**bob, "content-type": "application/zip"},
     )
     assert imported.status_code == 201, imported.text
-    copy = imported.json()["project"]
+    copy = imported.json()["workflow"]
     assert copy["owner_id"] == (await me(env, bob)).json()["id"]
-    response = await env.client.get(f"/api/v1/projects/{copy['id']}", headers=alice)
-    assert_error(response, 404, "PROJECT_NOT_FOUND")
+    response = await env.client.get(f"/api/v1/workflows/{copy['id']}", headers=alice)
+    assert_error(response, 404, "WORKFLOW_NOT_FOUND")
 
 
 async def test_duplicates_belong_to_the_caller(env: Env) -> None:
     admin = await env.admin()
     alice = await env.member(admin, "alice")
-    owned = await owned_project(env, alice)
+    owned = await owned_workflow(env, alice)
     copy = await env.client.post(
-        f"/api/v1/projects/{owned.project_id}/duplicate",
+        f"/api/v1/workflows/{owned.workflow_id}/duplicate",
         json={"name": "copy"},
         headers=admin,
     )
     assert copy.status_code == 201, copy.text
     assert copy.json()["owner_id"] == (await me(env, admin)).json()["id"]
     response = await env.client.get(
-        f"/api/v1/projects/{copy.json()['id']}", headers=alice
+        f"/api/v1/workflows/{copy.json()['id']}", headers=alice
     )
-    assert_error(response, 404, "PROJECT_NOT_FOUND")
+    assert_error(response, 404, "WORKFLOW_NOT_FOUND")
 
 
-async def test_ownerless_projects_are_admin_only(
+async def test_ownerless_workflows_are_admin_only(
     env: Env, node_definitions: dict[str, NodeDefinition], database: Database
 ) -> None:
-    """Projects from before accounts existed (owner NULL after 0008)."""
+    """Workflows from before accounts existed (owner NULL after 0008)."""
     admin = await env.admin()
     alice = await env.member(admin, "alice")
-    legacy = await ProjectService(
+    legacy = await WorkflowService(
         lambda: SqlAlchemyUnitOfWork(database), node_definitions
-    ).create_project("legacy")
-    url = f"/api/v1/projects/{legacy.id}"
-    assert_error(await env.client.get(url, headers=alice), 404, "PROJECT_NOT_FOUND")
+    ).create_workflow("legacy")
+    url = f"/api/v1/workflows/{legacy.id}"
+    assert_error(await env.client.get(url, headers=alice), 404, "WORKFLOW_NOT_FOUND")
     assert (await env.client.get(url, headers=admin)).status_code == 200
 
 
 async def test_webhooks_stay_public(env: Env) -> None:
     admin = await env.admin()
-    owned = await owned_project(env, admin)
+    owned = await owned_workflow(env, admin)
     await add_hook_credential(env.app.state.container.credentials)
-    url = f"/api/v1/webhooks/{owned.project_id}/{owned.webhook_id}"
+    url = f"/api/v1/webhooks/{owned.workflow_id}/{owned.webhook_id}"
     unsigned = await env.client.post(url, json={"a": 1})
     assert unsigned.status_code == 401, unsigned.text
     # No session, only the signature: public, but authenticated.

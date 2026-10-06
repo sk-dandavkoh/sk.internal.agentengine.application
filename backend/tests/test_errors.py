@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from akasha.api.app import create_app
 from akasha.api.auth import current_identity
 from akasha.application.persistence import UnitOfWork
-from akasha.application.projects import ProjectService
+from akasha.application.workflows import WorkflowService
 from akasha.bootstrap import Container
 from akasha.config import Settings
 from akasha.domain.identity import Identity, Role, User, UserSession
@@ -25,7 +25,7 @@ def _app_with_broken_route() -> TestClient:
 
     @router.get("/_test/domain-error")
     async def domain_error() -> None:
-        raise AkashaError("Project not found.", details={"project_id": "p_1"})
+        raise AkashaError("Workflow not found.", details={"workflow_id": "p_1"})
 
     @router.get("/_test/boom")
     async def boom() -> None:
@@ -41,8 +41,8 @@ def test_akasha_error_mapped_to_structured_response() -> None:
     assert response.status_code == 500
     body = response.json()
     assert body["code"] == "INTERNAL_ERROR"
-    assert body["message"] == "Project not found."
-    assert body["details"] == {"project_id": "p_1"}
+    assert body["message"] == "Workflow not found."
+    assert body["details"] == {"workflow_id": "p_1"}
     assert body["request_id"]
 
 
@@ -80,13 +80,13 @@ def test_request_validation_error_is_structured(settings: Settings) -> None:
         raise AssertionError("invalid requests must not reach persistence")
 
     container = Container(
-        settings=settings, projects=ProjectService(no_persistence, {})
+        settings=settings, workflows=WorkflowService(no_persistence, {})
     )
     app = create_app(settings=settings, container=container)
     app.dependency_overrides[current_identity] = lambda: ADMIN
     with TestClient(app) as client:
         response = client.post(
-            "/api/v1/projects", json={"name": ""}, headers={"x-request-id": "req_42"}
+            "/api/v1/workflows", json={"name": ""}, headers={"x-request-id": "req_42"}
         )
     assert response.status_code == 422
     body = response.json()
@@ -95,11 +95,11 @@ def test_request_validation_error_is_structured(settings: Settings) -> None:
     assert "body.name" in body["details"]
 
 
-def test_project_api_without_persistence_is_a_configuration_error(
+def test_workflow_api_without_persistence_is_a_configuration_error(
     client: TestClient,
 ) -> None:
     """Without the database there is no authentication either: the API
     fails closed with CONFIGURATION_ERROR, never open."""
-    response = client.get("/api/v1/projects")
+    response = client.get("/api/v1/workflows")
     assert response.status_code == 500
     assert response.json()["code"] == "CONFIGURATION_ERROR"

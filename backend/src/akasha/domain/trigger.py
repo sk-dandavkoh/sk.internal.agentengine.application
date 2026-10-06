@@ -34,20 +34,20 @@ MAX_PAYLOAD_DEPTH = 64
 # value signs requests (HMAC-SHA256 of the raw body, ``X-Akasha-Signature:
 # sha256=<hex>``). Publishing requires it; firing verifies it.
 WEBHOOK_SIGNING_FIELD = "secret_credential"
-# EVENT config key: the project whose events fire the trigger. Absent: the
-# trigger's own project. Firing requires the trigger project's owner to
+# EVENT config key: the workflow whose events fire the trigger. Absent: the
+# trigger's own workflow. Firing requires the trigger workflow's owner to
 # have access to it (``akasha.runtime.event_triggers``).
-EVENT_SOURCE_FIELD = "source_project_id"
+EVENT_SOURCE_FIELD = "source_workflow_id"
 # Events an EVENT trigger may react to: outcomes of a whole execution, and
 # publishing. Node-level events are too frequent and too internal to be a
-# contract for other projects.
+# contract for other workflows.
 TRIGGERABLE_EVENTS: frozenset[EventType] = frozenset(
     {
         EventType.EXECUTION_COMPLETED,
         EventType.EXECUTION_FAILED,
         EventType.EXECUTION_CANCELLED,
         EventType.EXECUTION_TIMED_OUT,
-        EventType.PROJECT_PUBLISHED,
+        EventType.WORKFLOW_PUBLISHED,
     }
 )
 
@@ -63,7 +63,7 @@ class TriggerType(StrEnum):
 
 @dataclass(eq=False)
 class Trigger(Entity):
-    """A configured trigger attached to a project draft/version."""
+    """A configured trigger attached to a workflow draft/version."""
 
     trigger_type: TriggerType
     config: dict[str, Any] = field(default_factory=dict)
@@ -123,12 +123,12 @@ def event_problem(trigger: Trigger) -> str | None:
         return f"'event' must be one of: {names}"
     source = trigger.config.get(EVENT_SOURCE_FIELD)
     if source is not None and not _is_id(source):
-        return f"'{EVENT_SOURCE_FIELD}' must be a project id"
+        return f"'{EVENT_SOURCE_FIELD}' must be a workflow id"
     return None
 
 
 def _is_id(value: object) -> bool:
-    if not isinstance(value, str) or not value.startswith("proj_"):
+    if not isinstance(value, str) or not value.startswith("wf_"):
         return False
     try:
         validate_id(value)

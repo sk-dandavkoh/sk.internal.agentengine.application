@@ -1,5 +1,5 @@
 """Built-in nodes through the real stack (roadmap Phase 09 acceptance):
-NodeRegistry → ProjectService (publish-time validation) → ExecutionService
+NodeRegistry → WorkflowService (publish-time validation) → ExecutionService
 → ExecutionRuntime → PostgreSQL, with local HTTP/search/SMTP services.
 
 Everything is asserted on the *persisted* execution. The runtime never
@@ -16,7 +16,7 @@ from typing import Any
 import pytest
 
 from akasha.application.executions import ExecutionService
-from akasha.application.projects import ProjectService, ProjectValidationFailedError
+from akasha.application.workflows import WorkflowService, WorkflowValidationFailedError
 from akasha.domain.execution import (
     Execution,
     ExecutionStatus,
@@ -25,7 +25,7 @@ from akasha.domain.execution import (
 )
 from akasha.domain.graph import Edge, Graph, NodeInstance
 from akasha.domain.node import NodeErrorKind
-from akasha.domain.project import Dependency, ProjectDraft
+from akasha.domain.workflow import Dependency, WorkflowDraft
 from akasha.infrastructure.database import Database
 from akasha.infrastructure.persistence import SqlAlchemyUnitOfWork
 from akasha.nodes.builtins import create_builtin_registry
@@ -59,16 +59,19 @@ class Engine:
         return SqlAlchemyUnitOfWork(self.database)
 
     @property
-    def projects(self) -> ProjectService:
-        return ProjectService(self.uow, self.registry.definitions)
+    def workflows(self) -> WorkflowService:
+        return WorkflowService(self.uow, self.registry.definitions)
 
-    async def publish(self, draft: ProjectDraft) -> tuple[str, int]:
-        project = await self.projects.create_project("builtins")
-        await self.projects.update_draft(
-            project.id, expected_revision=project.revision, name="builtins", draft=draft
+    async def publish(self, draft: WorkflowDraft) -> tuple[str, int]:
+        workflow = await self.workflows.create_workflow("builtins")
+        await self.workflows.update_draft(
+            workflow.id,
+            expected_revision=workflow.revision,
+            name="builtins",
+            draft=draft,
         )
-        version = await self.projects.publish_project(project.id)
-        return project.id, version.version
+        version = await self.workflows.publish_workflow(workflow.id)
+        return workflow.id, version.version
 
     async def run(
         self,
@@ -77,10 +80,10 @@ class Engine:
         input: dict[str, Any] | None = None,
         timeout_policy: TimeoutPolicy | None = None,
     ) -> Execution:
-        project_id, version = await self.publish(ProjectDraft(graph=graph))
+        workflow_id, version = await self.publish(WorkflowDraft(graph=graph))
         executions = ExecutionService(self.uow)
         queued = await executions.create_execution(
-            project_id, version, input=input, timeout_policy=timeout_policy
+            workflow_id, version, input=input, timeout_policy=timeout_policy
         )
         await ExecutionRuntime(self.uow, self.registry.catalog).run(queued.id)
         return await executions.get_execution(queued.id)  # persisted state
@@ -417,22 +420,22 @@ async def test_invalid_builtin_config_is_rejected_at_publish(engine: Engine) -> 
         },
         ["http.status>out.value"],
     )
-    with pytest.raises(ProjectValidationFailedError) as exc:
-        await engine.publish(ProjectDraft(graph=graph))
+    with pytest.raises(WorkflowValidationFailedError) as exc:
+        await engine.publish(WorkflowDraft(graph=graph))
     assert [i.code.value for i in exc.value.result.issues] == ["invalid_config"]
 
 
 async def test_incompatible_node_version_blocks_publish(engine: Engine) -> None:
     graph, _ = lead_router()
-    draft = ProjectDraft(
+    draft = WorkflowDraft(
         graph=graph, dependencies=[Dependency("node", "core.if", ">=2.0.0")]
     )
-    with pytest.raises(ProjectValidationFailedError) as exc:
+    with pytest.raises(WorkflowValidationFailedError) as exc:
         await engine.publish(draft)
     assert [i.code.value for i in exc.value.result.issues] == [
         "incompatible_dependency"
     ]
-    compatible = ProjectDraft(
+    compatible = WorkflowDraft(
         graph=graph, dependencies=[Dependency("node", "core.if", ">=1.0.0,<2.0.0")]
     )
     await engine.publish(compatible)
@@ -442,9 +445,9 @@ async def test_node_unregistered_after_publish_fails_before_any_node_runs(
     engine: Engine,
 ) -> None:
     graph, ids = lead_router()
-    project_id, version = await engine.publish(ProjectDraft(graph=graph))
+    workflow_id, version = await engine.publish(WorkflowDraft(graph=graph))
     executions = ExecutionService(engine.uow)
-    queued = await executions.create_execution(project_id, version, input={"score": 1})
+    queued = await executions.create_execution(workflow_id, version, input={"score": 1})
     engine.registry.unregister("core.log")
 
     await ExecutionRuntime(engine.uow, engine.registry.catalog).run(queued.id)

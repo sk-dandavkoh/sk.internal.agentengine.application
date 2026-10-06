@@ -75,7 +75,7 @@ export function ExecutionsPage() {
         <>
             <PageHeader
                 title="Executions"
-                description="Runs across your projects, newest first. Each one is pinned to a published version."
+                description="Runs across your workflows, newest first. Each one is pinned to a published version."
                 actions={
                     <Button
                         loading={query.isFetching}
@@ -121,10 +121,10 @@ export function ExecutionsPage() {
                                 <EmptyState
                                     title="No executions yet"
                                     titleAs="h2"
-                                    description="Run a published version of a project to start one."
+                                    description="Run a published version of a workflow to start one."
                                     action={
-                                        <TextLink to="/projects">
-                                            Go to projects
+                                        <TextLink to="/workflows">
+                                            Go to workflows
                                         </TextLink>
                                     }
                                 />

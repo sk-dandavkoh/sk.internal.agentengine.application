@@ -17,7 +17,7 @@ from akasha.nodes.command import CommandNode
 from akasha.security.paths import Workspace
 from tests.support import make_context
 
-PROJECT = "proj_cmd"
+WORKFLOW = "wf_cmd"
 ALLOWED = frozenset({"sh", "cat", "echo", "definitely-not-installed-xyz"})
 
 
@@ -40,7 +40,7 @@ async def run(
     command.definition.validate_config(config)
     command.definition.validate_inputs(inputs)
     context = replace(
-        make_context(command, config=config, inputs=inputs), project_id=PROJECT
+        make_context(command, config=config, inputs=inputs), workflow_id=WORKFLOW
     )
     result = await command.execute(context)
     command.definition.validate_outputs(result.outputs)
@@ -129,14 +129,14 @@ async def test_stdin_reaches_the_program(workspace: Workspace) -> None:
     }
 
 
-async def test_runs_in_the_project_workspace_with_a_minimal_environment(
+async def test_runs_in_the_workflow_workspace_with_a_minimal_environment(
     workspace: Workspace, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("AKASHA_CREDENTIAL_ENCRYPTION_KEY", "canary-never-inherited")
     result = await run(node(workspace), sh('pwd; echo "HOME=$HOME"; env'))
     lines = result.outputs["stdout"].splitlines()
-    project = str(workspace.project_dir(PROJECT))
-    assert lines[0] == project and lines[1] == f"HOME={project}"
+    workflow = str(workspace.workflow_dir(WORKFLOW))
+    assert lines[0] == workflow and lines[1] == f"HOME={workflow}"
     assert "canary-never-inherited" not in result.outputs["stdout"]
     names = {line.split("=", 1)[0] for line in lines[2:]}
     assert not any(name.startswith("AKASHA_") for name in names)
@@ -178,14 +178,14 @@ async def test_timeout_kills_the_whole_process_group(workspace: Workspace) -> No
     script = "sleep 30 & echo $! > child.pid; wait"
     error = await failure(node(workspace), sh(script, timeout_seconds=0.5))
     assert (error.code, error.kind) == ("COMMAND_TIMEOUT", NodeErrorKind.TIMEOUT)
-    pid = int((workspace.project_dir(PROJECT) / "child.pid").read_text())
+    pid = int((workspace.workflow_dir(WORKFLOW) / "child.pid").read_text())
     assert await gone(pid), "background child survived the timeout"
 
 
 async def test_cancellation_kills_the_whole_process_group(
     workspace: Workspace,
 ) -> None:
-    pid_file = workspace.project_dir(PROJECT) / "child.pid"
+    pid_file = workspace.workflow_dir(WORKFLOW) / "child.pid"
     task = asyncio.create_task(
         run(node(workspace), sh("sleep 30 & echo $! > child.pid; wait"))
     )

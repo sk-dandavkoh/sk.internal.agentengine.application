@@ -68,7 +68,7 @@ MAX_TIMEOUT_SECONDS = 600
 _PATH = PATH
 _PLACEHOLDER = re.compile(r"\{\{(.*?)\}\}", re.DOTALL)
 # A whole template: text, single braces, and well-formed placeholders only,
-# so a malformed ``{{ ... }}`` is rejected when the project is published.
+# so a malformed ``{{ ... }}`` is rejected when the workflow is published.
 TEMPLATE = {
     "type": "string",
     # Forms offer a prompt editor; the pattern below is the real check.

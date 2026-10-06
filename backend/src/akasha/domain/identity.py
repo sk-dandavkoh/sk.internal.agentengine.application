@@ -4,7 +4,7 @@ Authentication (who is calling) and authorization (what they may touch) stay
 separate: this module holds the identity model and the pure access rules;
 ``akasha.application.auth`` holds the use cases.
 
-V1 is deliberately small: local users, two roles, owner-scoped projects.
+V1 is deliberately small: local users, two roles, owner-scoped workflows.
 Resources carry an owner so richer models (teams, grants, RBAC) can be added
 without re-modelling the data.
 """
@@ -26,8 +26,8 @@ MAX_DISPLAY_NAME_LENGTH = 100
 
 
 class Role(StrEnum):
-    """ADMIN manages the installation (users, credentials, every project);
-    MEMBER works on the projects they own."""
+    """ADMIN manages the installation (users, credentials, every workflow);
+    MEMBER works on the workflows they own."""
 
     ADMIN = "admin"
     MEMBER = "member"
@@ -172,47 +172,47 @@ class Identity:
         return None if self.access_token is None else self.access_token.expires_at
 
 
-class ProjectRole(StrEnum):
-    """What a project's owner grants another user (project sharing)."""
+class WorkflowRole(StrEnum):
+    """What a workflow's owner grants another user (workflow sharing)."""
 
     VIEWER = "viewer"  # read: draft, versions, runs, reports, export
     EDITOR = "editor"  # also: edit the draft, publish, run, cancel
 
 
 class Access(IntEnum):
-    """What a user may do with one project; ordered, so a check is ``>=``."""
+    """What a user may do with one workflow; ordered, so a check is ``>=``."""
 
     VIEW = 1
     EDIT = 2
-    MANAGE = 3  # also: delete the project, share it
+    MANAGE = 3  # also: delete the workflow, share it
 
 
-# Bounds the rows one project can hold: sharing is for a team, not a crowd.
-MAX_PROJECT_MEMBERS = 100
+# Bounds the rows one workflow can hold: sharing is for a team, not a crowd.
+MAX_WORKFLOW_MEMBERS = 100
 
 
-def project_access(
-    user: User, owner_id: str | None, role: ProjectRole | None
+def workflow_access(
+    user: User, owner_id: str | None, role: WorkflowRole | None
 ) -> Access | None:
-    """Admins and the owner manage a project; members get their role's
-    access; anyone else none. A project without an owner (created before
+    """Admins and the owner manage a workflow; members get their role's
+    access; anyone else none. A workflow without an owner (created before
     accounts existed, or by the operator CLI) is admin-only unless shared,
     so a missing owner never widens access."""
     if user.is_admin or (owner_id is not None and owner_id == user.id):
         return Access.MANAGE
-    if role is ProjectRole.EDITOR:
+    if role is WorkflowRole.EDITOR:
         return Access.EDIT
-    if role is ProjectRole.VIEWER:
+    if role is WorkflowRole.VIEWER:
         return Access.VIEW
     return None
 
 
 @dataclass(frozen=True)
-class ProjectMember:
-    """A user a project is shared with, as listed to its collaborators."""
+class WorkflowMember:
+    """A user a workflow is shared with, as listed to its collaborators."""
 
     user_id: str
     username: str
     display_name: str | None
-    role: ProjectRole
+    role: WorkflowRole
     created_at: datetime

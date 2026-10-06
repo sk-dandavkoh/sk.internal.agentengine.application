@@ -11,11 +11,11 @@ dict would only add ways to disagree:
 - NodeMetadataRegistry ``list_nodes`` / ``definitions`` (node library)
 
 ``definitions`` and ``catalog`` are live read-only views, so publish-time
-validation (``ProjectService``) and run-time validation
+validation (``WorkflowService``) and run-time validation
 (``ExecutionRuntime``) always see the same set of node types.
 
 One version per node type id: ``NodeInstance`` references a type id only,
-so side-by-side versions would make resolution ambiguous. Projects pin
+so side-by-side versions would make resolution ambiguous. Workflows pin
 compatible versions through ``Dependency`` constraints instead.
 """
 

@@ -2,7 +2,7 @@
 
 The engine can expose its application services to AI agents (Claude, Codex,
 Hermes, any MCP client) over the [Model Context Protocol](https://modelcontextprotocol.io).
-An authorized agent can discover node types, build and edit project drafts,
+An authorized agent can discover node types, build and edit workflow drafts,
 validate, publish, run and inspect executions, and, as an admin, write,
 test, install and manage plugins.
 
@@ -20,7 +20,7 @@ CLI ─────────────────────────�
 ```
 
 Code: `backend/src/akasha/mcp/` (`server.py` transport, authentication,
-error and audit wrapper; `tools.py` projects/graph/executions/nodes;
+error and audit wrapper; `tools.py` workflows/graph/executions/nodes;
 `plugin_tools.py` plugins; `prompts.py` prompts and resources;
 `authoring.py` the plugin SDK guide and scaffold).
 
@@ -31,7 +31,7 @@ error and audit wrapper; `tools.py` projects/graph/executions/nodes;
 | Variable | Default | Meaning |
 |---|---|---|
 | `AKASHA_MCP_ENABLED` | `false` | Serve MCP at `/mcp` of the API process. |
-| `AKASHA_MCP_MAX_REQUEST_BYTES` | `4194304` | Cap on one MCP request body. Plugin sources and project packages travel inline. |
+| `AKASHA_MCP_MAX_REQUEST_BYTES` | `4194304` | Cap on one MCP request body. Plugin sources and workflow packages travel inline. |
 | `AKASHA_MCP_MAX_RESPONSE_BYTES` | `262144` | Cap on one tool result. Larger results are a `RESPONSE_TOO_LARGE` error asking for a smaller page. Minimum 1024. |
 | `AKASHA_MCP_PLUGIN_CODE` | `false` | Let admins install, update and test plugin code over MCP. See §6. |
 
@@ -130,9 +130,9 @@ Exactly the REST rules, from the same `AuthorizationService` and
 
 | Scope | Rule |
 |---|---|
-| Projects, drafts, graph, triggers, versions, export, validate, publish, run | The project's owner, an admin, or a member it is shared with (ADR 0008): viewers read, export and validate; editors also change, publish and run; only the owner or an admin deletes. A hidden project answers `PROJECT_NOT_FOUND`; too little access answers `PERMISSION_DENIED`. |
-| Executions, events, logs, reports | Visible exactly when their project is (`EXECUTION_NOT_FOUND` otherwise). |
-| Listings (projects, executions) | Filtered to the caller's projects; admins see all. |
+| Workflows, drafts, graph, triggers, versions, export, validate, publish, run | The workflow's owner, an admin, or a member it is shared with (ADR 0008): viewers read, export and validate; editors also change, publish and run; only the owner or an admin deletes. A hidden workflow answers `WORKFLOW_NOT_FOUND`; too little access answers `PERMISSION_DENIED`. |
+| Executions, events, logs, reports | Visible exactly when their workflow is (`EXECUTION_NOT_FOUND` otherwise). |
+| Listings (workflows, executions) | Filtered to the caller's workflows; admins see all. |
 | Node catalog, system_info, import | Any authenticated user. Imports are owned by the caller. |
 | `credential_list`, every `plugin_*` tool | Admin only (`PERMISSION_DENIED`). |
 
@@ -148,14 +148,14 @@ a typed output schema, and annotations (`readOnlyHint`, `destructiveHint`,
 |---|---|
 | Discovery | `system_info` (caller, role, capabilities, limits) |
 | Nodes | `node_types_list` (filter `query`/`category`, paged, + port compatibility rules), `node_type_get` (ports, config schema, capabilities, owning plugin), `node_config_validate` |
-| Projects | `project_list`, `project_get`, `project_create`, `project_update` (name/description), `project_delete` (never-published only) |
-| Drafts | `project_draft_get`, `project_draft_update` (whole draft, like the editor's save) |
+| Workflows | `workflow_list`, `workflow_get`, `workflow_create`, `workflow_update` (name/description), `workflow_delete` (never-published only) |
+| Drafts | `workflow_draft_get`, `workflow_draft_update` (whole draft, like the editor's save) |
 | Graph | `graph_get`, `graph_node_add`, `graph_node_update`, `graph_node_delete` (removes its edges), `graph_edge_add`, `graph_edge_delete` |
-| Validation and publishing | `project_validate`, `project_publish`, `project_versions_list`, `project_version_get` |
+| Validation and publishing | `workflow_validate`, `workflow_publish`, `workflow_versions_list`, `workflow_version_get` |
 | Executions | `execution_start` (latest published version by default), `execution_list`, `execution_get` (status, error, node states, metrics), `execution_node_get` (one node's outputs and failures), `execution_cancel` |
 | Observability | `execution_events_get`, `execution_logs_get` (both cursor-paged by `after`), `execution_metrics_get`, `report_get` (the full redacted report: the same document REST exports) |
 | Triggers | `trigger_list`, `trigger_create`, `trigger_update` (config and/or `enabled`: this is enable/disable), `trigger_delete`. Draft triggers take effect on publish. |
-| Import/export | `project_export` (package as base64), `project_import` |
+| Import/export | `workflow_export` (package as base64), `workflow_import` |
 | Credentials | `credential_list` (names and kinds only) |
 | Plugins | §6 |
 
@@ -166,8 +166,8 @@ management, and anything that runs the scheduler or workers.
 ### Lifecycle and revisions
 
 ```text
-project_create ─> graph_node_add ─> graph_edge_add ─> project_validate
-   ─> project_publish ─> execution_start ─> execution_get ─> execution_node_get
+workflow_create ─> graph_node_add ─> graph_edge_add ─> workflow_validate
+   ─> workflow_publish ─> execution_start ─> execution_get ─> execution_node_get
 ```
 
 - Graph and draft tools always edit the **mutable draft**. Published
@@ -177,14 +177,14 @@ project_create ─> graph_node_add ─> graph_edge_add ─> project_validate
   `revision`. A stale revision is `CONCURRENT_MODIFICATION` with
   `retryable: true` and the current revision in `details`: re-read and
   retry. Each granular graph edit is one transaction
-  (`ProjectService.edit_draft`) with the same compare-and-swap as REST
+  (`WorkflowService.edit_draft`) with the same compare-and-swap as REST
   saves, so concurrent agents, or an agent and a human editor, never
   silently overwrite each other (tested: 5 parallel edits of one revision,
   exactly 1 wins).
-- `project_publish` takes an optional `expected_revision`. Pass the one
+- `workflow_publish` takes an optional `expected_revision`. Pass the one
   you validated. A repeated publish with the same revision is a
   conflict, not a second version.
-- Not idempotent: `project_create`, `project_import` and `execution_start`
+- Not idempotent: `workflow_create`, `workflow_import` and `execution_start`
   create a new resource on every call, like their REST counterparts.
 
 ### Results and errors
@@ -193,7 +193,7 @@ Results are structured JSON (`structuredContent`, mirrored as text). Errors
 are tool results with `isError: true` and one shape:
 
 ```json
-{"code": "PROJECT_VALIDATION_FAILED", "message": "...", "details": {"issues": [...]}, "retryable": false}
+{"code": "WORKFLOW_VALIDATION_FAILED", "message": "...", "details": {"issues": [...]}, "retryable": false}
 ```
 
 Codes are the engine's own (the same as the REST error envelope).
@@ -205,8 +205,8 @@ the SDK before any tool runs.
 ### Output size
 
 Lists are paged (`offset`/`limit`, max 100; events and logs by
-`after` cursor). Summaries are the default (`project_get`, `execution_get`);
-detail is separate (`project_draft_get`, `execution_node_get`, `report_get`).
+`after` cursor). Summaries are the default (`workflow_get`, `execution_get`);
+detail is separate (`workflow_draft_get`, `execution_node_get`, `report_get`).
 Any result over `AKASHA_MCP_MAX_RESPONSE_BYTES` is refused with
 `RESPONSE_TOO_LARGE` and its size, so the agent asks for less instead of
 flooding its context.
@@ -274,18 +274,18 @@ transition is a conflict (`INVALID_STATE_TRANSITION`,
   same id, re-enabling it if it was enabled. It is atomic: if the new
   package fails to validate, copy or load, the old package is restored and
   re-activated (tested with a package that raises on import).
-- Both update and removal are **dependency-aware**. While a project's
+- Both update and removal are **dependency-aware**. While a workflow's
   draft or any published version uses the plugin, they answer
-  `PLUGIN_IN_USE` with the project ids. `force: true` proceeds and returns
-  the affected projects. Disabling is blocked while enabled plugins depend
+  `PLUGIN_IN_USE` with the workflow ids. `force: true` proceeds and returns
+  the affected workflows. Disabling is blocked while enabled plugins depend
   on it, and so is updating or removing such a plugin.
 
 ### Reproducibility: published versions pin plugin versions
 
 Publishing records the exact version of every enabled plugin the draft
 uses, through its node types or declared plugin dependencies, in the
-version's `plugin_versions` (also on REST `ProjectVersionDetail`, stored
-in `project_versions.plugin_versions`, migration 0014).
+version's `plugin_versions` (also on REST `WorkflowVersionDetail`, stored
+in `workflow_versions.plugin_versions`, migration 0014).
 
 Before every run the runtime compares them with the enabled plugins. Any
 other version, or a missing plugin, fails the run before a node executes
@@ -293,7 +293,7 @@ other version, or a missing plugin, fails the run before a node executes
 `missing_dependency`). So:
 
 ```text
-Project Version 17 ── pinned ──> acme@1.3.2
+Workflow Version 17 ── pinned ──> acme@1.3.2
 acme@2.0.0 installed (plugin_update force=true)
   → version 17 refuses to run; it never silently runs 2.0.0 code
   → publish version 18 → pinned to 2.0.0 → runs
@@ -312,7 +312,7 @@ Resources, static and read-only:
 - `akasha://plugins/sdk-guide`: the plugin SDK guide (Markdown).
 - `akasha://plugins/manifest-schema`: JSON Schema of `akasha-plugin.json`.
 
-Live data (projects, executions, logs) is **not** a resource: tools carry
+Live data (workflows, executions, logs) is **not** a resource: tools carry
 pagination, filtering and authorization arguments that resources cannot.
 
 Prompts, guidance only: they name tools and embed no stored data.
@@ -338,7 +338,7 @@ Prompts, guidance only: they name tools and embed no stored data.
   Credential values are never returned and cannot be set over MCP.
 - **Limits.** Request and response caps (§1). Pagination caps. All engine
   resource limits apply unchanged (graph size and depth, active executions
-  per project, timeouts, output sizes). Project packages are capped at
+  per workflow, timeouts, output sizes). Workflow packages are capped at
   16 MiB, plugin packages at 16 MiB compressed / 64 MiB unpacked.
 - **SSRF and outbound network.** No tool fetches a URL. Nodes keep the
   engine's network policy.
@@ -350,7 +350,7 @@ Prompts, guidance only: they name tools and embed no stored data.
 
 Every tool call logs one structured line `mcp_tool_call`: `tool`,
 `user_id`, `outcome` (`ok`/`error`), `error_code`, `duration_ms`, the
-target ids among the arguments (`project_id`, `execution_id`,
+target ids among the arguments (`workflow_id`, `execution_id`,
 `plugin_id`, `node_type`, `version`), and, from the request context,
 `request_id`. The access log line (`http_request`, path `/mcp`) carries
 the same `request_id` and `user_id`. Executions started over MCP use the
@@ -419,8 +419,8 @@ above follows their documented HTTP transport and is untested.
   (`AKASHA_WORKER_ENABLED=true`) sees it immediately. This is the existing
   plugin limitation (ADR 0001), not specific to MCP.
 - No stdio transport (§2).
-- No idempotency keys on `execution_start`, `project_create` and
-  `project_import`, the same as REST.
+- No idempotency keys on `execution_start`, `workflow_create` and
+  `workflow_import`, the same as REST.
 - `plugin_test` cannot test packages with `python_requirements` before
   install.
 

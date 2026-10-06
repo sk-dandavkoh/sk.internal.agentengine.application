@@ -58,7 +58,7 @@ Phase 02 (`/docs/roadmap-frontend.md` §8) was meant to build one consistent, re
 - accessibility for every primitive: keyboard use, visible focus, semantic HTML, labels and accessible names, screen-reader behavior, disabled and loading states
 - component tests for rendering, interaction, keyboard use, disabled states, error states and accessibility-relevant behavior
 
-**The roadmap prompt restricts this phase to generic UI components:** "Implementiere nur generische UI-Komponenten. Keine fachlichen Project-, Node-, Execution- oder Backend-Features." ("Implement only generic UI components. No project, node, execution or backend features.")
+**The roadmap prompt restricts this phase to generic UI components:** "Implementiere nur generische UI-Komponenten. Keine fachlichen Workflow-, Node-, Execution- oder Backend-Features." ("Implement only generic UI components. No workflow, node, execution or backend features.")
 
 **Explicitly not in this phase:**
 
@@ -593,7 +593,7 @@ Coverage of the prompt and roadmap scope list: every listed item has an implemen
 | Manual theme toggle; `data-theme="dark"` forcing    | Settings feature                                        | Phase 21                                | Settings UI               | No                 |
 | Automated a11y audit (axe in Vitest or Playwright)  | Needs a new dependency                                  | Phase 25                                | Dependency decision       | No                 |
 | Screen-reader testing (NVDA, VoiceOver)             | Manual and outside the tooling                          | Phase 25                                | —                         | No                 |
-| Firefox and WebKit E2E projects                     | Only Chromium is configured since Phase 00              | Phase 26                                | —                         | No                 |
+| Firefox and WebKit E2E workflows                     | Only Chromium is configured since Phase 00              | Phase 26                                | —                         | No                 |
 | Table sorting, selection, virtualization            | No consumer yet; server-side pagination expected        | When a feature needs it                 | —                         | No                 |
 | Menu typeahead, submenus, icon-only menu trigger    | No consumer yet                                         | When a feature needs it                 | —                         | No                 |
 | Drawer; Combobox / searchable select                | Not in the roadmap §8 scope; native `<select>` suffices | Node Library / Inspector (Phases 08–09) | Possible library decision | No                 |

@@ -43,8 +43,8 @@ from akasha.domain.node import (
     PortType,
 )
 from akasha.domain.primitives import new_id
-from akasha.domain.project import Project, ProjectVersion
 from akasha.domain.trigger import TriggerType
+from akasha.domain.workflow import Workflow, WorkflowVersion
 from akasha.infrastructure.database import (
     Database,
     normalize_async_url,
@@ -72,15 +72,15 @@ def two_node_graph() -> tuple[Graph, str, str]:
     return graph, a.id, b.id
 
 
-async def published(uow: UowFactory) -> tuple[Project, ProjectVersion]:
-    project = Project.create("demo")
-    project.draft.graph = two_node_graph()[0]
-    version = project.publish_draft()
+async def published(uow: UowFactory) -> tuple[Workflow, WorkflowVersion]:
+    workflow = Workflow.create("demo")
+    workflow.draft.graph = two_node_graph()[0]
+    version = workflow.publish_draft()
     async with uow() as ctx:
-        await ctx.projects.save(project)
-        await ctx.versions.save(project.id, version)
+        await ctx.workflows.save(workflow)
+        await ctx.versions.save(workflow.id, version)
         await ctx.commit()
-    return project, version
+    return workflow, version
 
 
 async def saved(uow: UowFactory, execution: Execution) -> Execution:
@@ -91,10 +91,10 @@ async def saved(uow: UowFactory, execution: Execution) -> Execution:
 
 
 async def test_full_aggregate_round_trip(uow: UowFactory) -> None:
-    project, version = await published(uow)
+    workflow, version = await published(uow)
     a, b = sorted(version.graph.nodes)
     execution = Execution.create(
-        project.id,
+        workflow.id,
         version,
         metadata=ExecutionMetadata(
             trigger_type=TriggerType.API, correlation_id="req-42"
@@ -133,7 +133,7 @@ async def test_full_aggregate_round_trip(uow: UowFactory) -> None:
     assert loaded is not None
     assert loaded.status is ExecutionStatus.CANCELLED
     assert loaded.revision == execution.revision == 1
-    assert loaded.project_version.id == version.id
+    assert loaded.workflow_version.id == version.id
     assert loaded.metadata == execution.metadata
     assert loaded.metadata.node_versions == {"test.echo": "1.0.0", "test.emit": "2.1.0"}
     assert loaded.input == {"lead": {"name": "Ada", "score": 0.5, "tags": ["a", None]}}
@@ -165,9 +165,9 @@ async def test_full_aggregate_round_trip(uow: UowFactory) -> None:
 
 
 async def test_failed_execution_error_round_trips(uow: UowFactory) -> None:
-    project, version = await published(uow)
+    workflow, version = await published(uow)
     a, _ = sorted(version.graph.nodes)
-    execution = Execution.create(project.id, version, now=T0)
+    execution = Execution.create(workflow.id, version, now=T0)
     execution.enqueue()
     execution.start(now=T0)
     execution.mark_node_ready(a)
@@ -185,9 +185,9 @@ async def test_failed_execution_error_round_trips(uow: UowFactory) -> None:
 
 
 async def test_non_finite_output_cannot_break_persistence(uow: UowFactory) -> None:
-    project, version = await published(uow)
+    workflow, version = await published(uow)
     a, _ = sorted(version.graph.nodes)
-    execution = Execution.create(project.id, version, now=T0)
+    execution = Execution.create(workflow.id, version, now=T0)
     execution.enqueue()
     execution.start(now=T0)
     execution.mark_node_ready(a)
@@ -201,8 +201,8 @@ async def test_non_finite_output_cannot_break_persistence(uow: UowFactory) -> No
 
 
 async def test_save_is_compare_and_swap_on_revision(uow: UowFactory) -> None:
-    project, version = await published(uow)
-    execution = Execution.create(project.id, version)
+    workflow, version = await published(uow)
+    execution = Execution.create(workflow.id, version)
     execution.enqueue()
     await saved(uow, execution)
     async with uow() as ctx:
@@ -226,21 +226,23 @@ async def test_save_is_compare_and_swap_on_revision(uow: UowFactory) -> None:
 
 
 async def test_duplicate_insert_is_a_conflict(uow: UowFactory) -> None:
-    project, version = await published(uow)
-    execution = Execution.create(project.id, version)
+    workflow, version = await published(uow)
+    execution = Execution.create(workflow.id, version)
     await saved(uow, execution)
-    clone = Execution(id=execution.id, project_id=project.id, project_version=version)
+    clone = Execution(
+        id=execution.id, workflow_id=workflow.id, workflow_version=version
+    )
     async with uow() as ctx:
         with pytest.raises(ConcurrentModificationError):
             await ctx.executions.save(clone)
 
 
 async def test_execution_must_reference_a_published_version(uow: UowFactory) -> None:
-    project = Project.create("unpublished")
+    workflow = Workflow.create("unpublished")
     async with uow() as ctx:
-        await ctx.projects.save(project)
+        await ctx.workflows.save(workflow)
         await ctx.commit()
-    orphan = Execution.create(project.id, project.draft.publish(version=1))
+    orphan = Execution.create(workflow.id, workflow.draft.publish(version=1))
     async with uow() as ctx:
         with pytest.raises(IntegrityError):
             await ctx.executions.save(orphan)
@@ -249,18 +251,18 @@ async def test_execution_must_reference_a_published_version(uow: UowFactory) -> 
 async def test_version_with_executions_is_protected(
     uow: UowFactory, database: Database
 ) -> None:
-    project, version = await published(uow)
-    await saved(uow, Execution.create(project.id, version))
+    workflow, version = await published(uow)
+    await saved(uow, Execution.create(workflow.id, version))
     with pytest.raises(IntegrityError):
         async with database.engine.begin() as conn:
             await conn.execute(
-                text("DELETE FROM project_versions WHERE id = :id"), {"id": version.id}
+                text("DELETE FROM workflow_versions WHERE id = :id"), {"id": version.id}
             )
 
 
 async def test_status_check_constraint(uow: UowFactory, database: Database) -> None:
-    project, version = await published(uow)
-    execution = await saved(uow, Execution.create(project.id, version))
+    workflow, version = await published(uow)
+    execution = await saved(uow, Execution.create(workflow.id, version))
     with pytest.raises(IntegrityError):
         async with database.engine.begin() as conn:
             await conn.execute(
@@ -276,9 +278,9 @@ async def test_load_never_sees_a_torn_aggregate(
     reader must wait for a writer that already updated the execution row,
     then see its committed state for *both* (found by the two-runtime race
     test: a QUEUED execution with READY nodes failed rehydration)."""
-    project, version = await published(uow)
+    workflow, version = await published(uow)
     a, _ = sorted(version.graph.nodes)
-    execution = Execution.create(project.id, version)
+    execution = Execution.create(workflow.id, version)
     execution.enqueue()
     await saved(uow, execution)
 
@@ -366,34 +368,34 @@ async def test_upgrade_from_0002_then_execute_existing_version(db_url: str) -> N
             await conn.execute(text(f"CREATE DATABASE {scratch}"))
         scratch_url = f"{db_url.rpartition('/')[0]}/{scratch}"
         await asyncio.to_thread(
-            _alembic, "upgrade", scratch_url, "0002_project_revision"
+            _alembic, "upgrade", scratch_url, "0002_workflow_revision"
         )
 
         graph, _, b = two_node_graph()
-        project_id = new_id("proj")
+        workflow_id = new_id("wf")
         db = Database(normalize_async_url(scratch_url))
         try:
             async with db.engine.begin() as conn:
                 await conn.execute(
                     text(
-                        "INSERT INTO projects (id, name, status, draft_graph,"
+                        "INSERT INTO workflows (id, name, status, draft_graph,"
                         " draft_triggers, draft_dependencies, current_version,"
                         " created_at, updated_at) VALUES (:id, 'old', 'published',"
                         " '{\"nodes\": [], \"edges\": []}', '[]', '[]', 1,"
                         " now(), now())"
                     ),
-                    {"id": project_id},
+                    {"id": workflow_id},
                 )
                 await conn.execute(
                     text(
-                        "INSERT INTO project_versions (id, project_id, version,"
+                        "INSERT INTO workflow_versions (id, workflow_id, version,"
                         " schema_version, graph, triggers, dependencies,"
                         " published_at) VALUES (:id, :pid, 1, 1,"
                         " CAST(:graph AS jsonb), '[]', '[]', now())"
                     ),
                     {
-                        "id": new_id("pver"),
-                        "pid": project_id,
+                        "id": new_id("wfver"),
+                        "pid": workflow_id,
                         "graph": json.dumps(serialize_graph(graph)),
                     },
                 )
@@ -402,7 +404,7 @@ async def test_upgrade_from_0002_then_execute_existing_version(db_url: str) -> N
             def factory() -> SqlAlchemyUnitOfWork:
                 return SqlAlchemyUnitOfWork(db)
 
-            queued = await ExecutionService(factory).create_execution(project_id, 1)
+            queued = await ExecutionService(factory).create_execution(workflow_id, 1)
             runtime = ExecutionRuntime(factory, {"test.emit": Emit, "test.echo": Echo})
             result = await runtime.run(queued.id)
             assert result.status is ExecutionStatus.COMPLETED
@@ -432,36 +434,36 @@ async def test_upgrade_from_0003_keeps_existing_executions_runnable(
         await asyncio.to_thread(_alembic, "upgrade", scratch_url, "0003_executions")
 
         graph, a, b = two_node_graph()
-        project_id, execution_id = new_id("proj"), new_id("exec")
+        workflow_id, execution_id = new_id("wf"), new_id("exec")
         db = Database(normalize_async_url(scratch_url))
         try:
             async with db.engine.begin() as conn:
                 await conn.execute(
                     text(
-                        "INSERT INTO projects (id, name, status, draft_graph,"
+                        "INSERT INTO workflows (id, name, status, draft_graph,"
                         " draft_triggers, draft_dependencies, current_version,"
                         " created_at, updated_at) VALUES (:id, 'old', 'published',"
                         " '{\"nodes\": [], \"edges\": []}', '[]', '[]', 1,"
                         " now(), now())"
                     ),
-                    {"id": project_id},
+                    {"id": workflow_id},
                 )
                 await conn.execute(
                     text(
-                        "INSERT INTO project_versions (id, project_id, version,"
+                        "INSERT INTO workflow_versions (id, workflow_id, version,"
                         " schema_version, graph, triggers, dependencies,"
                         " published_at) VALUES (:id, :pid, 1, 1,"
                         " CAST(:graph AS jsonb), '[]', '[]', now())"
                     ),
                     {
-                        "id": new_id("pver"),
-                        "pid": project_id,
+                        "id": new_id("wfver"),
+                        "pid": workflow_id,
                         "graph": json.dumps(serialize_graph(graph)),
                     },
                 )
                 await conn.execute(
                     text(
-                        "INSERT INTO executions (id, project_id, project_version,"
+                        "INSERT INTO executions (id, workflow_id, workflow_version,"
                         " status, metadata, retry_policy, timeout_policy, revision,"
                         " created_at) VALUES (:id, :pid, 1, 'queued',"
                         " CAST(:metadata AS jsonb), CAST(:retry AS jsonb),"
@@ -469,7 +471,7 @@ async def test_upgrade_from_0003_keeps_existing_executions_runnable(
                     ),
                     {
                         "id": execution_id,
-                        "pid": project_id,
+                        "pid": workflow_id,
                         "metadata": json.dumps(
                             {
                                 "trigger_type": "manual",
@@ -531,11 +533,11 @@ async def test_list_queued_returns_old_queued_ids_oldest_first(
 ) -> None:
     """Queue recovery's scan (Phase 22): QUEUED only, older than the
     cutoff, oldest first, bounded."""
-    project, version = await published(uow)
+    workflow, version = await published(uow)
 
     async def at(minutes: int, *, queued: bool = True) -> str:
         execution = Execution.create(
-            project.id, version, now=T0 + timedelta(minutes=minutes)
+            workflow.id, version, now=T0 + timedelta(minutes=minutes)
         )
         if queued:
             execution.enqueue()
@@ -545,7 +547,7 @@ async def test_list_queued_returns_old_queued_ids_oldest_first(
     first = await at(1)
     await at(0, queued=False)  # CREATED, never queued
     await at(10)  # too recent
-    running = Execution.create(project.id, version, now=T0)
+    running = Execution.create(workflow.id, version, now=T0)
     running.enqueue()
     running.start(now=T0, node_versions={})
     await saved(uow, running)
@@ -579,9 +581,9 @@ async def backdate(database: Database, execution_id: str, *, minutes: int) -> No
 
 
 async def running_execution(
-    uow: UowFactory, project: Project, version: ProjectVersion
+    uow: UowFactory, workflow: Workflow, version: WorkflowVersion
 ) -> Execution:
-    execution = Execution.create(project.id, version, now=T0)
+    execution = Execution.create(workflow.id, version, now=T0)
     execution.enqueue()
     execution.start(now=T0, node_versions={})
     return await saved(uow, execution)
@@ -590,8 +592,8 @@ async def running_execution(
 async def test_heartbeat_is_a_cas_on_the_revision(
     uow: UowFactory, database: Database
 ) -> None:
-    project, version = await published(uow)
-    execution = await running_execution(uow, project, version)
+    workflow, version = await published(uow)
+    execution = await running_execution(uow, workflow, version)
     await backdate(database, execution.id, minutes=60)
     async with uow() as ctx:
         assert await ctx.executions.list_stale(stale_after=STALE, limit=10) == [
@@ -614,8 +616,8 @@ async def test_heartbeat_is_a_cas_on_the_revision(
 async def test_every_save_refreshes_the_heartbeat(
     uow: UowFactory, database: Database
 ) -> None:
-    project, version = await published(uow)
-    execution = await running_execution(uow, project, version)
+    workflow, version = await published(uow)
+    execution = await running_execution(uow, workflow, version)
     await backdate(database, execution.id, minutes=60)
     execution.mark_node_ready(sorted(execution.node_executions)[0])
     await saved(uow, execution)
@@ -626,14 +628,14 @@ async def test_every_save_refreshes_the_heartbeat(
 async def test_list_stale_only_started_rows_stalest_first(
     uow: UowFactory, database: Database
 ) -> None:
-    project, version = await published(uow)
-    older = await running_execution(uow, project, version)
-    newer = await running_execution(uow, project, version)
-    fresh = await running_execution(uow, project, version)
-    queued = Execution.create(project.id, version, now=T0)
+    workflow, version = await published(uow)
+    older = await running_execution(uow, workflow, version)
+    newer = await running_execution(uow, workflow, version)
+    fresh = await running_execution(uow, workflow, version)
+    queued = Execution.create(workflow.id, version, now=T0)
     queued.enqueue()
     await saved(uow, queued)
-    done = await running_execution(uow, project, version)
+    done = await running_execution(uow, workflow, version)
     done.fail(ExecutionError("BOOM", "boom", NodeErrorKind.PERMANENT), now=T0)
     await saved(uow, done)
     for execution, minutes in ((older, 90), (newer, 60), (queued, 90), (done, 90)):
@@ -649,8 +651,8 @@ async def test_list_stale_only_started_rows_stalest_first(
 async def test_claim_stale_skips_fresh_rows_and_rows_another_recoverer_holds(
     uow: UowFactory, database: Database
 ) -> None:
-    project, version = await published(uow)
-    execution = await running_execution(uow, project, version)
+    workflow, version = await published(uow)
+    execution = await running_execution(uow, workflow, version)
     async with uow() as ctx:
         assert not await ctx.executions.claim_stale(execution.id, stale_after=STALE)
 
@@ -668,8 +670,8 @@ async def test_owner_heartbeat_waits_for_a_recoverer_and_then_loses(
 ) -> None:
     """The row lock orders a racing owner heartbeat after the takeover, so
     the owner never keeps a run that was just recovered."""
-    project, version = await published(uow)
-    execution = await running_execution(uow, project, version)
+    workflow, version = await published(uow)
+    execution = await running_execution(uow, workflow, version)
     await backdate(database, execution.id, minutes=60)
 
     async with uow() as recoverer:
@@ -720,13 +722,13 @@ async def test_upgrade_from_0009_makes_orphaned_running_rows_recoverable(
             nodes = graph.nodes
             a = next(n for n in nodes if nodes[n].node_type == "test.emit")
             b = next(n for n in nodes if nodes[n].node_type == "test.echo")
-            pid, execution_id = new_id("proj"), new_id("exec")
+            pid, execution_id = new_id("wf"), new_id("exec")
             # Written with the columns 0009 has (today's repositories write
-            # later ones): the published project, A completed, B in flight.
+            # later ones): the published workflow, A completed, B in flight.
             async with db.engine.begin() as conn:
                 await conn.execute(
                     text(
-                        "INSERT INTO projects (id, name, status, draft_graph,"
+                        "INSERT INTO workflows (id, name, status, draft_graph,"
                         " draft_triggers, draft_dependencies, current_version,"
                         " created_at, updated_at) VALUES (:id, 'demo', 'published',"
                         " CAST(:graph AS jsonb), '[]', '[]', 1, now(), now())"
@@ -735,20 +737,20 @@ async def test_upgrade_from_0009_makes_orphaned_running_rows_recoverable(
                 )
                 await conn.execute(
                     text(
-                        "INSERT INTO project_versions (id, project_id, version,"
+                        "INSERT INTO workflow_versions (id, workflow_id, version,"
                         " schema_version, graph, triggers, dependencies,"
                         " published_at) VALUES (:id, :pid, 1, 1,"
                         " CAST(:graph AS jsonb), '[]', '[]', now())"
                     ),
                     {
-                        "id": new_id("pver"),
+                        "id": new_id("wfver"),
                         "pid": pid,
                         "graph": json.dumps(serialize_graph(graph)),
                     },
                 )
                 await conn.execute(
                     text(
-                        "INSERT INTO executions (id, project_id, project_version,"
+                        "INSERT INTO executions (id, workflow_id, workflow_version,"
                         " status, metadata, retry_policy, timeout_policy, revision,"
                         " created_at, started_at, input) VALUES (:id, :pid, 1,"
                         " 'running', CAST(:metadata AS jsonb), CAST(:retry AS jsonb),"

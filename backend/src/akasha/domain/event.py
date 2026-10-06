@@ -1,7 +1,7 @@
 """Event: an immutable record of something that happened (architecture §18).
 
 Events describe state changes; they never *are* the state. The Execution and
-Project aggregates stay canonical — events are the history next to them, used
+Workflow aggregates stay canonical — events are the history next to them, used
 for monitoring, live updates and audit.
 
 Payloads are closed per event type: every type declares exactly which keys it
@@ -43,12 +43,12 @@ class EventType(StrEnum):
     NODE_SKIPPED = "node.skipped"
     NODE_CANCELLED = "node.cancelled"
     NODE_EMITTED = "node.emitted"  # a node's own declared event (SDK)
-    PROJECT_PUBLISHED = "project.published"
-    # Audit (architecture §67): packages carry project content across
-    # installations. ``project_version`` is the exported version (None for
-    # a draft export); an import creates a new, unpublished project.
-    PROJECT_EXPORTED = "project.exported"
-    PROJECT_IMPORTED = "project.imported"
+    WORKFLOW_PUBLISHED = "workflow.published"
+    # Audit (architecture §67): packages carry workflow content across
+    # installations. ``workflow_version`` is the exported version (None for
+    # a draft export); an import creates a new, unpublished workflow.
+    WORKFLOW_EXPORTED = "workflow.exported"
+    WORKFLOW_IMPORTED = "workflow.imported"
 
 
 _ERROR = frozenset({"error_code", "error_kind"})
@@ -75,9 +75,9 @@ PAYLOAD_KEYS: Final[Mapping[EventType, frozenset[str]]] = {
     EventType.NODE_CANCELLED: frozenset(),
     # ``name`` is one of the node definition's declared event names.
     EventType.NODE_EMITTED: frozenset({"name", "attempt"}),
-    EventType.PROJECT_PUBLISHED: frozenset(),
-    EventType.PROJECT_EXPORTED: frozenset(),
-    EventType.PROJECT_IMPORTED: frozenset(),
+    EventType.WORKFLOW_PUBLISHED: frozenset(),
+    EventType.WORKFLOW_EXPORTED: frozenset(),
+    EventType.WORKFLOW_IMPORTED: frozenset(),
 }
 
 type PayloadValue = str | int | None
@@ -86,14 +86,14 @@ type PayloadValue = str | int | None
 @dataclass(frozen=True)
 class Event:
     """``position`` is assigned by the event store (None until persisted);
-    events of one execution (or one project) are totally ordered by it."""
+    events of one execution (or one workflow) are totally ordered by it."""
 
     event_type: EventType
     occurred_at: datetime
-    project_id: str
+    workflow_id: str
     execution_id: str | None = None
     node_id: str | None = None
-    project_version: int | None = None
+    workflow_version: int | None = None
     correlation_id: str | None = None
     payload: Mapping[str, PayloadValue] = field(default_factory=dict)
     event_id: str = field(default_factory=lambda: new_id("evt"))
@@ -104,7 +104,7 @@ class Event:
         event_type = EventType(self.event_type)
         object.__setattr__(self, "event_type", event_type)
         validate_id(self.event_id)
-        validate_id(self.project_id)
+        validate_id(self.workflow_id)
         if self.occurred_at.tzinfo is None:
             raise DomainValidationError("event time must be timezone-aware")
         scope = event_type.value.split(".", 1)[0]

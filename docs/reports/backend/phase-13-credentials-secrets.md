@@ -6,14 +6,14 @@
 - `Credential`, `CredentialReference` and `CredentialService`;
 - secret encryption, decryption and redaction;
 - support for API keys, SMTP credentials, provider credentials and generic secret values;
-- project configuration that contains references, not raw secrets.
+- workflow configuration that contains references, not raw secrets.
 
-Required tests: encryption/decryption, access control, reference resolution, redaction, export exclusion and log exclusion. The acceptance criterion is: *"Secrets never appear in Project JSON, normal API responses, logs or execution reports."*
+Required tests: encryption/decryption, access control, reference resolution, redaction, export exclusion and log exclusion. The acceptance criterion is: *"Secrets never appear in Workflow JSON, normal API responses, logs or execution reports."*
 
 The phase prompt adds requirements:
 - encrypted persistence, secret resolution and credential access boundaries;
 - secret-safe serialization;
-- leak checks across API responses, logs, events, reports, project exports, exceptions, database serialization and debug output;
+- leak checks across API responses, logs, events, reports, workflow exports, exceptions, database serialization and debug output;
 - encryption keys from secure configuration, never hard-coded.
 
 **What was implemented.**
@@ -24,12 +24,12 @@ The phase prompt adds requirements:
 - **REST API:** `/api/v1/credentials`, where values can be written but never read back.
 - **Runtime access boundary** (`akasha.runtime.credentials.NodeCredentials`): a node may resolve only references contained in its own frozen config snapshot.
 - **Known-value redaction:** a task-scoped `ContextVar` in `akasha.security.redaction` masks every resolved value in the resolving node's logs, errors and outputs.
-- **Project config guard:** secret values in node or trigger config are rejected when a draft is saved (`PLAINTEXT_SECRET`), and reported as a validation issue on publish and run.
+- **Workflow config guard:** secret values in node or trigger config are rejected when a draft is saved (`PLAINTEXT_SECRET`), and reported as a validation issue on publish and run.
 - **HTTP node:** `core.http` gains `header_credentials`. `core.smtp` now uses the (now async) resolver.
 
 **Resulting state.**
 - Secrets are stored only as ciphertext.
-- Project data can hold only references.
+- Workflow data can hold only references.
 - No API endpoint returns a secret value.
 - Resolved values are masked in every persisted or logged artefact of the resolving node.
 - Full backend suite: 1068 passed, 0 skipped, in two consecutive runs (973 at the end of Phase 12). A third run skipped the 207 Docker-backed tests because of a pre-existing Docker-probe flake (§9, F6).
@@ -37,9 +37,9 @@ The phase prompt adds requirements:
 
 **Acceptance.** The criterion is met for every channel that exists today (§14). Two parts can only be checked in their current form:
 - "execution reports" (the Reports subsystem is Phase 19);
-- "project export" (Export is Phase 18).
+- "workflow export" (Export is Phase 18).
 
-In both cases the underlying data, meaning persisted execution state and project JSON, is verified secret-free. "Access control" is implemented structurally rather than per user, because authentication and authorization are Phase 20. Production code does not yet construct `ExecutionRuntime`; this was already open before this phase (Phase 11/12). Until that wiring exists, credential resolution works in tests and library use but not from the API process.
+In both cases the underlying data, meaning persisted execution state and workflow JSON, is verified secret-free. "Access control" is implemented structurally rather than per user, because authentication and authorization are Phase 20. Production code does not yet construct `ExecutionRuntime`; this was already open before this phase (Phase 11/12). Until that wiring exists, credential resolution works in tests and library use but not from the API process.
 
 **Phase Status:** COMPLETE WITH LIMITATIONS
 
@@ -51,13 +51,13 @@ In both cases the underlying data, meaning persisted execution state and project
 - **Goal:** "Introduce secure credential management."
 - **Scope:** `Credential`, `CredentialReference`, `CredentialService`, secret encryption, secret decryption, secret redaction.
 - **Support:** API keys, SMTP credentials, provider credentials, generic secret values.
-- **Constraint:** "Project configuration must contain references rather than raw secrets."
+- **Constraint:** "Workflow configuration must contain references rather than raw secrets."
 - **Tests:** encryption/decryption, access control, reference resolution, redaction, export exclusion, log exclusion.
-- **Acceptance criterion:** "Secrets never appear in Project JSON, normal API responses, logs or execution reports."
+- **Acceptance criterion:** "Secrets never appear in Workflow JSON, normal API responses, logs or execution reports."
 
 **Phase prompt additions**
 - Implement credential model, `CredentialReference`, credential service, encrypted persistence, secret resolution, credential access boundaries, redaction and secret-safe serialization.
-- Verify no leakage through API responses, logs, events, reports, project exports, exceptions, database serialization and debug output.
+- Verify no leakage through API responses, logs, events, reports, workflow exports, exceptions, database serialization and debug output.
 - Encryption keys come from secure configuration and are never hard-coded.
 - Loop: implement → attack → test → review → fix, actively searching for leaks.
 
@@ -83,7 +83,7 @@ In both cases the underlying data, meaning persisted execution state and project
 - `plaintext_secret_paths(config)`: the locations of secret material in a config document.
 - `credential_references(config)`: all references anywhere in a config document.
 - `PlaintextSecretError` (code `PLAINTEXT_SECRET`, HTTP 422).
-- `Project.replace_draft` scans node and trigger configs and raises `PlaintextSecretError` before mutating the project.
+- `Workflow.replace_draft` scans node and trigger configs and raises `PlaintextSecretError` before mutating the workflow.
 - `ValidationCode.PLAINTEXT_SECRET` is emitted by `_check_node_config` in `graph_validation.py`, for both drafts and published versions.
 - `CredentialResolver.resolve` in `domain/node.py` is now `async`.
 
@@ -99,7 +99,7 @@ In both cases the underlying data, meaning persisted execution state and project
 ### Application
 - `application/credentials.py`: `CredentialService` (`create`, `get`, `list`, `update`, `delete`, `resolve`), `CredentialNotFoundError` (404), `CredentialAlreadyExistsError` (409), and audit log lines `credential_created`, `credential_updated` (with `rotated`), `credential_deleted`, `credential_resolved`.
 - `application/persistence.py`: `CredentialRepository` protocol; `UnitOfWork.credentials`.
-- `application/projects.py`: the private helpers `_check_page`/`_page` became public `check_page`/`to_page` so the credential service can reuse them. The behaviour is unchanged.
+- `application/workflows.py`: the private helpers `_check_page`/`_page` became public `check_page`/`to_page` so the credential service can reuse them. The behaviour is unchanged.
 
 ### Persistence
 - `infrastructure/db_models.py`: table `credentials`.
@@ -140,7 +140,7 @@ In both cases the underlying data, meaning persisted execution state and project
 | `backend/src/akasha/security/redaction.py` | Modified (+51/−4) | Known-value masking, reference exemption, plural sensitive words |
 | `backend/src/akasha/application/credentials.py` | Created (153 lines) | `CredentialService` and its errors |
 | `backend/src/akasha/application/persistence.py` | Modified (+24) | `CredentialRepository` protocol, `UnitOfWork.credentials` |
-| `backend/src/akasha/application/projects.py` | Modified (+6/−6) | Page helpers made public for reuse |
+| `backend/src/akasha/application/workflows.py` | Modified (+6/−6) | Page helpers made public for reuse |
 | `backend/src/akasha/infrastructure/db_models.py` | Modified (+17) | `credentials` table definition |
 | `backend/src/akasha/infrastructure/persistence.py` | Modified (+109) | `SqlAlchemyCredentialRepository`, UoW binding |
 | `backend/migrations/versions/0006_credentials.py` | Created (41 lines) | Schema migration |
@@ -148,7 +148,7 @@ In both cases the underlying data, meaning persisted execution state and project
 | `backend/src/akasha/runtime/runtime.py` | Modified (+7) | Optional `credentials` source; per-node resolver |
 | `backend/src/akasha/runtime/executor.py` | Modified (+10/−3) | Mask resolved values in outputs |
 | `backend/src/akasha/domain/node.py` | Modified (+3/−2) | Async `CredentialResolver` |
-| `backend/src/akasha/domain/project.py` | Modified (+19/−1) | Plaintext guard in `replace_draft` |
+| `backend/src/akasha/domain/workflow.py` | Modified (+19/−1) | Plaintext guard in `replace_draft` |
 | `backend/src/akasha/domain/graph_validation.py` | Modified (+12) | `PLAINTEXT_SECRET` validation issue |
 | `backend/src/akasha/nodes/http.py` | Modified (+15) | `header_credentials` |
 | `backend/src/akasha/nodes/smtp.py` | Modified (+3/−3) | Async resolution |
@@ -180,11 +180,11 @@ No new directories; no files deleted; no generated files except `uv.lock`.
 - **Context:** The docs disagree on the reference format. backend/AGENTS §28 uses `credential:openai-production`; architecture §32 uses `credential_123`. The existing Phase-02 test already used the `credential:` form.
 - **Chosen approach:** Name-based references. The `credentials.name` column is the primary key. `PATCH` cannot rename.
 - **Alternatives considered:**
-  - Opaque ids (`cred_<hex>`), consistent with other entities. Rejected: a project exported to another installation would reference ids that cannot exist there.
+  - Opaque ids (`cred_<hex>`), consistent with other entities. Rejected: a workflow exported to another installation would reference ids that cannot exist there.
   - An id plus a mutable name. Rejected: renaming would silently break every reference.
 - **Reason:**
   - Portability for Phase 18.
-  - Rotation (new value) never touches projects.
+  - Rotation (new value) never touches workflows.
   - Consistent with backend/AGENTS §28.
 - **Consequences:** Phase 18 import can require "a credential named X" on the target installation. Renaming a credential is only possible as delete plus recreate. `Credential` does not extend `Entity`.
 
@@ -206,7 +206,7 @@ No new directories; no files deleted; no generated files except `uv.lock`.
 - **Chosen approach:** `NodeCredentials` takes `credential_references(instance.config)` as its allow-list. Anything else raises `NodeError(code="CREDENTIAL_NOT_REFERENCED")` before the store is contacted.
 - **Alternatives considered:**
   - An unrestricted resolver. Rejected: exfiltration via data flow.
-  - Per-project credential ACLs. Deferred: that needs principals (Phase 20).
+  - Per-workflow credential ACLs. Deferred: that needs principals (Phase 20).
 - **Consequences:**
   - `SECRET_REFERENCE` ports can carry references, but a receiving node cannot resolve them. That is intentional.
   - Phase 16 (Python Node SDK) must document that custom nodes resolve via `context.credentials` and only for their own config references.
@@ -222,16 +222,16 @@ No new directories; no files deleted; no generated files except `uv.lock`.
   - Masking only in the executor. Rejected: log lines emitted by node code would still leak.
 - **Consequences:** Masking is exactly as wide as the node task (limitations in §20). It needs no cleanup, because the context dies with the task.
 
-### 5.5 Project configuration is structurally secret-free
+### 5.5 Workflow configuration is structurally secret-free
 
-- **Decision:** Secret material is rejected at `Project.replace_draft`, the domain method every draft save goes through, and reported by graph validation for legacy data.
-- **Context:** The acceptance criterion requires that secrets never appear in Project JSON. Previously nothing prevented `headers: {"Authorization": "Bearer …"}` in a draft.
+- **Decision:** Secret material is rejected at `Workflow.replace_draft`, the domain method every draft save goes through, and reported by graph validation for legacy data.
+- **Context:** The acceptance criterion requires that secrets never appear in Workflow JSON. Previously nothing prevented `headers: {"Authorization": "Bearer …"}` in a draft.
 - **Chosen approach:** `plaintext_secret_paths` reuses the Phase-12 redaction rules:
   - a string below a sensitive key must be a reference;
   - no other string may be credential-shaped.
 - **Alternatives considered:**
   - Marking secret fields in node config schemas (e.g. a `format`). Rejected for now: it only protects schemas that declare it, and open schemas (`headers: {"type": "object"}`) would still accept secrets.
-- **Reason:** The same rules protect logs and project data, so the definition of "looks like a secret" lives in one module.
+- **Reason:** The same rules protect logs and workflow data, so the definition of "looks like a secret" lives in one module.
 - **Consequences:**
   - Drafts that were acceptable before are now rejected (breaking by design).
   - Data stored earlier can still be loaded, but can be neither published nor run until it is fixed.
@@ -258,7 +258,7 @@ No new directories; no files deleted; no generated files except `uv.lock`.
 | `ciphertext` | `BYTEA` | not null; format `0x01 ‖ nonce(12) ‖ ciphertext+tag` |
 | `created_at`, `updated_at` | `TIMESTAMPTZ` | not null |
 
-- There are no foreign keys: projects reference credentials by name inside JSONB config, and a dangling reference is detected at resolution time.
+- There are no foreign keys: workflows reference credentials by name inside JSONB config, and a dangling reference is detected at resolution time.
 - The downgrade drops the table.
 - Compatibility: purely additive; existing rows are untouched.
 
@@ -279,7 +279,7 @@ No new directories; no files deleted; no generated files except `uv.lock`.
 `CredentialDetail = {name, reference, kind, description, created_at, updated_at}`. No response model has a value field. In OpenAPI, `value` is `writeOnly`.
 
 ### Changed existing contracts
-- **Project draft save** (`PUT /api/v1/projects/{id}`): a new error, 422 `PLAINTEXT_SECRET`, with `details.paths` (e.g. `nodes.<id>.config.headers.Authorization`). Drafts with secret material that were accepted before are now rejected.
+- **Workflow draft save** (`PUT /api/v1/workflows/{id}`): a new error, 422 `PLAINTEXT_SECRET`, with `details.paths` (e.g. `nodes.<id>.config.headers.Authorization`). Drafts with secret material that were accepted before are now rejected.
 - **Validation responses** (`POST …/validate`, publish failure): a new issue code, `plaintext_secret`. Frontend enums must accept it.
 - **Node contract:** `CredentialResolver.resolve` is now `async def resolve(reference: str) -> str`. Runtime node errors: `CREDENTIAL_NOT_REFERENCED` and `CREDENTIAL_NOT_FOUND` (kind `configuration`), `CREDENTIAL_UNAVAILABLE` (kind `permanent`), `HTTP_CREDENTIALS_UNAVAILABLE` (kind `configuration`).
 - **`core.http` config schema:** optional `header_credentials: object`. The node version stays `1.0.0` (§20).
@@ -443,7 +443,7 @@ Resolution happens while the node runs, never at publish or queue time, and the 
 - 7 invalid bodies plus 1 malformed JSON body never echo the value.
 - Duplicate returns 409; an unconfigured store returns 500 `CONFIGURATION_ERROR`.
 - OpenAPI: `CredentialDetail` has no `value`; the request `value` is `writeOnly`.
-- The projects API rejects 4 plaintext shapes with 422 `PLAINTEXT_SECRET` (nothing stored); a reference-only project is stored and returned with the reference only.
+- The workflows API rejects 4 plaintext shapes with 422 `PLAINTEXT_SECRET` (nothing stored); a reference-only workflow is stored and returned with the reference only.
 - **Result:** PASS.
 
 ### Infrastructure Tests
@@ -496,7 +496,7 @@ The roadmap states one acceptance criterion; it is evaluated per channel it name
 
 | Acceptance Criterion | Status | Evidence |
 |---|---|---|
-| Secrets never appear in Project JSON | PASS | `Project.replace_draft` raises `PLAINTEXT_SECRET`; `test_project_api_rejects_plaintext_secrets` (4 shapes, database dump clean); `test_project_stores_and_returns_only_the_reference`; legacy data blocked by the `PLAINTEXT_SECRET` validation issue |
+| Secrets never appear in Workflow JSON | PASS | `Workflow.replace_draft` raises `PLAINTEXT_SECRET`; `test_workflow_api_rejects_plaintext_secrets` (4 shapes, database dump clean); `test_workflow_stores_and_returns_only_the_reference`; legacy data blocked by the `PLAINTEXT_SECRET` validation issue |
 | Secrets never appear in normal API responses | PASS | No value field in any response model (OpenAPI test); `test_api_lifecycle_never_returns_the_value`; `test_invalid_requests_never_echo_the_value`; malformed-JSON test |
 | Secrets never appear in logs | PASS | Service audit-log test; API lifecycle log capture; `LeakyNode` log attempts including traceback; runtime end-to-end log capture |
 | Secrets never appear in execution reports | PARTIAL | No report generator exists (Phase 19). The data a report would draw from is verified: persisted node outputs, errors and events contain no resolved value (database dump in the runtime test). Not blocking: the subsystem does not exist yet. |
@@ -504,7 +504,7 @@ The roadmap states one acceptance criterion; it is evaluated per channel it name
 | Test: access control | PARTIAL | Structural boundary tested (node scope; no read-back endpoint; wrong key). User/role authorization does not exist before Phase 20. Not blocking per roadmap order. |
 | Test: reference resolution | PASS | `NodeCredentials` unit tests; HTTP, SMTP, missing-credential and rotation runtime tests |
 | Test: redaction | PASS | Known-value masking tests; `test_redaction.py` extended |
-| Test: export exclusion | PARTIAL | No export feature (Phase 18). The project JSON that export will serialize is proven reference-only. Not blocking. |
+| Test: export exclusion | PARTIAL | No export feature (Phase 18). The workflow JSON that export will serialize is proven reference-only. Not blocking. |
 | Test: log exclusion | PASS | See the logs row |
 | Prompt: events, exceptions, DB serialization, debug output | PASS | Database dump includes the `events` table; exception tests (`NodeError`, `ValueError`, `SecretDecryptionError`, key errors); `Secret`/`Settings`/`SecretCipher` repr tests |
 | Prompt: keys from secure configuration, never hard-coded | PASS | `Settings.credential_encryption_key: SecretStr`; no key in the source tree (tests generate random keys with `os.urandom`) |
@@ -577,11 +577,11 @@ The PARTIAL rows concern subsystems scheduled for later phases, not missing work
 | What | Why deferred | Intended phase | Blocks this phase? |
 |---|---|---|---|
 | Passing `container.credentials` to a production `ExecutionRuntime` | No production runtime construction exists yet | 21/22 | No (pre-existing gap) |
-| User/role authorization on credentials and per-project scoping | Needs principals | 20 | No |
+| User/role authorization on credentials and per-workflow scoping | Needs principals | 20 | No |
 | Export exclusion test on the real export package | Export does not exist | 18 | No |
 | Report exclusion test on real reports | Reports do not exist | 19 | No |
 | Key rotation (key id per blob, re-encrypt job, multi-key decrypt) | Operational feature; the format reserves a version byte | 26 | No |
-| Credential audit events (instead of log lines) | Event types are execution/project scoped; an audit stream belongs to authentication/audit | 20 | No |
+| Credential audit events (instead of log lines) | Event types are execution/workflow scoped; an audit stream belongs to authentication/audit | 20 | No |
 | LLM provider credentials usage | Provider architecture not built | 14/15 | No |
 | Fixing the Docker-probe flake | Pre-existing, out of scope | Test infrastructure / CI | No |
 
@@ -597,7 +597,7 @@ The PARTIAL rows concern subsystems scheduled for later phases, not missing work
 - **Out-of-band secrets.** Secrets supplied outside the store (execution input, webhook payloads) are masked only if credential-shaped.
 - **Guard false positives.** Any string under a key that looks sensitive (e.g. `auth_mode`, `token_limit` as a string) must be a reference; renaming the key is the remedy.
 - **Guard ceiling.** The guard cannot detect a shapeless secret under an innocuous key (e.g. `{"note": "hunter2"}`).
-- **Deleting credentials.** Delete does not check for referencing projects; their executions fail with `CREDENTIAL_NOT_FOUND`.
+- **Deleting credentials.** Delete does not check for referencing workflows; their executions fail with `CREDENTIAL_NOT_FOUND`.
 - **Concurrent updates.** No revision on credentials: concurrent `PATCH` calls are last-write-wins.
 - **Node version.** `core.http` version stays `1.0.0` despite the additive `header_credentials` key.
 - **No caching.** Each `resolve` call hits the database.
@@ -619,7 +619,7 @@ The PARTIAL rows concern subsystems scheduled for later phases, not missing work
 
 ## 22. Architectural / Product Decisions
 
-- **Name-based references (`credential:<name>`), immutable names, no credential id.** Portability and rotation without project changes (§5.1).
+- **Name-based references (`credential:<name>`), immutable names, no credential id.** Portability and rotation without workflow changes (§5.1).
 - **Encrypt in the application layer with AES-GCM and the name as associated data; `cryptography` over Fernet or `pgcrypto`.** Plaintext never reaches the database; row swaps are detected (§5.2).
 - **No read-back API for values.** Only the runtime decrypts. A future "reveal" feature would need an explicit decision plus Phase-20 authorization.
 - **Node-scoped resolution.** References from runtime data are never resolvable. Keep this invariant when building the SDK (Phase 16) and LLM nodes (Phase 15) (§5.3).
@@ -652,7 +652,7 @@ The PARTIAL rows concern subsystems scheduled for later phases, not missing work
 
 ### Implemented
 - Credential model, reference, `Secret`, cipher, service, repository, migration and REST API.
-- Node-scoped resolver, known-value redaction, project-config guard, HTTP `header_credentials`, async SMTP resolution.
+- Node-scoped resolver, known-value redaction, workflow-config guard, HTTP `header_credentials`, async SMTP resolution.
 
 ### Verified
 - 87 new tests (58 unit, 29 integration/API/runtime); a mutation check of 8 protections; all quality gates pass.
@@ -689,7 +689,7 @@ The PARTIAL rows concern subsystems scheduled for later phases, not missing work
 - `CredentialResolver` (async);
 - node error codes `CREDENTIAL_NOT_REFERENCED`, `CREDENTIAL_NOT_FOUND`, `CREDENTIAL_UNAVAILABLE`;
 - validation code `plaintext_secret`;
-- project error `PLAINTEXT_SECRET`.
+- workflow error `PLAINTEXT_SECRET`.
 
 **Provider adapters (Phase 14/15):**
 - Take the API key as a resolved string passed in by the LLM node, which resolves its own `api_key_credential`-style config reference.
@@ -698,7 +698,7 @@ The PARTIAL rows concern subsystems scheduled for later phases, not missing work
 - Adapter calls that run in other tasks, or outside the node's task, are not covered by known-value masking; keep them within the node task or register the value there.
 
 **Must not be changed casually:**
-- the `credential:<name>` format and immutable names (projects and exports depend on them);
+- the `credential:<name>` format and immutable names (workflows and exports depend on them);
 - the associated-data binding and blob layout (stored data depends on them);
 - the node-scope rule;
 - write-only values in the API;

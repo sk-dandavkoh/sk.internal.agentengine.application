@@ -3,12 +3,12 @@ import type {
     Graph,
     NodeInstance,
     NodePosition,
-} from '../../api/projects'
+} from '../../api/workflows'
 import type { JsonObject } from '../../api/schemas'
 import { randomHex } from '../../lib/randomHex'
 import { edgeKey, sameEdge } from './graphView'
 
-// Editor state of one project draft (frontend/AGENTS §29). Pure: the hook
+// Editor state of one workflow draft (frontend/AGENTS §29). Pure: the hook
 // in useDraftEditor.ts owns persistence; the canvas owns rendering-only
 // state (measured sizes, viewport).
 //

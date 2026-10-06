@@ -184,12 +184,12 @@ async def test_api_serves_the_summary(
     assert "provider rejected" not in empty.text + str(body)
 
 
-async def test_members_see_only_their_projects(
+async def test_members_see_only_their_workflows(
     scenario: Scenario,
     env: Env,
 ) -> None:
     client, kit, admin = env
-    await completed_run(scenario)  # a project without this member as owner
+    await completed_run(scenario)  # a workflow without this member as owner
     member_headers = await kit.member_headers(admin, "member")
     mine = (await client.get(URL, params=WINDOW, headers=member_headers)).json()
     assert mine["executions"] == 0 and mine["nodes"] == []

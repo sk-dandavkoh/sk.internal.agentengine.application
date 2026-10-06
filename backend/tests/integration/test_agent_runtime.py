@@ -1,6 +1,6 @@
-"""core.agent placed into a Project and executed by the normal runtime:
+"""core.agent placed into a Workflow and executed by the normal runtime:
 
-    ProjectService (publish) → ExecutionService → ExecutionRuntime
+    WorkflowService (publish) → ExecutionService → ExecutionRuntime
     → core.agent ⇄ AIService → LiteLLM adapter → local OpenAI-compatible
       server (scripted tool calls)
     → core.file_write / core.file_read in a temporary workspace,
@@ -19,11 +19,11 @@ import pytest
 from akasha.application.ai import AIService, LLMProvider
 from akasha.application.credentials import CredentialService
 from akasha.application.executions import ExecutionService
-from akasha.application.projects import ProjectService
+from akasha.application.workflows import WorkflowService
 from akasha.domain.credentials import CredentialKind, Secret
 from akasha.domain.execution import Execution, ExecutionStatus
 from akasha.domain.graph import Edge, Graph, NodeInstance
-from akasha.domain.project import ProjectDraft
+from akasha.domain.workflow import WorkflowDraft
 from akasha.infrastructure.database import Database
 from akasha.infrastructure.persistence import SqlAlchemyUnitOfWork
 from akasha.nodes.builtins import create_builtin_registry
@@ -112,21 +112,21 @@ async def run(
     g.add_edge(Edge(ids["input"], "value", ids["agent"], "variables"))
     g.add_edge(Edge(ids["agent"], "text", ids["out"], "value"))
 
-    projects = ProjectService(uow, registry.definitions)
-    project = await projects.create_project("agent")
-    await projects.update_draft(
-        project.id,
-        expected_revision=project.revision,
+    workflows = WorkflowService(uow, registry.definitions)
+    workflow = await workflows.create_workflow("agent")
+    await workflows.update_draft(
+        workflow.id,
+        expected_revision=workflow.revision,
         name="agent",
-        draft=ProjectDraft(graph=g),
+        draft=WorkflowDraft(graph=g),
     )
-    version = await projects.publish_project(project.id)
+    version = await workflows.publish_workflow(workflow.id)
     executions = ExecutionService(uow)
     queued = await executions.create_execution(
-        project.id, version.version, input={"topic": "agents"}
+        workflow.id, version.version, input={"topic": "agents"}
     )
     await ExecutionRuntime(uow, registry.catalog, credentials=store).run(queued.id)
-    ids["project"] = project.id
+    ids["workflow"] = workflow.id
     return await executions.get_execution(queued.id), ids
 
 
@@ -153,7 +153,7 @@ async def test_agent_uses_tools_through_the_runtime(
     assert outputs["metadata"]["iterations"] == 3
     assert outputs["metadata"]["usage"]["total_tokens"] == 45
     assert execution.node(ids["out"]).outputs == {"value": "Note saved: # Agents"}
-    note = tmp_path / ids["project"] / "notes" / "agents.md"
+    note = tmp_path / ids["workflow"] / "notes" / "agents.md"
     assert note.read_text() == "# Agents"
 
     # The provider saw the derived tool schemas and the full conversation.

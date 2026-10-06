@@ -3,7 +3,7 @@
 ## 1. Executive Summary
 
 Phase 02 of `/docs/roadmap-backend.md` required a framework-independent core
-domain model (`Project`, `ProjectDraft`, `ProjectVersion`, `Graph`,
+domain model (`Workflow`, `WorkflowDraft`, `WorkflowVersion`, `Graph`,
 `NodeInstance`, `Edge`, `Trigger`, `Execution`, `NodeExecution`,
 `CredentialReference`, `PluginMetadata`) with explicit invariants, correct
 draft/published-version semantics, and no persistence or execution runtime.
@@ -11,9 +11,9 @@ draft/published-version semantics, and no persistence or execution runtime.
 All eleven concepts were implemented under `backend/src/akasha/domain/` using
 only the Python standard library (`dataclasses`, `enum`, `datetime`, `uuid`,
 `re`, `copy`) plus the existing `akasha.errors` module. Drafts are mutable
-dataclasses; published `ProjectVersion` objects are frozen and own a deep
+dataclasses; published `WorkflowVersion` objects are frozen and own a deep
 copy of the draft graph, so no draft mutation can reach an existing version.
-`Execution` pins an immutable `ProjectVersion` object directly and enforces
+`Execution` pins an immutable `WorkflowVersion` object directly and enforces
 the execution/node-execution state machines from vision §16 through validated
 transition methods.
 
@@ -31,8 +31,8 @@ transition matrix, and draft/version snapshot isolation. `pytest`,
 Roadmap Phase 02 ("Core Domain Model"), source §6 of
 `/docs/roadmap-backend.md`:
 
-> Implement the fundamental domain objects: Project, ProjectDraft,
-> ProjectVersion, Graph, NodeInstance, Edge, Trigger, Execution,
+> Implement the fundamental domain objects: Workflow, WorkflowDraft,
+> WorkflowVersion, Graph, NodeInstance, Edge, Trigger, Execution,
 > NodeExecution, CredentialReference, PluginMetadata. Define IDs, timestamps,
 > lifecycle state, value objects, domain validation primitives. Do not
 > implement database persistence.
@@ -57,7 +57,7 @@ without PostgreSQL, Redis, FastAPI or external services.
 ## 3. Scope Implemented
 
 ### Domain Primitives (`domain/primitives.py`)
-- `new_id(prefix)` — prefixed UUID4-hex IDs (`proj_<32hex>`); prefix must be
+- `new_id(prefix)` — prefixed UUID4-hex IDs (`wf_<32hex>`); prefix must be
   lowercase identifier.
 - `validate_id(value)` — enforces canonical `<prefix>_<hex>` shape in every
   entity constructor.
@@ -65,7 +65,7 @@ without PostgreSQL, Redis, FastAPI or external services.
   `created_at` fields.
 - `validate_name(value)` — non-blank names.
 - `SEMVER_RE` — loose semver pattern (MAJOR.MINOR.PATCH + optional suffix),
-  shared by `project.py` and `plugin.py` to avoid a duplicated regex.
+  shared by `workflow.py` and `plugin.py` to avoid a duplicated regex.
 - `Entity` — base dataclass with `eq=False`; equality/hash by
   `(type, id)` only, so entities are identified by identity, not field values.
 - `Timestamps` — frozen `created_at` / `updated_at` value object.
@@ -80,18 +80,18 @@ without PostgreSQL, Redis, FastAPI or external services.
   IDs), `remove_node` (rejects unknown, cascades edge removal),
   `add_edge` (rejects unknown endpoints and duplicates).
 
-### Project (`domain/project.py`)
-- `ProjectStatus` enum: `DRAFT / PUBLISHED / ACTIVE / DISABLED / ARCHIVED`
+### Workflow (`domain/workflow.py`)
+- `WorkflowStatus` enum: `DRAFT / PUBLISHED / ACTIVE / DISABLED / ARCHIVED`
   (vision §7; transition rules intentionally deferred, see §5 and §19).
 - `Dependency` — frozen value object (`kind: node|plugin`, name,
   semver-ish `version_constraint`, `*` allowed).
-- `ProjectDraft` — mutable: `graph`, `triggers`, `dependencies`,
+- `WorkflowDraft` — mutable: `graph`, `triggers`, `dependencies`,
   `description`. `publish(version=, published_at=)` deep-copies graph and
-  triggers into a frozen `ProjectVersion` (snapshot isolation, arch §3.7).
-- `ProjectVersion` — frozen dataclass: `id`, `version` (≥1),
+  triggers into a frozen `WorkflowVersion` (snapshot isolation, arch §3.7).
+- `WorkflowVersion` — frozen dataclass: `id`, `version` (≥1),
   `schema_version` (≥1), `graph`, `triggers`, `dependencies`, `description`,
   `published_at`. `_SCHEMA_VERSION = 1` module constant.
-- `Project` — entity: `name`, `draft`, `versions`, `status`, `timestamps`;
+- `Workflow` — entity: `name`, `draft`, `versions`, `status`, `timestamps`;
   `publish_draft()` assigns `current_version + 1`, attaches the snapshot,
   transitions `DRAFT → PUBLISHED`, bumps `updated_at`.
 
@@ -108,7 +108,7 @@ without PostgreSQL, Redis, FastAPI or external services.
   vision §16.
 - Explicit transition tables `_EXECUTION_TRANSITIONS` /
   `_NODE_TRANSITIONS`, terminal states mapped to `frozenset()`.
-- `Execution` — entity pinning `project_id` + an immutable `ProjectVersion`
+- `Execution` — entity pinning `workflow_id` + an immutable `WorkflowVersion`
   object (never a draft reference). Transition methods: `enqueue`, `start`,
   `pause`, `wait`, `resume`, `complete`, `fail(error)`, `cancel`,
   `time_out`; all go through `_transition()` which validates against the
@@ -137,7 +137,7 @@ without PostgreSQL, Redis, FastAPI or external services.
 ### Testing (`backend/tests/domain/`)
 - `test_primitives_and_graph.py` (16 tests) — ID shape, entity identity,
   graph structural invariants.
-- `test_project.py` (13 tests) — publish lifecycle, frozen versions,
+- `test_workflow.py` (13 tests) — publish lifecycle, frozen versions,
   snapshot isolation, dependency validation.
 - `test_execution.py` (16 tests + 81 matrix cases) — lifecycle happy paths,
   pause/resume, cancel from all non-terminal states, explicit TIMEOUT,
@@ -153,14 +153,14 @@ without PostgreSQL, Redis, FastAPI or external services.
 |---|---|---|
 | `backend/src/akasha/domain/primitives.py` | Created | IDs, UTC clock, entity identity base, shared validators |
 | `backend/src/akasha/domain/graph.py` | Created | `NodeInstance`, `Edge`, `Graph` |
-| `backend/src/akasha/domain/project.py` | Created | `Project`, `ProjectDraft`, `ProjectVersion`, `ProjectStatus`, `Dependency` |
+| `backend/src/akasha/domain/workflow.py` | Created | `Workflow`, `WorkflowDraft`, `WorkflowVersion`, `WorkflowStatus`, `Dependency` |
 | `backend/src/akasha/domain/trigger.py` | Created | `TriggerType`, `Trigger` |
 | `backend/src/akasha/domain/execution.py` | Created | `Execution`, `NodeExecution`, state machines |
 | `backend/src/akasha/domain/credentials.py` | Created | `CredentialReference` |
 | `backend/src/akasha/domain/plugin.py` | Created | `PluginMetadata` |
 | `backend/src/akasha/errors.py` | Modified | Added `DomainValidationError`, `InvalidStateTransitionError` (+14 lines) |
 | `backend/tests/domain/test_primitives_and_graph.py` | Created | Primitives + graph unit tests |
-| `backend/tests/domain/test_project.py` | Created | Draft/publish unit tests |
+| `backend/tests/domain/test_workflow.py` | Created | Draft/publish unit tests |
 | `backend/tests/domain/test_execution.py` | Created | State machine unit tests |
 | `backend/tests/domain/test_trigger_credentials_plugin.py` | Created | Trigger/credential/plugin unit tests |
 
@@ -212,13 +212,13 @@ were made within it and are recorded in §22. Of note:
 ## 6. Domain / Data Model Changes
 
 New entities (identified by ID, `eq=False` dataclasses):
-`Project`, `ProjectDraft` (mutable aggregate member), `NodeInstance`,
+`Workflow`, `WorkflowDraft` (mutable aggregate member), `NodeInstance`,
 `Trigger`, `Execution`, `NodeExecution`.
 
-New frozen value objects: `ProjectVersion`, `Edge`, `Dependency`,
+New frozen value objects: `WorkflowVersion`, `Edge`, `Dependency`,
 `CredentialReference`, `PluginMetadata`, `Timestamps`.
 
-New enums: `ProjectStatus` (5 values), `TriggerType` (6), `ExecutionStatus`
+New enums: `WorkflowStatus` (5 values), `TriggerType` (6), `ExecutionStatus`
 (9), `NodeExecutionStatus` (7).
 
 State transitions — legal sets (terminal states have none):
@@ -231,7 +231,7 @@ State transitions — legal sets (terminal states have none):
 No database tables/migrations (persistence deferred to Phase 05 by design).
 
 Compatibility: this is the first domain model; nothing to stay compatible
-with. `ProjectVersion.schema_version = 1` seeds the format-versioning
+with. `WorkflowVersion.schema_version = 1` seeds the format-versioning
 required by vision §56.
 
 ---
@@ -246,10 +246,10 @@ modified. The `/health` and `/ready` endpoints from Phase 01 are untouched
 
 ## 8. Implementation Details
 
-- **Snapshot isolation.** `ProjectDraft.publish()` uses `copy.deepcopy` for
-  the graph and triggers. `ProjectVersion` is `@dataclass(frozen=True)`;
+- **Snapshot isolation.** `WorkflowDraft.publish()` uses `copy.deepcopy` for
+  the graph and triggers. `WorkflowVersion` is `@dataclass(frozen=True)`;
   attribute rebinding raises `FrozenInstanceError` (tested). Note the frozen
-  surface is shallow — `project_version.graph` can still be structurally
+  surface is shallow — `workflow_version.graph` can still be structurally
   mutated by a determined caller; the enforced invariant is that the version
   owns its *own* deep copy, so draft edits never leak (tested via `asdict`
   before/after arbitrary draft mutation).
@@ -270,7 +270,7 @@ modified. The `/health` and `/ready` endpoints from Phase 01 are untouched
   field-based equality (discovered via test failure, see §10).
 - **IDs** are `<prefix>_<32 lowercase hex>`; `validate_id` runs in every
   entity `__post_init__`, which also catches malformed foreign references
-  (`Edge`, `NodeExecution.node_id`, `Execution.project_id`).
+  (`Edge`, `NodeExecution.node_id`, `Execution.workflow_id`).
 
 ---
 
@@ -371,7 +371,7 @@ artifact.
 
 ### Unit Tests
 - 50 new tests in `backend/tests/domain/` across 4 files: primitives/graph
-  (16), project lifecycle (13), execution state machines (16 + 81
+  (16), workflow lifecycle (13), execution state machines (16 + 81
   parametrized matrix cases), trigger/credential/plugin (19).
 - Result: **PASS** — full backend suite 165 passed, 1 unrelated warning.
 
@@ -417,9 +417,9 @@ Roadmap Phase 02 acceptance criteria (§6) and phase-brief completion list:
 
 | Acceptance Criterion | Status | Evidence |
 |---|---|---|
-| Core domain objects exist (all 11 concepts) | PASS | `backend/src/akasha/domain/{project,graph,trigger,execution,credentials,plugin}.py` |
+| Core domain objects exist (all 11 concepts) | PASS | `backend/src/akasha/domain/{workflow,graph,trigger,execution,credentials,plugin}.py` |
 | Domain invariants are explicit | PASS | `__post_init__` validation everywhere; `DomainValidationError`/`InvalidStateTransitionError`; 50 tests |
-| Draft/Published Version semantics are correct | PASS | frozen `ProjectVersion` + deepcopy snapshot; `test_draft_mutation_after_publish_does_not_change_version`, `test_execution_references_version_not_draft` |
+| Draft/Published Version semantics are correct | PASS | frozen `WorkflowVersion` + deepcopy snapshot; `test_draft_mutation_after_publish_does_not_change_version`, `test_execution_references_version_not_draft` |
 | Domain is infrastructure-independent | PASS | stdlib-only imports; enforced by `test_architecture.py` |
 | Unit tests cover important invariants | PASS | incl. full 9×9 execution transition matrix (81 cases) |
 | Typing passes (`mypy`, strict) | PASS | 0 errors |
@@ -452,7 +452,7 @@ Roadmap Phase 02 acceptance criteria (§6) and phase-brief completion list:
 
 ## 16. Performance Considerations
 
-- `ProjectDraft.publish()` deep-copies the whole graph — O(nodes + edges +
+- `WorkflowDraft.publish()` deep-copies the whole graph — O(nodes + edges +
   config size) per publish. Acceptable: publishing is a rare, explicit user
   action, not a runtime hot path. Revisit only if very large graphs make
   publish latency measurable (Phase 24 is the designated performance phase).
@@ -493,22 +493,22 @@ imports beyond the standard library and `akasha.errors`.
 | `NodeDefinition`, ports, config schemas, `NodeResult` | roadmap scope boundary | Phase 03 | No — `NodeInstance.node_type` + free-form `config` is the Phase-02 seam |
 | `RetryPolicy`, `TimeoutPolicy`, `CancellationState`, exhaustive per-transition policy tests | roadmap scope boundary | Phase 07 | No — transition tables already in place |
 | Execution runtime / scheduler | roadmap scope boundary | Phase 08 | No |
-| `ProjectStatus` transition rules and draft lint/validation before publish | needs application services; currently only `DRAFT→PUBLISHED` via `publish_draft()` | Phase 06 | No |
+| `WorkflowStatus` transition rules and draft lint/validation before publish | needs application services; currently only `DRAFT→PUBLISHED` via `publish_draft()` | Phase 06 | No |
 | Persistence, repositories, migrations | explicit phase constraint | Phase 05 | No |
-| Deep immutability of `ProjectVersion.graph` | `frozen` is shallow on dataclasses; deep copy already isolates drafts | only if a real misuse appears | No (limitation, see §20) |
+| Deep immutability of `WorkflowVersion.graph` | `frozen` is shallow on dataclasses; deep copy already isolates drafts | only if a real misuse appears | No (limitation, see §20) |
 | Dedicated `Clock` protocol | YAGNI until retry/timeout policies need it | Phase 07/23 | No — `now=` parameter seam exists |
 
 ---
 
 ## 20. Known Limitations
 
-1. `ProjectVersion.graph` is a deep-copied but still *structurally mutable*
+1. `WorkflowVersion.graph` is a deep-copied but still *structurally mutable*
    `Graph`; `frozen=True` blocks attribute rebinding, not method calls like
    `version.graph.add_node(...)`. The tested invariant is draft→version
    isolation, not hard tamper-proofing.
-2. `ProjectStatus` has no enforced transition table (only
+2. `WorkflowStatus` has no enforced transition table (only
    `DRAFT→PUBLISHED` implicit in `publish_draft()`).
-3. `Project.versions` and `ProjectDraft.triggers` are plain lists — no
+3. `Workflow.versions` and `WorkflowDraft.triggers` are plain lists — no
    guards against duplicate version numbers inserted directly (only
    `publish_draft()` maintains monotonicity).
 4. Trigger config validation covers only cron/interval/event; webhook has no
@@ -536,8 +536,8 @@ No blocking open issues.
 ## 22. Architectural / Product Decisions
 
 1. **Draft/publish isolation via construction, not convention.** The only
-   way to obtain a `ProjectVersion` with meaningful content is
-   `ProjectDraft.publish()` / `Project.publish_draft()`, which deep-copies.
+   way to obtain a `WorkflowVersion` with meaningful content is
+   `WorkflowDraft.publish()` / `Workflow.publish_draft()`, which deep-copies.
    This makes "executions never see later draft edits" (vision §5.5) a
    structural property rather than a discipline.
 2. **State machines are data, not scattered conditionals.** Transition
@@ -623,7 +623,7 @@ None.
   config schemas, capabilities, `NodeExecutionContext` seams (careful:
   runtime context is Phase 03 contract + Phase 08 implementation; keep the
   domain contract free of runtime dependencies).
-- Constraints that must not be changed casually: frozen `ProjectVersion`;
+- Constraints that must not be changed casually: frozen `WorkflowVersion`;
   deep-copy snapshot in `publish()`; the dependency-direction rules enforced
   by `tests/test_architecture.py` (a NodeDefinition must not import
   FastAPI/SQLAlchemy/Redis either).

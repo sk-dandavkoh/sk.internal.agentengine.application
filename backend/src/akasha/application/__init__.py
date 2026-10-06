@@ -1,6 +1,6 @@
 """Application layer: use cases and orchestration.
 
-Application services (e.g. CreateProject, PublishProject, StartExecution)
+Application services (e.g. CreateWorkflow, PublishWorkflow, StartExecution)
 load domain objects, call domain logic, coordinate transactions and use
 infrastructure through interfaces. They contain no HTTP specifics and no SQL.
 

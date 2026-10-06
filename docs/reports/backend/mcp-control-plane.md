@@ -14,7 +14,7 @@ It is off by default and fails closed. It authenticates with the existing
 session tokens and authorizes with the existing `AuthorizationService`.
 The acceptance scenario (an agent discovers a missing capability, writes,
 validates, tests, packages and installs a plugin, then builds, publishes,
-runs and inspects a project using the new node) passes through the real
+runs and inspects a workflow using the new node) passes through the real
 MCP boundary against PostgreSQL.
 
 Three gaps in the existing system had to be closed at their own layer (not
@@ -22,11 +22,11 @@ in MCP):
 
 | # | Gap | Layer | Fix |
 |---|---|---|---|
-| G1 | A published version did not record which plugin versions it ran on; installing a new plugin version silently changed what old versions did | domain / application / runtime / persistence | `ProjectVersion.plugin_versions` pinned at publish (migration 0014), enforced by `load_plan` before every run |
-| G2 | No safe plugin update: upgrade was remove + install, blocked while projects use the plugin, and not atomic | plugins / application | `PluginRegistry.update` (atomic, rollback), `PluginService.update_archive` (dependency-aware, `force`) |
+| G1 | A published version did not record which plugin versions it ran on; installing a new plugin version silently changed what old versions did | domain / application / runtime / persistence | `WorkflowVersion.plugin_versions` pinned at publish (migration 0014), enforced by `load_plan` before every run |
+| G2 | No safe plugin update: upgrade was remove + install, blocked while workflows use the plugin, and not atomic | plugins / application | `PluginRegistry.update` (atomic, rollback), `PluginService.update_archive` (dependency-aware, `force`) |
 | G3 | Plugin lifecycle lock lived inside the REST router, so a second interface could interleave lifecycle calls | application | `application.plugins.PluginService` owns the lock; REST and MCP both use it |
 
-Two smaller additions: `ProjectService.edit_draft` (one granular draft edit
+Two smaller additions: `WorkflowService.edit_draft` (one granular draft edit
 per transaction, revision-guarded) and `PluginService.check_archive`
 (static package validation that never imports code).
 
@@ -43,14 +43,14 @@ MCP client ──POST /mcp──> McpEndpoint ──> MCP SDK (MCPServer, statel
                             │ bearer session → Identity (AuthenticationService)
                             └ 401 before the SDK parses anything
 tool ──> AuthorizationService / require_admin (same checks as REST guards)
-     ──> ProjectService / ExecutionService / TriggerService / ReportService /
-         ProjectPackageService / PluginService / NodeRegistry
+     ──> WorkflowService / ExecutionService / TriggerService / ReportService /
+         WorkflowPackageService / PluginService / NodeRegistry
      ──> domain ──> infrastructure / runtime
 ```
 
 - `akasha/mcp/server.py`: endpoint, auth, `Kit.tool` wrapper (structured
   errors, redaction, response cap, audit log), SDK wiring.
-- `akasha/mcp/tools.py`: discovery, nodes, projects, drafts, graph,
+- `akasha/mcp/tools.py`: discovery, nodes, workflows, drafts, graph,
   validation, publishing, executions, observability, triggers,
   import/export, credentials metadata.
 - `akasha/mcp/plugin_tools.py`: plugin authoring and lifecycle.
@@ -61,11 +61,11 @@ tool ──> AuthorizationService / require_admin (same checks as REST guards)
 
 MCP imports no repository, SQL or infrastructure module. This is enforced
 by `tests/test_architecture.py` (new rule for `mcp`). It never calls the
-REST API over HTTP. Results reuse REST DTOs (`ProjectDetail`,
-`ProjectVersionDetail`, `ValidationResponse`, `ExecutionDetail`,
+REST API over HTTP. Results reuse REST DTOs (`WorkflowDetail`,
+`WorkflowVersionDetail`, `ValidationResponse`, `ExecutionDetail`,
 `EventPage`, `LogPage`, `ExecutionReport`, `NodeTypeOut`, `PluginOut`,
-`CredentialPage`, `ImportProjectResponse`, …). Agent-specific shapes exist
-only where a summary keeps results small (`ProjectOverview`,
+`CredentialPage`, `ImportWorkflowResponse`, …). Agent-specific shapes exist
+only where a summary keeps results small (`WorkflowOverview`,
 `ExecutionOverview`, `NodeTypeSummary`, `DraftChange`).
 
 Decision record: ADR 0006. User documentation: `docs/mcp.md`.
@@ -78,17 +78,17 @@ description, typed input and output schemas, and annotations
 
 - discovery `system_info`; nodes `node_types_list|get`,
   `node_config_validate`
-- projects `project_list|get|create|update|delete`; drafts
-  `project_draft_get|update`; graph `graph_get`,
+- workflows `workflow_list|get|create|update|delete`; drafts
+  `workflow_draft_get|update`; graph `graph_get`,
   `graph_node_add|update|delete`, `graph_edge_add|delete`
-- `project_validate`, `project_publish`, `project_versions_list`,
-  `project_version_get`
+- `workflow_validate`, `workflow_publish`, `workflow_versions_list`,
+  `workflow_version_get`
 - executions `execution_start|list|get|node_get|cancel`; observability
   `execution_events_get`, `execution_logs_get`, `execution_metrics_get`,
   `report_get`
 - triggers `trigger_list|create|update|delete` (`trigger_update.enabled`
   is enable/disable)
-- `project_export`, `project_import`; `credential_list` (metadata)
+- `workflow_export`, `workflow_import`; `credential_list` (metadata)
 - plugins `plugin_list|get|sdk_get|create|validate|test|package|install|
   update|enable|disable|remove`
 
@@ -130,9 +130,9 @@ guidance only, name tools, and embed no stored data.
 The REST API remains canonical. The MCP route is not an `APIRoute`, so it
 is absent from `/openapi.json` (test: OpenAPI with MCP on equals OpenAPI
 with MCP off). The single REST contract change is additive:
-`ProjectVersionDetail.plugin_versions` (G1). The committed snapshot
+`WorkflowVersionDetail.plugin_versions` (G1). The committed snapshot
 `frontend/src/api/openapi.json` was regenerated, the frontend runtime
-schema (`projectVersionSchema`) and six test fixtures were updated, and the
+schema (`workflowVersionSchema`) and six test fixtures were updated, and the
 frontend contract test passes. `test_openapi_contract.py` (snapshot and
 error-envelope rules) passes.
 
@@ -147,7 +147,7 @@ error-envelope rules) passes.
 - The SDK's OAuth resource-server mode was not used: it needs an
   authorization server, which does not exist, and adding one would rewrite
   authentication (out of scope).
-- Authorization: per tool, `AuthorizationService.require_project` /
+- Authorization: per tool, `AuthorizationService.require_workflow` /
   `require_execution` / `owner_filter` / `require_admin`. These are the
   calls the REST guards make. Hidden resources answer `*_NOT_FOUND`
   exactly as over REST (tested side by side). Plugin and credential tools
@@ -203,9 +203,9 @@ line runs.
 - `plugins_in_use(graph, dependencies, plugin_nodes, plugins)` (domain)
   gives the enabled plugins a draft uses: owners of its node types (via
   `PluginRegistry.node_plugins`) plus declared plugin dependencies.
-  `ProjectService.publish_project` stores them as the version's
+  `WorkflowService.publish_workflow` stores them as the version's
   `plugin_versions`.
-- `ProjectVersion.validate(definitions, plugins)` adds
+- `WorkflowVersion.validate(definitions, plugins)` adds
   `pinned_plugin_issues` (exact match). `load_plan` passes the runtime's
   enabled versions (`ExecutionRuntime(plugins=PluginRegistry.versions)`).
 - Tested end to end: version 1 pinned to `acme@0.1.0`; a forced update to
@@ -223,7 +223,7 @@ line runs.
 | Anonymous / bad tokens / cookie | 401 before the SDK | `test_unauthenticated_requests_never_reach_the_protocol` |
 | No auth backend | 500 for all (fail closed) | `test_enabled_without_authentication_backing_fails_closed` |
 | Revocation | per-request session check | `test_a_revoked_session_loses_mcp_access` |
-| Authorization parity with REST | same service calls; `*_NOT_FOUND` for hidden | `test_members_see_only_their_projects_and_no_admin_tools` |
+| Authorization parity with REST | same service calls; `*_NOT_FOUND` for hidden | `test_members_see_only_their_workflows_and_no_admin_tools` |
 | Plaintext secrets / leakage | drafts reject secrets by location; errors and outputs redacted; credential values never readable or writable | `test_plaintext_secrets_are_rejected_and_never_echoed` (result, text and logs checked), unit redaction test |
 | Prompt injection | content returned as data only; server instructions and prompts mark it untrusted | `test_workflow_content_is_returned_as_data_only`; documented limits |
 | Plugin code execution | admin + opt-in; validation never imports | `test_plugin_code_needs_the_operator_opt_in`, `test_validation_never_executes_the_package` |
@@ -315,7 +315,7 @@ configurations in `docs/mcp.md` §10 are untested. The MCP Inspector
   versions pinned to the old version stop running until republished or the
   old version is reinstalled. Side-by-side versions are deferred.
 - **Transitive plugin pins**: only direct use is pinned
-  (`ponytail:` note in `domain/project.py`).
+  (`ponytail:` note in `domain/workflow.py`).
 - **Dedicated workers** load plugins at startup: changes over MCP (or
   REST) reach them after a restart (existing ADR 0001 limitation).
 - **stdio transport**: not offered (ADR 0006); use an HTTP bridge.

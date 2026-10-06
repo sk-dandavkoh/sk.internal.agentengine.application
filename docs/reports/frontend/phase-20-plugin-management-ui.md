@@ -44,7 +44,7 @@ Frontend:
 
 **Resulting state.** An admin sees every installed plugin with its state, version, engine/SDK constraints, dependencies, provided node types and failure reason. They can:
 - enable, disable and remove plugins, with confirmation and backend errors shown verbatim;
-- force a removal that projects block, behind a second confirmation;
+- force a removal that workflows block, behind a second confirmation;
 - upload a `.zip` package when the operator has turned uploads on; otherwise the page points to the CLI.
 
 A trust warning is always visible. Every decision (compatibility, validity, in-use) is made by the backend.
@@ -89,12 +89,12 @@ Explicitly **not** in scope:
   - 413 via `read_limited_body` over 16 MiB;
   - otherwise unpacks into a `tempfile.TemporaryDirectory` and calls the existing `PluginRegistry.install`.
 - `POST /api/v1/plugins/{plugin_id}/enable` and `.../disable` → `PluginOut`, calling `PluginRegistry.enable` / `disable`.
-- `DELETE /api/v1/plugins/{plugin_id}?force=` → `RemovePluginResponse {plugin_id, affected_projects}`, calling the existing `application.plugins.remove_plugin` (the same use case as `akasha plugin remove`).
+- `DELETE /api/v1/plugins/{plugin_id}?force=` → `RemovePluginResponse {plugin_id, affected_workflows}`, calling the existing `application.plugins.remove_plugin` (the same use case as `akasha plugin remove`).
 - `PluginList` gained `install_enabled: bool`.
 - New error class `PluginInstallDisabledError` (code `PLUGIN_INSTALL_DISABLED`, HTTP 403).
 - Helpers:
   - `_registry` raises `ConfigurationError` when there is no plugin directory;
-  - `_projects` raises `ConfigurationError` when there is no database (removal needs the project-usage check).
+  - `_workflows` raises `ConfigurationError` when there is no database (removal needs the workflow-usage check).
 - The router is still mounted behind `require_admin` (`api/routes.py`, unchanged).
 
 ### Backend/Infrastructure (`backend/src/akasha/plugins/archive.py`, new)
@@ -147,12 +147,12 @@ Explicitly **not** in scope:
   - a required "I trust the source of this package" checkbox;
   - a danger-styled "Install and run plugin code" button;
   - the dialog is not dismissible while pending.
-- **`SetEnabledDialog`:** a ConfirmDialog. Enable states the trust notice; disable states that projects using the node types stop validating, publishing and running. Both state that dedicated workers see the change after a restart.
+- **`SetEnabledDialog`:** a ConfirmDialog. Enable states the trust notice; disable states that workflows using the node types stop validating, publishing and running. Both state that dedicated workers see the change after a restart.
 - **`RemovePluginDialog`:**
   - an irreversible ConfirmDialog;
-  - on 409 `PLUGIN_IN_USE` with `details.projects`, it lists the projects as links and relabels the confirm button "Remove anyway", which resends with `force=true`;
-  - the success toast reports how many projects were affected.
-- **`PluginError`:** the backend message plus Zod-parsed `details` (`issues`, `fields`, `reason`, `path`, `dependents`, `projects`), all as React text.
+  - on 409 `PLUGIN_IN_USE` with `details.workflows`, it lists the workflows as links and relabels the confirm button "Remove anyway", which resends with `force=true`;
+  - the success toast reports how many workflows were affected.
+- **`PluginError`:** the backend message plus Zod-parsed `details` (`issues`, `fields`, `reason`, `path`, `dependents`, `workflows`), all as React text.
 
 **`label.ts`:** `pluginLabel(plugin)`.
 
@@ -211,8 +211,8 @@ There are no migrations, no dependency changes and no Docker/Compose changes.
 
 ### Decision 3: Upload unpacking is its own trust boundary (`akasha.plugins.archive`)
 - **Context:** `PluginRegistry.install` expects a directory and validates manifest, compatibility, copy (no symlinks) and load. A ZIP adds path-traversal and decompression-bomb risks before that point.
-- **Chosen approach:** A dedicated unpacker that writes only regular files below a temp directory, with entry/size caps (§3). It follows the existing project-package reader (`application/project_package.py::_read_entries`), but with plugin-sized limits.
-- **Alternatives considered:** Reusing `_read_entries` directly (rejected: hard-wired to project-package entry names and limits).
+- **Chosen approach:** A dedicated unpacker that writes only regular files below a temp directory, with entry/size caps (§3). It follows the existing workflow-package reader (`application/workflow_package.py::_read_entries`), but with plugin-sized limits.
+- **Alternatives considered:** Reusing `_read_entries` directly (rejected: hard-wired to workflow-package entry names and limits).
 - **Consequences:** Upgrades remain remove + install. Uploads larger than 16 MiB need the CLI.
 
 The doc updates are architecture §22, §36 and §58, plus the new ADR.
@@ -233,7 +233,7 @@ New frontend schemas: `pluginListSchema.install_enabled`, `removePluginResponseS
 | `POST /api/v1/plugins` (new) | Upload install | `application/zip`, ≤16 MiB | 201 `PluginOut` | 401, 403 `PERMISSION_DENIED`/`PLUGIN_INSTALL_DISABLED`, 409 `PLUGIN_ALREADY_INSTALLED`/`PLUGIN_INCOMPATIBLE` (`details.issues`), 413 `PAYLOAD_TOO_LARGE`, 415 `UNSUPPORTED_MEDIA_TYPE`, 422 `PLUGIN_PACKAGE_INVALID` (`details.path`)/`PLUGIN_MANIFEST_INVALID` (`details.fields`/`reason`)/`PLUGIN_LOAD_FAILED`, 500 `CONFIGURATION_ERROR` |
 | `POST /api/v1/plugins/{id}/enable` (new) | Activate | — | `PluginOut` | 404 `PLUGIN_NOT_FOUND`, 409 `INVALID_STATE_TRANSITION`/`PLUGIN_INCOMPATIBLE`, 422 `PLUGIN_LOAD_FAILED`, 500 `CONFIGURATION_ERROR` |
 | `POST /api/v1/plugins/{id}/disable` (new) | Deactivate | — | `PluginOut` | 404, 409 `INVALID_STATE_TRANSITION`/`PLUGIN_IN_USE` (`details.dependents`) |
-| `DELETE /api/v1/plugins/{id}?force=bool` (new) | Remove | — | `{plugin_id, affected_projects: string[]}` | 404, 409 `PLUGIN_IN_USE` (`details.projects`), 500 `CONFIGURATION_ERROR` (no database) |
+| `DELETE /api/v1/plugins/{id}?force=bool` (new) | Remove | — | `{plugin_id, affected_workflows: string[]}` | 404, 409 `PLUGIN_IN_USE` (`details.workflows`), 500 `CONFIGURATION_ERROR` (no database) |
 
 **Compatibility.** Adding `install_enabled` is additive. Old clients that ignore unknown fields keep working. The frontend Zod schema now requires the field, which is consistent with the regenerated snapshot.
 
@@ -256,8 +256,8 @@ New frontend schemas: `pluginListSchema.install_enabled`, `removePluginResponseS
   - the list uses `pluginQueries.list`, which has `staleTime` `INSTALLATION_STALE_TIME_MS` (5 min, pre-existing);
   - mutations invalidate plugins and nodes and stay pending until the refetch completes (existing `useApiMutation`);
   - query `retry` is the global policy (5xx other than transient are not retried; mutations never retry).
-- **Removal force flow.** The force flag is derived from the last mutation error (`code === 'PLUGIN_IN_USE'` and `details.projects` is an array). The user must click a second time; nothing is forced automatically.
-- **Untrusted metadata.** All metadata and error details are React text nodes. No `dangerouslySetInnerHTML`. Project ids in errors become `TextLink`s to `/projects/:id` (React Router `Link`; ids are path segments, not URLs from the payload).
+- **Removal force flow.** The force flag is derived from the last mutation error (`code === 'PLUGIN_IN_USE'` and `details.workflows` is an array). The user must click a second time; nothing is forced automatically.
+- **Untrusted metadata.** All metadata and error details are React text nodes. No `dangerouslySetInnerHTML`. Workflow ids in errors become `TextLink`s to `/workflows/:id` (React Router `Link`; ids are path segments, not URLs from the payload).
 - **Logging.** `PluginRegistry` already logs `plugin_installed/enabled/disabled/removed` with `plugin_id` and version. Request ids come from the existing middleware. No new logging was added.
 
 ## 9. Findings
@@ -334,7 +334,7 @@ See §10 items 1–4. Verification for each: the re-run gates in §13 and the na
 - a truncated ZIP;
 - entry-count and unpacked-size caps (monkeypatched limits).
 
-**Not tested:** a central directory with a lying declared size. A draft test patching ZIP bytes was dropped as fragile; the capped read is the same pattern as the tested project-package reader.
+**Not tested:** a central directory with a lying declared size. A draft test patching ZIP bytes was dropped as fragile; the capped read is the same pattern as the tested workflow-package reader.
 
 ### Component Tests
 `frontend/src/features/plugins/PluginsPage.test.tsx`: 12 tests. All passed. They cover:
@@ -347,7 +347,7 @@ See §10 items 1–4. Verification for each: the re-run gates in §13 and the na
 - incompatible package showing `details.issues`;
 - disable → enable round trip through the backend;
 - disable refused (`PLUGIN_IN_USE` dependents) with state unchanged;
-- remove refused by projects → project links → "Remove anyway" sends `force=true` → the list becomes empty;
+- remove refused by workflows → workflow links → "Remove anyway" sends `force=true` → the list becomes empty;
 - load failure (500) → Retry;
 - 403 → "Admin access required".
 
@@ -367,7 +367,7 @@ See §10 items 1–4. Verification for each: the re-run gates in §13 and the na
 - double install 409;
 - disable/enable round trip including `INVALID_STATE_TRANSITION` and 404;
 - disable blocked by a dependent plugin;
-- removal blocked by a project dependency, then forced, then 404;
+- removal blocked by a workflow dependency, then forced, then 404;
 - unused removal;
 - all 5 operations × (anonymous 401, member 403) with state unchanged.
 
@@ -578,7 +578,7 @@ Should be updated (open):
 - **Next phase:** 21, Settings + Authentication.
 - **Real-backend dependency:** the Plugins page (like Credentials) needs an admin session at runtime. Once `ApiClient` receives `getToken`, the page works against the real backend without changes. 401 → handled by the existing error kinds; 403 → "Admin access required" state.
 - **Available:**
-  - `ApiClient` `rawBody` for any binary upload (e.g. a future project-package import UI);
+  - `ApiClient` `rawBody` for any binary upload (e.g. a future workflow-package import UI);
   - `useInstallPlugin`, `useSetPluginEnabled`, `useRemovePlugin`;
   - `PluginList.install_enabled`.
 - **Must not change casually:**

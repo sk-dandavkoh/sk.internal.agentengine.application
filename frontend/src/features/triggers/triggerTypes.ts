@@ -1,4 +1,4 @@
-import type { Trigger, TriggerType } from '../../api/projects'
+import type { Trigger, TriggerType } from '../../api/workflows'
 import { randomHex } from '../../lib/randomHex'
 
 // Presentation of the backend's trigger types (domain/trigger.py). Which
@@ -20,7 +20,7 @@ export const triggerTypeDescriptions: Record<TriggerType, string> = {
     cron: 'Runs on a 5-field cron schedule, evaluated in UTC.',
     interval: 'Runs every N seconds.',
     webhook: 'Started by an external system with an HMAC-signed HTTP request.',
-    event: 'Runs when an execution of this project, or of another project its owner can access, ends, or when it is published. Chains stop after a server-side depth limit.',
+    event: 'Runs when an execution of this workflow, or of another workflow its owner can access, ends, or when it is published. Chains stop after a server-side depth limit.',
 }
 
 /** Types offered for new triggers: every type the engine fires. */
@@ -42,11 +42,11 @@ export const triggerableEvents: Record<string, string> = {
     'execution.failed': 'An execution failed',
     'execution.cancelled': 'An execution was cancelled',
     'execution.timed_out': 'An execution timed out',
-    'project.published': 'A version was published',
+    'workflow.published': 'A version was published',
 }
 
 /** backend domain/trigger.py EVENT_SOURCE_FIELD. */
-export const EVENT_SOURCE_FIELD = 'source_project_id'
+export const EVENT_SOURCE_FIELD = 'source_workflow_id'
 
 /** backend domain/trigger.py MAX_INTERVAL_SECONDS. */
 export const MAX_INTERVAL_SECONDS = 365 * 24 * 60 * 60
@@ -76,7 +76,7 @@ export function triggerSummary(trigger: Trigger): string {
         case 'event': {
             const event = text('event') ?? '(none)'
             const source = text(EVENT_SOURCE_FIELD)
-            return `On ${event} in ${source ? `project ${source}` : 'this project'}`
+            return `On ${event} in ${source ? `workflow ${source}` : 'this workflow'}`
         }
         case 'webhook': {
             // A reference names a credential; anything else may be a

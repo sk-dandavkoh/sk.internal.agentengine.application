@@ -6,7 +6,7 @@ Report date: 2026-10-05. Branch `main`. Base commit `a46dfad` (frontend phase 24
 
 **Objective** (`docs/roadmap-frontend.md` §31): professional usability across screen sizes and for different users. Main functions keyboard-reachable, dialogs accessible, forms labelled, errors communicated accessibly, layout does not break. The graph editor may be desktop-first but must react sensibly on smaller viewports.
 
-**Method.** The audit ran against the production bundle and the real backend (`npm run dev:backend`), seeded with a published and executed project, a draft-only project and a credential. It had three parts:
+**Method.** The audit ran against the production bundle and the real backend (`npm run dev:backend`), seeded with a published and executed workflow, a draft-only workflow and a credential. It had three parts:
 
 - axe-core (WCAG 2.2 A/AA plus best practices) and a page-overflow check on all 17 routes, at 1440 / 1024 / 768 / 390 px, in light and dark;
 - a Tab walk of every page, recording each stop's name, focus ring and visibility;
@@ -31,7 +31,7 @@ Chromium-based desktop browsers (the configured Playwright project) at widths of
 | 5 | **Graph changes were not announced.** Adding a node keeps focus on the library button; deleting, connecting and undo also change the graph away from focus. | `EditorPage.tsx` | A polite status region: "N nodes, M connections". |
 | 6 | **Thirteen identical "Preview and details" summaries** in the node library. | `NodeLibrary.tsx` | Visually hidden suffix "of {node name}". |
 | 7 | **Read-only snapshot edges were Tab stops** with no action whose name was raw node ids ("Edge from node_0100…"), and they were zero-size. | `SnapshotCanvas.tsx` | `edgesFocusable={false}`. Nodes stay focusable (React Flow pans to them). |
-| 8 | Invalid description-list structure (`dl > div > div > dt`) on Project and Version details; a heading skip (h2 → h4) in the version comparison; the React Flow attribution link at 2.8:1. | `ProjectDetailPage.tsx`, `VersionDetailPage.tsx`, `styles/index.css` | The wide item takes the column span itself; `h3`; attribution uses `--color-muted`. |
+| 8 | Invalid description-list structure (`dl > div > div > dt`) on Workflow and Version details; a heading skip (h2 → h4) in the version comparison; the React Flow attribution link at 2.8:1. | `WorkflowDetailPage.tsx`, `VersionDetailPage.tsx`, `styles/index.css` | The wide item takes the column span itself; `h3`; attribution uses `--color-muted`. |
 | 9 | **Motion ignored `prefers-reduced-motion`:** the animated pan to a node selected in the node list, and the button spinner. | `EditorPage.tsx`, `icons.tsx` | Pan duration 0 and a static spinner under reduced motion. |
 
 A `target-size` finding (Fit View control partly covered at 1024 px) disappeared with fix 1.
@@ -63,7 +63,7 @@ A `target-size` finding (Fit View control partly covered at 1024 px) disappeared
 
 ### Full-stack (real backend, `npm run test:fullstack`): 19 passed
 
-`tests/fullstack/a11y.spec.ts` seeds a published, executed project and a credential. It then checks all 15 screens plus Not Found at 390 / 768 / 1024 / 1440 px, in light and dark, against axe and the overflow check.
+`tests/fullstack/a11y.spec.ts` seeds a published, executed workflow and a credential. It then checks all 15 screens plus Not Found at 390 / 768 / 1024 / 1440 px, in light and dark, against axe and the overflow check.
 
 ### Testing the tests
 
@@ -94,7 +94,7 @@ None architecturally significant, so no ADR. The editor's breakpoints (stacked <
 - **Source:**
   - `components/ui/Field.tsx`, `components/ui/icons.tsx`;
   - `features/editor/EditorPage.tsx`, `features/editor/NodeLibrary.tsx`;
-  - `features/projects/ProjectDetailPage.tsx`;
+  - `features/workflows/WorkflowDetailPage.tsx`;
   - `features/versions/SnapshotCanvas.tsx`, `features/versions/VersionDetailPage.tsx`;
   - `styles/index.css`.
 - **Tests:** `tests/e2e/a11y.ts` (new), `tests/e2e/editor.spec.ts`, `tests/e2e/ui.spec.ts`, `tests/fullstack/a11y.spec.ts` (new).

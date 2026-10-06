@@ -16,7 +16,7 @@ roadmap roles:
 
 **Built-in nodes.** All ten roadmap nodes exist. They are registered by
 `akasha.nodes.builtins.create_builtin_registry`, and the composition root
-builds that registry from settings. `ProjectService` in production therefore
+builds that registry from settings. `WorkflowService` in production therefore
 validates against real node definitions. Before this phase the production
 catalog was `{}`, so nothing could be published.
 
@@ -133,11 +133,11 @@ limitations remain; the most important are:
 - **`domain/primitives.py`:** `semver_key`, `version_satisfies`.
 - **`domain/graph_validation.py`:** new `ValidationCode` values
   `MISSING_DEPENDENCY`, `INCOMPATIBLE_DEPENDENCY`, `INVALID_DEPENDENCY`.
-- **`domain/project.py`:**
+- **`domain/workflow.py`:**
   - `validate_dependencies`;
   - the shared `_validate`;
-  - `ProjectDraft.validate` now includes dependencies;
-  - new `ProjectVersion.validate`.
+  - `WorkflowDraft.validate` now includes dependencies;
+  - new `WorkflowVersion.validate`.
 - **`domain/execution.py`:**
   - `ExecutionMetadata.node_versions`;
   - `Execution.input`, validated as storable JSON;
@@ -150,7 +150,7 @@ limitations remain; the most important are:
   - `ExecutionPlan.readiness` replaces `ready_after`;
   - `ExecutionPlan.node_versions`;
   - `inputs_for` uses live edges only (via `_live`);
-  - `load_plan` calls `ProjectVersion.validate`, so dependencies are
+  - `load_plan` calls `WorkflowVersion.validate`, so dependencies are
     included.
 - **`runtime/runtime.py`:**
   - `_advance`: breadth-first READY/SKIPPED decisions with skip cascade;
@@ -178,7 +178,7 @@ limitations remain; the most important are:
 - `ExecutionService.create_execution(input=…)`.
 - `bootstrap.Container.nodes`.
 - `bootstrap.create_node_registry(settings)`.
-- `ProjectService` is built with `nodes.definitions`.
+- `WorkflowService` is built with `nodes.definitions`.
 - `config.Settings` gains four settings; see §18.
 
 ### Testing
@@ -226,7 +226,7 @@ New directory: `backend/tests/nodes/`.
 |---|---|---|
 | `backend/src/akasha/domain/node.py` | Modified (+109/−) | NodeFactory; schema keywords; control-flow outputs; `execution_input`; `NodeError.code`; `json_equal`; message fix (§11, F1) |
 | `backend/src/akasha/domain/primitives.py` | Modified | Semver key and constraint matching |
-| `backend/src/akasha/domain/project.py` | Modified | Dependency validation, `ProjectVersion.validate` |
+| `backend/src/akasha/domain/workflow.py` | Modified | Dependency validation, `WorkflowVersion.validate` |
 | `backend/src/akasha/domain/graph_validation.py` | Modified | Three new codes; docstrings updated |
 | `backend/src/akasha/domain/execution.py` | Modified | `input`, `node_versions`, `start(node_versions)` |
 | `backend/src/akasha/runtime/plan.py` | Modified | Factory catalog, readiness/skip, live-edge inputs, dependency re-validation |
@@ -235,7 +235,7 @@ New directory: `backend/tests/nodes/`.
 | `backend/src/akasha/infrastructure/db_models.py` | Modified | `input` column |
 | `backend/src/akasha/infrastructure/persistence.py` | Modified | Persist `input` and `node_versions` |
 | `backend/src/akasha/application/executions.py` | Modified | `create_execution(input=…)` |
-| `backend/src/akasha/application/projects.py` | Modified | Docstring only |
+| `backend/src/akasha/application/workflows.py` | Modified | Docstring only |
 | `backend/src/akasha/bootstrap.py` | Modified | Registry wiring |
 | `backend/src/akasha/config.py` | Modified | Four new settings |
 | `backend/src/akasha/nodes/__init__.py` | Modified | Package docstring and dependency rules |
@@ -247,7 +247,7 @@ New directory: `backend/tests/nodes/`.
 | `backend/tests/runtime/test_runtime_units.py` | Modified | `ready_after` test replaced by readiness/skip tests (+4) |
 | `backend/tests/domain/test_node_contract.py` | Modified | +4 tests |
 | `backend/tests/domain/test_primitives_and_graph.py` | Modified | Semver tests (+3) |
-| `backend/tests/domain/test_project.py` | Modified | Dependency validation (+6) |
+| `backend/tests/domain/test_workflow.py` | Modified | Dependency validation (+6) |
 | `backend/tests/domain/test_execution.py` | Modified | Input and node_versions (+6) |
 | `backend/tests/test_architecture.py` | Modified | Internal rule for `nodes` |
 | `backend/README.md` | Modified | Settings table; test infrastructure note |
@@ -275,12 +275,12 @@ Deleted: none. Generated files: only `uv.lock`, via `uv add` / `uv remove`.
   - If a real separation becomes necessary (for example, read-only access
     for the API), it can be introduced then.
 
-### 5.2 One version per node type id; compatibility through project dependencies
+### 5.2 One version per node type id; compatibility through workflow dependencies
 - **Decision:** the registry holds exactly one version per node id.
   Compatibility is expressed by `Dependency(kind="node", name, version_constraint)`
-  on the project and is checked:
-  - in `ProjectDraft.validate` (validate, publish);
-  - in `ProjectVersion.validate`, called by `load_plan` before every run.
+  on the workflow and is checked:
+  - in `WorkflowDraft.validate` (validate, publish);
+  - in `WorkflowVersion.validate`, called by `load_plan` before every run.
 - **Context:**
   - `NodeInstance` has no version field.
   - Architecture §3.8 and §144 require node-version checks at publish and
@@ -288,12 +288,12 @@ Deleted: none. Generated files: only `uv.lock`, via `uv add` / `uv remove`.
 - **Alternatives:**
   - side-by-side versions per id: ambiguous without a version on the
     instance, and a contract change;
-  - a version on `NodeInstance`: a Project schema change, with no current
+  - a version on `NodeInstance`: a Workflow schema change, with no current
     consumer.
 - **Reason:** this is the smallest model consistent with the existing
   `Dependency` concept (from Phase 02, previously unused).
 - **Consequences:**
-  - Upgrading a built-in version affects every project that does not pin a
+  - Upgrading a built-in version affects every workflow that does not pin a
     constraint.
   - An incompatible upgrade fails queued runs with `EXECUTION_GRAPH_INVALID`
     before any node runs.
@@ -414,7 +414,7 @@ documented architecture; they refine it.
 | `json_equal` | New function | – |
 | `semver_key`, `version_satisfies` | New functions | – |
 | `ValidationCode` | `MISSING_DEPENDENCY`, `INCOMPATIBLE_DEPENDENCY`, `INVALID_DEPENDENCY` | Additive enum values (also visible in the API) |
-| `validate_dependencies`, `ProjectVersion.validate` | New | `ProjectDraft.validate` now also reports dependency issues |
+| `validate_dependencies`, `WorkflowVersion.validate` | New | `WorkflowDraft.validate` now also reports dependency issues |
 | `ExecutionMetadata.node_versions` | New `Mapping[str, str]`, default `{}`, copied | Additive |
 | `Execution.input` | New `dict[str, Any]`, default `{}`; must be a JSON object without NaN/Infinity/NUL | Additive; invalid input raises `DomainValidationError` |
 | `Execution.create(input=…)` | New kwarg, deep-copied | Additive |
@@ -449,7 +449,7 @@ Compatibility is tested by:
   generating the schema via `create_app(...).openapi()`.
 - The change is additive, but consumers with exhaustive enum handling must
   add the three values.
-- Behavioural change: `POST /api/v1/projects/{id}/validate` and `…/publish`
+- Behavioural change: `POST /api/v1/workflows/{id}/validate` and `…/publish`
   now accept graphs of `core.*` nodes in production (catalog wired). Before,
   every node was reported as `unknown_node_type`.
 
@@ -492,7 +492,7 @@ All ten definitions:
 | Network guard | `DESTINATION_INVALID`, `DESTINATION_BLOCKED`, `DNS_ERROR` |
 
 ### Application contracts
-- `ExecutionService.create_execution(project_id, version, *, input=None, metadata=None, timeout_policy=None)`.
+- `ExecutionService.create_execution(workflow_id, version, *, input=None, metadata=None, timeout_policy=None)`.
 - `ExecutionRuntime(uow, catalog)` now takes `Mapping[str, NodeFactory]`.
 - `Container.nodes: NodeRegistry`.
 
@@ -541,7 +541,7 @@ All ten definitions:
 - The key is `(major, minor, patch, 0 if pre else 1, pre)`, and build
   metadata is ignored.
 - A malformed constraint is a validation issue (`INVALID_DEPENDENCY`), not an
-  exception at construction. This keeps persisted projects loadable.
+  exception at construction. This keeps persisted workflows loadable.
 
 ### HTTP (`nodes/http.py`)
 - **`fetch`:**
@@ -742,7 +742,7 @@ Final full run: **753 passed, 0 failed, 0 skipped** (`uv run pytest`,
 |---|---|---|
 | `tests/domain/test_node_contract.py` | 47 (+4) | Schema keywords (7 invalid cases), `json_equal`, control-flow output rule, class-as-factory |
 | `tests/domain/test_primitives_and_graph.py` | 18 (+3) | Semver ordering, pre-release, build metadata, constraint grammar, malformed input |
-| `tests/domain/test_project.py` | 20 (+6) | Satisfied, unsatisfied, missing, malformed constraints; plugin skip; draft and version validation |
+| `tests/domain/test_workflow.py` | 20 (+6) | Satisfied, unsatisfied, missing, malformed constraints; plugin skip; draft and version validation |
 | `tests/domain/test_execution.py` | 266 (+6) | `start(node_versions)` copy semantics; input copy; NaN/bytes/NUL/object rejected |
 | `tests/runtime/test_runtime_units.py` | 21 (+4, 1 rewritten) | Readiness: open upstream, skipped upstream with a live edge (merge), all edges dead, omitted control-flow port; `node_versions`; dependency re-check in `load_plan` |
 | `tests/nodes/test_registry.py` | 10 | Register/get/resolve, duplicates, unknown ids for get/resolve/unregister, unregister frees the id, live read-only views, sorted listing, version compatibility, contract check, factory injection, wrong-factory rejection |
@@ -986,7 +986,7 @@ cancellation and authenticated SMTP only at node level.
 | `docs/architecture.md` §53 | Persistence changed | `executions.input`, `metadata.node_versions` |
 | `docs/architecture.md` §63 | HTTP controls implemented | SSRF policy, settings, limits, error classes, known gap |
 | `backend/README.md` | New settings and test infrastructure | Settings table; Mailpit/loopback note |
-| Module docstrings | Code-level documentation | `nodes/__init__.py`, `registry.py`, `builtins.py`, `core.py`, `control.py`, `http.py`, `smtp.py`, `security/network.py`, `runtime/plan.py`, `runtime/runtime.py`, `domain/node.py`, `domain/execution.py`, `graph_validation.py`, `application/projects.py` |
+| Module docstrings | Code-level documentation | `nodes/__init__.py`, `registry.py`, `builtins.py`, `core.py`, `control.py`, `http.py`, `smtp.py`, `security/network.py`, `runtime/plan.py`, `runtime/runtime.py`, `domain/node.py`, `domain/execution.py`, `graph_validation.py`, `application/workflows.py` |
 | `docs/reports/backend/phase-09-node-registry-builtin-nodes.md` | Phase report | This document |
 
 Should be updated in future phases:
@@ -1180,12 +1180,12 @@ Should be updated in future phases:
 ## 25. Handoff to Next Phase
 
 ### Phase 10 (Trigger System) can assume
-- **`ExecutionService.create_execution(project_id, version, *, input=…, metadata=…, timeout_policy=…)`**
+- **`ExecutionService.create_execution(workflow_id, version, *, input=…, metadata=…, timeout_policy=…)`**
   is the single entry point. `input` must be a JSON object; it is persisted
   and deep-copied into `NodeExecutionContext.execution_input`. `core.input`
   reads the whole object or `config.field`.
 - **`Container.nodes`** (`NodeRegistry`) exists at startup.
-  - `nodes.definitions` backs `ProjectService`.
+  - `nodes.definitions` backs `WorkflowService`.
   - Any runtime created by triggers or workers must use `nodes.catalog`, so
     that publish-time and run-time validation agree.
 - **Registry contract:**
@@ -1215,7 +1215,7 @@ Should be updated in future phases:
   fail-fast semantics of Phase 08.
 - Closed config schemas for built-ins, and references-only secrets.
 - The default-deny `NetworkPolicy`, and re-checking every redirect hop.
-- One version per node type id. Changing it requires a Project schema change
+- One version per node type id. Changing it requires a Workflow schema change
   (a version on `NodeInstance`).
 - The deterministic SMTP `Message-ID` (idempotency hint).
 - All Phase 08 invariants: single writer, CAS on `revision`, RUNNING

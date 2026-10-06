@@ -58,7 +58,7 @@ from types import MappingProxyType
 from akasha.application.events import EventPublisher
 from akasha.application.executions import load_execution, save_execution
 from akasha.application.persistence import ConcurrentModificationError
-from akasha.application.projects import UowFactory
+from akasha.application.workflows import UowFactory
 from akasha.domain.execution import (
     Execution,
     ExecutionError,
@@ -339,7 +339,7 @@ class ExecutionRuntime:
         return recovered
 
     def _settle(self, execution: Execution) -> None:
-        graph = execution.project_version.graph
+        graph = execution.workflow_version.graph
         repeatable = frozenset(
             node_id
             for node_id, instance in graph.nodes.items()
@@ -362,7 +362,7 @@ class ExecutionRuntime:
             await self._state.save(execution)
             return execution
         try:
-            plan = load_plan(execution.project_version, self._catalog, self._plugins)
+            plan = load_plan(execution.workflow_version, self._catalog, self._plugins)
         except ExecutionGraphInvalidError as exc:
             codes = sorted({i.code.value for i in exc.result.issues})
             execution.fail(
@@ -548,7 +548,7 @@ class ExecutionRuntime:
         for node_id in batch:
             execution.start_node(node_id, now=now)
         await self._state.save(execution)
-        version = execution.project_version
+        version = execution.workflow_version
         for node_id in batch:
             ne = execution.node(node_id)
             instance = plan.graph.nodes[node_id]
@@ -557,8 +557,8 @@ class ExecutionRuntime:
                 execution_id=execution.id,
                 node_execution_id=ne.id,
                 node_instance_id=node_id,
-                project_id=execution.project_id,
-                project_version=str(version.version),
+                workflow_id=execution.workflow_id,
+                workflow_version=str(version.version),
                 # A copy: node code must not be able to mutate the snapshot.
                 config=deepcopy(instance.config),
                 # Scoped to references in this node's snapshot config.
@@ -569,7 +569,7 @@ class ExecutionRuntime:
                 logger=logging.getLogger(f"akasha.nodes.{instance.node_type}"),
                 is_cancelled=request.should_stop,
                 runtime_metadata={
-                    "project_version_id": version.id,
+                    "workflow_version_id": version.id,
                     "engine_version": execution.metadata.engine_version,
                     "attempt": ne.attempt,
                 },
@@ -586,7 +586,7 @@ class ExecutionRuntime:
                 capturing(logs),
                 log_context(
                     execution_id=execution.id,
-                    project_id=execution.project_id,
+                    workflow_id=execution.workflow_id,
                     correlation_id=execution.metadata.correlation_id,
                     node_id=node_id,
                     node_execution_id=ne.id,

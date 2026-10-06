@@ -19,21 +19,21 @@ import {
 } from './credentials'
 import {
     cancelExecution,
-    executeProjectVersion,
+    executeWorkflowVersion,
     invokeTrigger,
 } from './executions'
 import {
-    createProject,
-    deleteProject,
-    duplicateProject,
-    importProject,
-    publishProject,
-    restoreProjectVersion,
-    updateProject,
-    validateProject,
-    type CreateProjectInput,
-    type UpdateProjectInput,
-} from './projects'
+    createWorkflow,
+    deleteWorkflow,
+    duplicateWorkflow,
+    importWorkflow,
+    publishWorkflow,
+    restoreWorkflowVersion,
+    updateWorkflow,
+    validateWorkflow,
+    type CreateWorkflowInput,
+    type UpdateWorkflowInput,
+} from './workflows'
 import {
     disablePlugin,
     enablePlugin,
@@ -43,11 +43,11 @@ import {
 import { queryKeys } from './queries'
 import type { JsonObject } from './schemas'
 import {
-    leaveProject,
-    putProjectMember,
-    removeProjectMember,
-    transferProjectOwnership,
-    type ProjectRole,
+    leaveWorkflow,
+    putWorkflowMember,
+    removeWorkflowMember,
+    transferWorkflowOwnership,
+    type WorkflowRole,
 } from './sharing'
 import {
     createUser,
@@ -88,110 +88,116 @@ const invalidate = (
         keys.map((queryKey) => queryClient.invalidateQueries({ queryKey })),
     )
 
-// -- projects ----------------------------------------------------------------
+// -- workflows ----------------------------------------------------------------
 
-export function useCreateProject() {
+export function useCreateWorkflow() {
     return useApiMutation(
-        (client, input: CreateProjectInput) => createProject(client, input),
-        (qc) => invalidate(qc, queryKeys.projects.lists()),
+        (client, input: CreateWorkflowInput) => createWorkflow(client, input),
+        (qc) => invalidate(qc, queryKeys.workflows.lists()),
     )
 }
 
-/** Creates a new draft-only project from an uploaded package. */
-export function useImportProject() {
+/** Creates a new draft-only workflow from an uploaded package. */
+export function useImportWorkflow() {
     return useApiMutation(
-        (client, file: Blob) => importProject(client, file),
-        (qc) => invalidate(qc, queryKeys.projects.lists()),
+        (client, file: Blob) => importWorkflow(client, file),
+        (qc) => invalidate(qc, queryKeys.workflows.lists()),
     )
 }
 
 /** Saves the draft; a stale `expected_revision` fails with a conflict. */
-export function useUpdateProject() {
+export function useUpdateWorkflow() {
     return useApiMutation(
-        (client, v: { projectId: string; input: UpdateProjectInput }) =>
-            updateProject(client, v.projectId, v.input),
-        (qc, project) => {
-            // The response is the whole saved project: no refetch needed.
-            qc.setQueryData(queryKeys.projects.detail(project.id), project)
-            return invalidate(qc, queryKeys.projects.lists())
+        (client, v: { workflowId: string; input: UpdateWorkflowInput }) =>
+            updateWorkflow(client, v.workflowId, v.input),
+        (qc, workflow) => {
+            // The response is the whole saved workflow: no refetch needed.
+            qc.setQueryData(queryKeys.workflows.detail(workflow.id), workflow)
+            return invalidate(qc, queryKeys.workflows.lists())
         },
     )
 }
 
 /** Copies the draft, or published `version` when given. */
-export function useDuplicateProject() {
+export function useDuplicateWorkflow() {
     return useApiMutation(
-        (client, v: { projectId: string; name: string; version?: number }) =>
-            duplicateProject(client, v.projectId, v.name, v.version),
-        (qc) => invalidate(qc, queryKeys.projects.lists()),
+        (client, v: { workflowId: string; name: string; version?: number }) =>
+            duplicateWorkflow(client, v.workflowId, v.name, v.version),
+        (qc) => invalidate(qc, queryKeys.workflows.lists()),
     )
 }
 
 /** Replaces the draft with a version's copy; versions are untouched. */
-export function useRestoreProjectVersion() {
+export function useRestoreWorkflowVersion() {
     return useApiMutation(
         (
             client,
-            v: { projectId: string; version: number; expectedRevision: number },
+            v: {
+                workflowId: string
+                version: number
+                expectedRevision: number
+            },
         ) =>
-            restoreProjectVersion(
+            restoreWorkflowVersion(
                 client,
-                v.projectId,
+                v.workflowId,
                 v.version,
                 v.expectedRevision,
             ),
-        (qc, project) => {
-            qc.setQueryData(queryKeys.projects.detail(project.id), project)
-            return invalidate(qc, queryKeys.projects.lists())
+        (qc, workflow) => {
+            qc.setQueryData(queryKeys.workflows.detail(workflow.id), workflow)
+            return invalidate(qc, queryKeys.workflows.lists())
         },
     )
 }
 
-export function useDeleteProject() {
+export function useDeleteWorkflow() {
     return useApiMutation(
-        (client, projectId: string) => deleteProject(client, projectId),
-        (qc, _result, projectId) => {
-            qc.removeQueries({ queryKey: queryKeys.projects.detail(projectId) })
-            return invalidate(qc, queryKeys.projects.lists())
+        (client, workflowId: string) => deleteWorkflow(client, workflowId),
+        (qc, _result, workflowId) => {
+            qc.removeQueries({
+                queryKey: queryKeys.workflows.detail(workflowId),
+            })
+            return invalidate(qc, queryKeys.workflows.lists())
         },
     )
 }
 
 /** Changes nothing on the server, so it invalidates nothing. */
-export function useValidateProject() {
+export function useValidateWorkflow() {
     return useApiMutation(
-        (client, v: { projectId: string; expectedRevision?: number }) =>
-            validateProject(client, v.projectId, v.expectedRevision),
+        (client, v: { workflowId: string; expectedRevision?: number }) =>
+            validateWorkflow(client, v.workflowId, v.expectedRevision),
         () => Promise.resolve(),
     )
 }
 
-export function usePublishProject() {
+export function usePublishWorkflow() {
     return useApiMutation(
-        (client, v: { projectId: string; expectedRevision?: number }) =>
-            publishProject(client, v.projectId, v.expectedRevision),
+        (client, v: { workflowId: string; expectedRevision?: number }) =>
+            publishWorkflow(client, v.workflowId, v.expectedRevision),
         // Status, current version, revision and the version list change.
         (qc, _version, v) =>
             invalidate(
                 qc,
-                queryKeys.projects.detail(v.projectId),
-                queryKeys.projects.lists(),
+                queryKeys.workflows.detail(v.workflowId),
+                queryKeys.workflows.lists(),
             ),
     )
 }
 
 // -- executions ----------------------------------------------------------------
 
-export function useExecuteProjectVersion() {
+export function useExecuteWorkflowVersion() {
     return useApiMutation(
         (
             client,
-            v: { projectId: string; version: number; input?: JsonObject },
-        ) => executeProjectVersion(client, v.projectId, v.version, v.input),
+            v: { workflowId: string; version: number; input?: JsonObject },
+        ) => executeWorkflowVersion(client, v.workflowId, v.version, v.input),
         (qc, execution) =>
             invalidate(
                 qc,
-                queryKeys.projects.executions(execution.project_id),
+                queryKeys.workflows.executions(execution.workflow_id),
                 queryKeys.executions.overview(),
             ),
     )
@@ -201,12 +207,12 @@ export function useInvokeTrigger() {
     return useApiMutation(
         (
             client,
-            v: { projectId: string; triggerId: string; input?: JsonObject },
-        ) => invokeTrigger(client, v.projectId, v.triggerId, v.input),
+            v: { workflowId: string; triggerId: string; input?: JsonObject },
+        ) => invokeTrigger(client, v.workflowId, v.triggerId, v.input),
         (qc, execution) =>
             invalidate(
                 qc,
-                queryKeys.projects.executions(execution.project_id),
+                queryKeys.workflows.executions(execution.workflow_id),
                 queryKeys.executions.overview(),
             ),
     )
@@ -220,7 +226,7 @@ export function useCancelExecution() {
             invalidate(
                 qc,
                 queryKeys.executions.detail(execution.id),
-                queryKeys.projects.executions(execution.project_id),
+                queryKeys.workflows.executions(execution.workflow_id),
                 queryKeys.executions.overview(),
             ),
     )
@@ -287,51 +293,53 @@ export function useDeleteCredential() {
 
 // -- sharing -------------------------------------------------------------------
 
-export function usePutProjectMember() {
+export function usePutWorkflowMember() {
     return useApiMutation(
         (
             client,
-            v: { projectId: string; username: string; role: ProjectRole },
-        ) => putProjectMember(client, v.projectId, v.username, v.role),
+            v: { workflowId: string; username: string; role: WorkflowRole },
+        ) => putWorkflowMember(client, v.workflowId, v.username, v.role),
         (qc, _member, v) =>
-            invalidate(qc, queryKeys.projects.sharing(v.projectId)),
+            invalidate(qc, queryKeys.workflows.sharing(v.workflowId)),
     )
 }
 
-export function useRemoveProjectMember() {
+export function useRemoveWorkflowMember() {
     return useApiMutation(
-        (client, v: { projectId: string; username: string }) =>
-            removeProjectMember(client, v.projectId, v.username),
+        (client, v: { workflowId: string; username: string }) =>
+            removeWorkflowMember(client, v.workflowId, v.username),
         (qc, _result, v) =>
-            invalidate(qc, queryKeys.projects.sharing(v.projectId)),
+            invalidate(qc, queryKeys.workflows.sharing(v.workflowId)),
     )
 }
 
-/** The project's owner changes (and with it the caller's access): the
- * project and everything below it is refetched, and so are the lists. */
-export function useTransferProjectOwnership() {
+/** The workflow's owner changes (and with it the caller's access): the
+ * workflow and everything below it is refetched, and so are the lists. */
+export function useTransferWorkflowOwnership() {
     return useApiMutation(
-        (client, v: { projectId: string; username: string }) =>
-            transferProjectOwnership(client, v.projectId, v.username),
+        (client, v: { workflowId: string; username: string }) =>
+            transferWorkflowOwnership(client, v.workflowId, v.username),
         (qc, _sharing, v) =>
             invalidate(
                 qc,
-                queryKeys.projects.detail(v.projectId),
-                queryKeys.projects.lists(),
+                queryKeys.workflows.detail(v.workflowId),
+                queryKeys.workflows.lists(),
             ),
     )
 }
 
-/** After leaving, the project is unreachable: its cached state goes and
+/** After leaving, the workflow is unreachable: its cached state goes and
  * the lists are refetched without it. */
-export function useLeaveProject() {
+export function useLeaveWorkflow() {
     return useApiMutation(
-        (client, projectId: string) => leaveProject(client, projectId),
-        (qc, _result, projectId) => {
-            qc.removeQueries({ queryKey: queryKeys.projects.detail(projectId) })
+        (client, workflowId: string) => leaveWorkflow(client, workflowId),
+        (qc, _result, workflowId) => {
+            qc.removeQueries({
+                queryKey: queryKeys.workflows.detail(workflowId),
+            })
             return invalidate(
                 qc,
-                queryKeys.projects.lists(),
+                queryKeys.workflows.lists(),
                 queryKeys.executions.overview(),
             )
         },

@@ -27,7 +27,6 @@ from sqlalchemy import text
 
 from akasha.api.app import create_app
 from akasha.application.executions import ExecutionService
-from akasha.application.projects import ProjectService
 from akasha.application.queue import (
     Job,
     QueueUnavailableError,
@@ -35,6 +34,7 @@ from akasha.application.queue import (
     WorkerState,
 )
 from akasha.application.triggers import TriggerRegistry, TriggerService
+from akasha.application.workflows import WorkflowService
 from akasha.bootstrap import Container, create_container
 from akasha.config import Settings
 from akasha.domain.execution import ExecutionStatus, NodeExecutionStatus
@@ -50,7 +50,7 @@ from akasha.domain.node import (
     PortType,
 )
 from akasha.domain.primitives import new_id
-from akasha.domain.project import ProjectDraft
+from akasha.domain.workflow import WorkflowDraft
 from akasha.infrastructure.database import Database
 from akasha.infrastructure.persistence import SqlAlchemyUnitOfWork
 from akasha.infrastructure.redis_queue import RedisExecutionQueue, encode_job
@@ -186,26 +186,26 @@ class Harness:
 
     async def publish(self) -> tuple[str, int]:
         catalog = {t: c.definition for t, c in self.catalog.items()}
-        svc = ProjectService(self.uow, catalog)
-        project = await svc.create_project("workers")
+        svc = WorkflowService(self.uow, catalog)
+        workflow = await svc.create_workflow("workers")
         graph = Graph()
         gate, sink = NodeInstance.create("test.gate"), NodeInstance.create("test.sink")
         graph.add_node(gate)
         graph.add_node(sink)
         graph.add_edge(Edge(gate.id, "out", sink.id, "text"))
         await svc.update_draft(
-            project.id,
-            expected_revision=project.revision,
+            workflow.id,
+            expected_revision=workflow.revision,
             name="workers",
-            draft=ProjectDraft(graph=graph),
+            draft=WorkflowDraft(graph=graph),
         )
-        version = await svc.publish_project(project.id)
-        return project.id, version.version
+        version = await svc.publish_workflow(workflow.id)
+        return workflow.id, version.version
 
     async def create(self, *, dispatch: bool = True) -> str:
-        project_id, version = await self.publish()
+        workflow_id, version = await self.publish()
         execution = await self.executions.create_execution(
-            project_id, version, dispatch=dispatch
+            workflow_id, version, dispatch=dispatch
         )
         return execution.id
 
@@ -395,9 +395,9 @@ async def test_execution_created_while_redis_is_down_is_dispatched_later(
 ) -> None:
     down = RedisExecutionQueue.from_url("redis://127.0.0.1:1/0")
     try:
-        project_id, version = await h.publish()
+        workflow_id, version = await h.publish()
         execution = await ExecutionService(h.uow, queue=down).create_execution(
-            project_id, version
+            workflow_id, version
         )
     finally:
         await down.close()
@@ -714,7 +714,7 @@ async def api_client(
     # No ``database``: the lifespan's shutdown would dispose the shared one.
     container = Container(
         settings=settings,
-        projects=ProjectService(h.uow, catalog),
+        workflows=WorkflowService(h.uow, catalog),
         executions=h.executions,
         triggers=TriggerService(h.executions),
         trigger_registry=TriggerRegistry(h.uow),
@@ -738,11 +738,11 @@ async def test_execution_outlives_the_http_request(h: Harness) -> None:
     """Acceptance: the request returns while the run is still going; the
     worker finishes it after the response was sent."""
     h.gate.release.clear()
-    project_id, version = await h.publish()
+    workflow_id, version = await h.publish()
     manager = WorkerManager(h.worker(), h.queue, h.executions, recovery_seconds=60)
     async with api_client(h, manager) as api:
         response = await api.post(
-            f"/api/v1/projects/{project_id}/versions/{version}/execute", json={}
+            f"/api/v1/workflows/{workflow_id}/versions/{version}/execute", json={}
         )
         assert response.status_code == 201
         execution_id = response.json()["id"]

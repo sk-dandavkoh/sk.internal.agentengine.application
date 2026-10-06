@@ -23,8 +23,8 @@ from akasha.application.auth import (
     AuthorizationService,
     UserService,
 )
-from akasha.application.projects import ProjectService
 from akasha.application.sharing import SharingService
+from akasha.application.workflows import WorkflowService
 from akasha.domain.identity import Role
 from akasha.domain.node import (
     NodeConfigSchema,
@@ -94,8 +94,8 @@ async def truncate_all(database: Database) -> None:
             "events",
             "node_executions",
             "executions",
-            "project_versions",
-            "projects",
+            "workflow_versions",
+            "workflows",
             "credentials",
             "sessions",
             "users",
@@ -150,10 +150,10 @@ def node_definitions() -> dict[str, NodeDefinition]:
 
 
 @pytest.fixture
-def project_service(
+def workflow_service(
     database: Database, node_definitions: dict[str, NodeDefinition]
-) -> ProjectService:
-    return ProjectService(lambda: SqlAlchemyUnitOfWork(database), node_definitions)
+) -> WorkflowService:
+    return WorkflowService(lambda: SqlAlchemyUnitOfWork(database), node_definitions)
 
 
 # Cheap scrypt parameters: tests exercise the hashing logic, not its cost

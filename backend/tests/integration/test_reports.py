@@ -28,8 +28,8 @@ from akasha.domain.execution import (
 )
 from akasha.domain.graph import Edge, Graph, NodeInstance
 from akasha.domain.node import NodeErrorKind
-from akasha.domain.project import Project
 from akasha.domain.trigger import TriggerType
+from akasha.domain.workflow import Workflow
 from akasha.infrastructure.database import Database
 from akasha.infrastructure.persistence import SqlAlchemyUnitOfWork
 from tests.integration.fixtures import AuthKit
@@ -75,20 +75,20 @@ class Scenario:
             self.graph.add_node(node)
         self.graph.add_edge(Edge(self.source.id, "out", self.llm.id, "variables"))
         self.graph.add_edge(Edge(self.llm.id, "text", self.sink.id, "text"))
-        self.project = Project.create("report demo")
-        self.project.draft.graph = self.graph
-        self.project.draft.description = "first release"
+        self.workflow = Workflow.create("report demo")
+        self.workflow.draft.graph = self.graph
+        self.workflow.draft.description = "first release"
 
     async def publish(self) -> None:
-        self.version = self.project.publish_draft(published_at=T0)
+        self.version = self.workflow.publish_draft(published_at=T0)
         async with self.uow() as ctx:
-            await ctx.projects.save(self.project)
-            await ctx.versions.save(self.project.id, self.version)
+            await ctx.workflows.save(self.workflow)
+            await ctx.versions.save(self.workflow.id, self.version)
             await ctx.commit()
 
     def execution(self, **kwargs: Any) -> Execution:
         execution = Execution.create(
-            self.project.id,
+            self.workflow.id,
             self.version,
             metadata=ExecutionMetadata(
                 trigger_type=TriggerType.API, correlation_id="corr-1"
@@ -165,9 +165,9 @@ async def test_successful_execution_report(
     report = await reports.execution_report(execution.id)
 
     assert_matches_persisted(report, await scenario.reload(execution.id))
-    assert report.project.name == "report demo"
-    assert report.project.version == 1
-    assert report.project.version_description == "first release"
+    assert report.workflow.name == "report demo"
+    assert report.workflow.version == 1
+    assert report.workflow.version_description == "first release"
     assert report.execution.status == "completed"
     assert report.execution.trigger_type is TriggerType.API
     assert report.execution.correlation_id == "corr-1"

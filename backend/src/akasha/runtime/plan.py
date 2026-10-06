@@ -1,6 +1,6 @@
 """GraphLoader, GraphValidator integration and DependencyResolver.
 
-``load_plan`` turns a pinned ProjectVersion into an ``ExecutionPlan``: it
+``load_plan`` turns a pinned WorkflowVersion into an ``ExecutionPlan``: it
 re-validates the snapshot (graph and declared node-version dependencies)
 against the *runtime's* node catalog (the catalog may have changed since
 publish — a removed node type, a stricter config schema or an incompatible
@@ -24,12 +24,12 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any
 
-from akasha.application.projects import issue_payload
+from akasha.application.workflows import issue_payload
 from akasha.domain.execution import Execution, NodeExecutionStatus
 from akasha.domain.graph import Edge, Graph
 from akasha.domain.graph_validation import ValidationResult
 from akasha.domain.node import NO_DEFAULT, NodeDefinition, NodeFactory
-from akasha.domain.project import ProjectVersion
+from akasha.domain.workflow import WorkflowVersion
 from akasha.errors import AkashaError
 
 # node type id (e.g. "core.http") -> implementation; supplied by the
@@ -45,7 +45,7 @@ class ExecutionGraphInvalidError(AkashaError):
 
     def __init__(self, result: ValidationResult) -> None:
         super().__init__(
-            "The pinned project version is not executable with the "
+            "The pinned workflow version is not executable with the "
             "available node types.",
             details={"issues": [issue_payload(i) for i in result.issues]},
         )
@@ -128,7 +128,7 @@ def _live(edge: Edge, execution: Execution) -> bool:
 
 
 def load_plan(
-    version: ProjectVersion,
+    version: WorkflowVersion,
     catalog: NodeCatalog,
     plugins: Mapping[str, str] = MappingProxyType({}),
 ) -> ExecutionPlan:

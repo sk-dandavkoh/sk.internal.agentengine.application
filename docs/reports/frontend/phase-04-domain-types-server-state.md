@@ -6,7 +6,7 @@
 
 **What was implemented.** Seven new modules in `frontend/src/api/`:
 
-- Five service modules: `projects.ts`, `executions.ts`, `reports.ts`, `nodes.ts`, `credentials.ts`.
+- Five service modules: `workflows.ts`, `executions.ts`, `reports.ts`, `nodes.ts`, `credentials.ts`.
 - `plugins.ts`, a sixth service module.
 - `schemas.ts`, shared building blocks.
 
@@ -48,7 +48,7 @@ Roadmap §10, "Phase 04 — Domain Types + Server State":
 
 **Required types:**
 
-- Project, ProjectDraft, ProjectVersion
+- Workflow, WorkflowDraft, WorkflowVersion
 - Graph, NodeInstance, Edge
 - NodeDefinition, NodePort, NodeConfigSchema
 - Trigger
@@ -97,29 +97,29 @@ TanStack Query, or an equivalent server-state solution, had to be integrated.
 - `pageInfoSchema` and `pageSchema(item)`.
 - `PageParams` (`offset?`, `limit?`).
 
-**`projects.ts`**
+**`workflows.ts`**
 
 | Schema | Type |
 |---|---|
-| `projectStatusSchema` | `ProjectStatus` |
+| `workflowStatusSchema` | `WorkflowStatus` |
 | `nodeInstanceSchema` | `NodeInstance` |
 | `edgeSchema` | `Edge` |
 | `graphSchema` | `Graph` |
 | `triggerTypeSchema` | `TriggerType` |
 | `triggerSchema` | `Trigger` |
 | `dependencySchema` | `Dependency` |
-| `projectDraftSchema` | `ProjectDraft` |
-| `projectFileSchema` | `ProjectFile` |
-| `projectSummarySchema` | `ProjectSummary` |
-| `projectSchema` | `Project` |
-| `projectVersionSummarySchema` | `ProjectVersionSummary` |
-| `projectVersionSchema` | `ProjectVersion` |
+| `workflowDraftSchema` | `WorkflowDraft` |
+| `workflowFileSchema` | `WorkflowFile` |
+| `workflowSummarySchema` | `WorkflowSummary` |
+| `workflowSchema` | `Workflow` |
+| `workflowVersionSummarySchema` | `WorkflowVersionSummary` |
+| `workflowVersionSchema` | `WorkflowVersion` |
 | `validationCodeSchema` (17 codes) | `ValidationCode` |
 | `validationIssueSchema` | `ValidationIssue` |
 | `validationResultSchema` | `ValidationResult` |
-| `projectPageSchema`, `projectVersionPageSchema` | page types |
+| `workflowPageSchema`, `workflowVersionPageSchema` | page types |
 
-It also defines the input types `CreateProjectInput` and `UpdateProjectInput`.
+It also defines the input types `CreateWorkflowInput` and `UpdateWorkflowInput`.
 
 **`executions.ts`**
 
@@ -157,8 +157,8 @@ All service functions take an `ApiClient` first, following the Phase 03 pattern.
 
 | Module | Functions |
 |---|---|
-| `projects.ts` | `listProjects`, `getProject`, `createProject`, `updateProject`, `deleteProject`, `validateProject`, `publishProject`, `listProjectVersions`, `getProjectVersion` |
-| `executions.ts` | `listProjectExecutions`, `getExecution`, `listExecutionEvents`, `cancelExecution`, `executeProjectVersion`, `invokeTrigger` |
+| `workflows.ts` | `listWorkflows`, `getWorkflow`, `createWorkflow`, `updateWorkflow`, `deleteWorkflow`, `validateWorkflow`, `publishWorkflow`, `listWorkflowVersions`, `getWorkflowVersion` |
+| `executions.ts` | `listWorkflowExecutions`, `getExecution`, `listExecutionEvents`, `cancelExecution`, `executeWorkflowVersion`, `invokeTrigger` |
 | `reports.ts` | `getExecutionReport` |
 | `nodes.ts` | `listNodeDefinitions` |
 | `credentials.ts` | `listCredentials`, `getCredential`, `createCredential`, `updateCredential`, `deleteCredential` |
@@ -171,7 +171,7 @@ All service functions take an `ApiClient` first, following the Phase 03 pattern.
 - `queryKeys`: the single definition of every key.
 - `INSTALLATION_STALE_TIME_MS` (5 minutes).
 - Query option factories built with TanStack's `queryOptions`:
-  - `projectQueries`: `list`, `detail`, `versions`, `version`, `executions`
+  - `workflowQueries`: `list`, `detail`, `versions`, `version`, `executions`
   - `executionQueries`: `detail`, `events`, `report`
   - `nodeQueries`: `catalog`
   - `pluginQueries`: `list`
@@ -181,8 +181,8 @@ All service functions take an `ApiClient` first, following the Phase 03 pattern.
 
 - A private helper `useApiMutation(mutate, affects, options)` and an `invalidate(...)` helper.
 - 13 hooks:
-  - Projects: `useCreateProject`, `useUpdateProject`, `useDeleteProject`, `useValidateProject`, `usePublishProject`.
-  - Executions: `useExecuteProjectVersion`, `useInvokeTrigger`, `useCancelExecution`.
+  - Workflows: `useCreateWorkflow`, `useUpdateWorkflow`, `useDeleteWorkflow`, `useValidateWorkflow`, `usePublishWorkflow`.
+  - Executions: `useExecuteWorkflowVersion`, `useInvokeTrigger`, `useCancelExecution`.
   - Credentials: `useCreateCredential`, `useUpdateCredential`, `useDeleteCredential`.
 
 ### Backend / API
@@ -211,7 +211,7 @@ No directories were created. All new files are in the existing `frontend/src/api
 | File | Change | Reason |
 |---|---|---|
 | `frontend/src/api/schemas.ts` | Created (27 lines) | Shared schemas: timestamp, JSON object, pagination |
-| `frontend/src/api/projects.ts` | Created (268) | Project, draft, graph, trigger, version and validation types; project service functions |
+| `frontend/src/api/workflows.ts` | Created (268) | Workflow, draft, graph, trigger, version and validation types; workflow service functions |
 | `frontend/src/api/executions.ts` | Created (155) | Execution and event types; execution service functions |
 | `frontend/src/api/reports.ts` | Created (127) | NodeExecution, report and metrics types; report service |
 | `frontend/src/api/nodes.ts` | Created (41) | NodeDefinition and NodePort; catalog service |
@@ -298,7 +298,7 @@ Install, enable, disable and remove remain CLI-only. If no plugin directory is c
 
 ### 5.3 Query option factories instead of one hook per query
 
-**Decision.** Reads are exposed as `queryOptions` factories. Components use them as `useQuery(projectQueries.detail(useApiClient(), id))`.
+**Decision.** Reads are exposed as `queryOptions` factories. Components use them as `useQuery(workflowQueries.detail(useApiClient(), id))`.
 
 **Reason.**
 
@@ -313,7 +313,7 @@ Install, enable, disable and remove remain CLI-only. If no plugin directory is c
 |---|---|
 | Server state | TanStack Query cache only |
 | UI state | Component state or the URL |
-| Editor state (Phase 07) | Initialized from `project.draft`, persisted only through `useUpdateProject`; never written into the query cache |
+| Editor state (Phase 07) | Initialized from `workflow.draft`, persisted only through `useUpdateWorkflow`; never written into the query cache |
 
 This is documented in `frontend/README.md`. No UI or editor store was created: there is no consumer yet (YAGNI).
 
@@ -333,8 +333,8 @@ This is documented in `frontend/README.md`. No UI or editor store was created: t
 | `Trigger.config` | `{}` |
 | `Trigger.enabled` | `true` |
 | `Dependency.version_constraint` | `'*'` |
-| `ProjectDraft.graph` | `{nodes: [], edges: []}` |
-| `ProjectDraft.triggers` / `ProjectDraft.dependencies` | `[]` |
+| `WorkflowDraft.graph` | `{nodes: [], edges: []}` |
+| `WorkflowDraft.triggers` / `WorkflowDraft.dependencies` | `[]` |
 
 The output types are therefore non-optional.
 
@@ -344,7 +344,7 @@ The output types are therefore non-optional.
 
 | Enum | Values |
 |---|---|
-| `ProjectStatus` | 5 |
+| `WorkflowStatus` | 5 |
 | `TriggerType` | 6 |
 | `ExecutionStatus` | `created`, `queued`, `running`, `paused`, `waiting`, `completed`, `failed`, `cancelled`, `timeout` |
 | `NodeExecutionStatus` | `pending`, `ready`, `running`, `completed`, `failed`, `skipped`, `cancelled` |
@@ -413,14 +413,14 @@ Two request-body shapes were previously unsupported and are now handled:
 
 Keys are defined in `queryKeys` and nest by ownership.
 
-**Projects:**
+**Workflows:**
 
 ```text
-['projects', 'list', page]
-['projects', projectId]                                  ← detail
-['projects', projectId, 'versions', 'list', page]
-['projects', projectId, 'versions', version]
-['projects', projectId, 'executions', page]
+['workflows', 'list', page]
+['workflows', workflowId]                                  ← detail
+['workflows', workflowId, 'versions', 'list', page]
+['workflows', workflowId, 'versions', version]
+['workflows', workflowId, 'executions', page]
 ```
 
 **Executions:**
@@ -445,9 +445,9 @@ Keys are defined in `queryKeys` and nest by ownership.
 ['credentials', 'detail', name]
 ```
 
-Invalidating `['projects', id]` reaches the project's versions and executions. Invalidating `['executions', id]` reaches its events and report.
+Invalidating `['workflows', id]` reaches the workflow's versions and executions. Invalidating `['executions', id]` reaches its events and report.
 
-Project ids are server-generated (`proj_…`), so `['projects', 'list']` cannot collide with a detail key. Credential names are user-chosen, so credential details use an explicit `'detail'` segment (§9, finding F6).
+Workflow ids are server-generated (`wf_…`), so `['workflows', 'list']` cannot collide with a detail key. Credential names are user-chosen, so credential details use an explicit `'detail'` segment (§9, finding F6).
 
 ### Freshness
 
@@ -459,7 +459,7 @@ The global defaults from `createQueryClient` (Phase 03) are unchanged:
 
 Per-query overrides:
 
-- `projectQueries.version`: `staleTime: Infinity`. Published versions are immutable.
+- `workflowQueries.version`: `staleTime: Infinity`. Published versions are immutable.
 - `nodeQueries.catalog` and `pluginQueries.list`: `INSTALLATION_STALE_TIME_MS` = 5 minutes. They change only when the backend restarts with different code.
 
 ### Mutation flow
@@ -468,30 +468,30 @@ Per-query overrides:
 
 | Hook | Effect on cache |
 |---|---|
-| `useCreateProject` | invalidates project lists |
-| `useUpdateProject` | `setQueryData(detail, response)`, invalidates lists |
-| `useDeleteProject` | `removeQueries(['projects', id])`, invalidates lists |
-| `useValidateProject` | none (no server change) |
-| `usePublishProject` | invalidates `['projects', id]` (detail, versions, executions) and lists |
-| `useExecuteProjectVersion`, `useInvokeTrigger` | invalidates `['projects', project_id, 'executions']` |
-| `useCancelExecution` | invalidates `['executions', id]` and the project's executions |
+| `useCreateWorkflow` | invalidates workflow lists |
+| `useUpdateWorkflow` | `setQueryData(detail, response)`, invalidates lists |
+| `useDeleteWorkflow` | `removeQueries(['workflows', id])`, invalidates lists |
+| `useValidateWorkflow` | none (no server change) |
+| `usePublishWorkflow` | invalidates `['workflows', id]` (detail, versions, executions) and lists |
+| `useExecuteWorkflowVersion`, `useInvokeTrigger` | invalidates `['workflows', workflow_id, 'executions']` |
+| `useCancelExecution` | invalidates `['executions', id]` and the workflow's executions |
 | `useCreateCredential` | invalidates credential lists; `gcTime: 0` |
 | `useUpdateCredential` | `setQueryData(detail, response)`, invalidates lists; `gcTime: 0` |
 | `useDeleteCredential` | `removeQueries(detail)`, invalidates lists |
 
 ### Request specifics
 
-- **Path segments** are `encodeURIComponent`-encoded: project ids, execution ids, trigger ids and credential names.
-- **`publishProject`** sends `{expected_revision}` only when one is given; `cancelExecution` sends `{reason}` only when one is given. Otherwise there is no body, which the backend accepts as `null`.
-- **`executeProjectVersion` and `invokeTrigger`** always send a JSON object (default `{}`).
+- **Path segments** are `encodeURIComponent`-encoded: workflow ids, execution ids, trigger ids and credential names.
+- **`publishWorkflow`** sends `{expected_revision}` only when one is given; `cancelExecution` sends `{reason}` only when one is given. Otherwise there is no body, which the backend accepts as `null`.
+- **`executeWorkflowVersion` and `invokeTrigger`** always send a JSON object (default `{}`).
 - **Cancellation:** every query `queryFn` passes TanStack's `signal` through to `ApiClient.request`, so unmounting or superseding a query aborts the HTTP request (Phase 03 mechanism).
 
 ### Not wrapped
 
 The following endpoints are not wrapped (§19):
 
-- `POST /projects/import` (`application/zip` request)
-- `GET /projects/{id}/export` (ZIP response)
+- `POST /workflows/import` (`application/zip` request)
+- `GET /workflows/{id}/export` (ZIP response)
 - `/auth/setup`, `/auth/password`, `/users`
 - `POST /webhooks/...` (an external, signed entry point; not called by the UI)
 - `/health`, `/ready`
@@ -565,8 +565,8 @@ The following endpoints are not wrapped (§19):
 
 | # | Problem | Root cause | Fix | Regression test | Origin |
 |---|---|---|---|---|---|
-| B1 | `validationCodeSchema` first listed invented codes (for example `invalid_trigger`, `resource_limit_exceeded`) | Written before reading the enum from `openapi.json` | Replaced with the 17 contract values | `contract.node.test.ts` (`POST /projects/p/validate` compares enums) | Introduced this phase, fixed before any test run |
-| B2 | `projects.ts` imported and re-exported a non-existent `PageInfo` type from `schemas.ts` | Leftover from a draft | Import and re-export removed | `tsc -b` | Introduced this phase |
+| B1 | `validationCodeSchema` first listed invented codes (for example `invalid_trigger`, `resource_limit_exceeded`) | Written before reading the enum from `openapi.json` | Replaced with the 17 contract values | `contract.node.test.ts` (`POST /workflows/p/validate` compares enums) | Introduced this phase, fixed before any test run |
+| B2 | `workflows.ts` imported and re-exported a non-existent `PageInfo` type from `schemas.ts` | Leftover from a draft | Import and re-export removed | `tsc -b` | Introduced this phase |
 | B3 | 4 contract tests failed (publish, cancel, execute, invoke) | Test infrastructure: the request-body check assumed an object schema | §11 fix 1 | The same 4 tests | Pre-existing test limitation, exposed by new calls |
 | B4 | ESLint `no-unsafe-return` in `contract.node.test.ts` | `Object.values` over a union of module namespaces is `any[]` | Module list typed as `Record<string, unknown>[]` | `npm run lint` | Introduced this phase |
 | B5 | 3 `serverState` tests failed (save, publish, cancel) | F5 | Helper reads `data` | The same tests | Introduced this phase (tests) |
@@ -588,13 +588,13 @@ No pre-existing production bugs were discovered.
 2. **Test helper subscription (F5).**
    - **Implementation:** `loaded()` waits on `result.current.data` being defined.
    - **Verification:** 12/12 tests pass.
-   - **Mutation check:** I replaced `queryKeys.projects.detail(v.projectId)` with `queryKeys.projects.lists()` in `usePublishProject`. The publish test then failed (1 failed / 11 passed), and the original was restored.
+   - **Mutation check:** I replaced `queryKeys.workflows.detail(v.workflowId)` with `queryKeys.workflows.lists()` in `usePublishWorkflow`. The publish test then failed (1 failed / 11 passed), and the original was restored.
 3. **Plugin API test setup (B7).**
    - **Implementation:** a fresh registry for `load_installed()`. The `async for` generator helper was refactored to `@asynccontextmanager` / `async with`.
    - **Verification:** 3/3 pass.
 4. **Plugin dependency serialization.**
    - **Symptom:** the first draft built `DependencyBody(kind=d.kind, …)` with a `# type: ignore[arg-type]`, because `Dependency.kind` is `str` and `DependencyBody.kind` is `Literal`.
-   - **Implementation:** reuse the existing helper `project_schemas._dependencies`, which uses `model_validate`, and drop the suppression.
+   - **Implementation:** reuse the existing helper `workflow_schemas._dependencies`, which uses `model_validate`, and drop the suppression.
    - **Verification:** mypy and ruff pass.
 5. **Error code in tests.** The test used a made-up code, `REVISION_CONFLICT`. It now uses the backend's real code, `CONCURRENT_MODIFICATION` (per `backend/README.md`).
 
@@ -623,16 +623,16 @@ No pre-existing production bugs were discovered.
 |---|---|
 | save draft | Detail set from the response (no refetch); list refetched |
 | failed write | 409 becomes `ApiError{kind: 'conflict'}`; cache unchanged; 1 PUT (no retry); list not refetched |
-| publish | Versions list and detail of `proj_1` refetched; `proj_2` not |
-| delete | The project's detail query is removed from the cache |
-| execute / cancel | Project executions list refetched after each; the execution detail shows `cancelled` |
+| publish | Versions list and detail of `wf_1` refetched; `wf_2` not |
+| delete | The workflow's detail query is removed from the cache |
+| execute / cancel | Workflow executions list refetched after each; the execution detail shows `cancelled` |
 | credential secret | List refetched; after unmount the mutation cache is empty and no query data contains the secret |
 
 **Result:** 12/12 passed. The full Vitest run is 146/146 across 16 files.
 
 **Not covered by behavior tests:**
 
-- Mutation hooks: `useCreateProject`, `useValidateProject`, `useInvokeTrigger`, `useUpdateCredential`, `useDeleteCredential`.
+- Mutation hooks: `useCreateWorkflow`, `useValidateWorkflow`, `useInvokeTrigger`, `useUpdateCredential`, `useDeleteCredential`.
 - Query factories: `executionQueries.events` / `.report`, `nodeQueries.catalog`, `pluginQueries.list`, `credentialQueries.detail`.
 
 Their service calls are covered by the contract test only (§21, O1).
@@ -702,8 +702,8 @@ These are the roadmap §10 acceptance criteria.
 
 | Acceptance Criterion | Status | Evidence |
 |---|---|---|
-| Domain Types sind zentral definiert | PASS | All types are in `frontend/src/api/{projects,executions,reports,nodes,credentials,plugins,schemas}.ts`, indexed in `frontend/README.md` § "Domain types"; each is checked against OpenAPI by `contract.node.test.ts` |
-| Server State wird nicht unnötig über lokale React States dupliziert | PASS | No `useState` or store in `src/api`; mutations write responses into the query cache (`setQueryData`) instead of returning copies to hold. The README defines editor state as a separate local copy, persisted only via `useUpdateProject`. No screens exist yet, so this cannot be tested beyond the infrastructure |
+| Domain Types sind zentral definiert | PASS | All types are in `frontend/src/api/{workflows,executions,reports,nodes,credentials,plugins,schemas}.ts`, indexed in `frontend/README.md` § "Domain types"; each is checked against OpenAPI by `contract.node.test.ts` |
+| Server State wird nicht unnötig über lokale React States dupliziert | PASS | No `useState` or store in `src/api`; mutations write responses into the query cache (`setQueryData`) instead of returning copies to hold. The README defines editor state as a separate local copy, persisted only via `useUpdateWorkflow`. No screens exist yet, so this cannot be tested beyond the infrastructure |
 | Queries und Mutations sind strukturiert | PASS | `queries.ts` (one key registry, 5 factory groups, 12 factories) and `mutations.ts` (13 hooks over one helper) |
 | Cache Invalidation ist definiert | PASS | Every mutation declares its effect (§8 table). Behavior is verified for update, publish, delete, execute, cancel and credential create; a deliberately broken invalidation made a test fail |
 
@@ -711,7 +711,7 @@ These are the roadmap §10 acceptance criteria.
 
 | Type | Status | Evidence / gap |
 |---|---|---|
-| Project, ProjectDraft, ProjectVersion, Graph, NodeInstance, Edge, Trigger | PASS | `projects.ts` |
+| Workflow, WorkflowDraft, WorkflowVersion, Graph, NodeInstance, Edge, Trigger | PASS | `workflows.ts` |
 | NodeDefinition, NodePort | PASS | `nodes.ts` |
 | NodeConfigSchema | PARTIAL | `NodeDefinition.config_schema: JsonObject`: a raw JSON Schema, not a typed model. A typed JSON Schema subset belongs to the inspector form generator (Phase 09) |
 | Execution, NodeExecution | PASS | `executions.ts`, `reports.ts` (§6 on NodeExecution) |
@@ -755,8 +755,8 @@ No changes affect XSS, CSRF, SSRF, file handling, expressions or WebSockets.
   - The node catalog and plugins are cached for 5 minutes.
   - Saving a draft uses `setQueryData` instead of a refetch of the detail.
 - **Invalidation breadth:**
-  - Publishing invalidates the whole `['projects', id]` subtree, including every cached executions page of that project. Only active queries refetch immediately; inactive ones are marked stale.
-  - Starting or cancelling an execution invalidates all cached execution-list pages of the project.
+  - Publishing invalidates the whole `['workflows', id]` subtree, including every cached executions page of that workflow. Only active queries refetch immediately; inactive ones are marked stale.
+  - Starting or cancelling an execution invalidates all cached execution-list pages of the workflow.
 - **Payloads:**
   - `GET /api/v1/plugins` is unpaginated (F8).
   - The node catalog was already unpaginated.
@@ -795,7 +795,7 @@ No changes affect XSS, CSRF, SSRF, file handling, expressions or WebSockets.
 
 | What | Why deferred | Intended phase | Affects completion |
 |---|---|---|---|
-| Project import/export wrappers | The client only handles JSON bodies; ZIP upload and download need binary support in `ApiClient` | Phase 06 (Project Management) or wherever import/export UI lands | No |
+| Workflow import/export wrappers | The client only handles JSON bodies; ZIP upload and download need binary support in `ApiClient` | Phase 06 (Workflow Management) or wherever import/export UI lands | No |
 | Typed NodeConfigSchema (JSON Schema subset) | Needed by the schema-driven form generator, not by server state | Phase 09 | No (PARTIAL scope item) |
 | User / auth-setup / password wrappers | Session and settings scope | Phase 21 | No |
 | Event polling (`refetchInterval` / incremental `after`) | Live execution scope | Phase 14 | No |
@@ -821,8 +821,8 @@ No changes affect XSS, CSRF, SSRF, file handling, expressions or WebSockets.
 
 | # | Issue | Impact | Severity | Area | Recommended next action | Target |
 |---|---|---|---|---|---|---|
-| O1 | Untested hooks and factories (§12) | A wrong invalidation in them would go unnoticed | LOW | `frontend/src/api/mutations.ts`, `queries.ts` | Add behavior tests when the first consumer is built | Phase 06 (projects), 13 (executions), 17 (credentials), 20 (plugins) |
-| O2 | `api/plugins.py` imports the private `project_schemas._dependencies` | Cross-module use of an underscore helper | LOW | Backend API | Rename it to a public helper if a third user appears | Any |
+| O1 | Untested hooks and factories (§12) | A wrong invalidation in them would go unnoticed | LOW | `frontend/src/api/mutations.ts`, `queries.ts` | Add behavior tests when the first consumer is built | Phase 06 (workflows), 13 (executions), 17 (credentials), 20 (plugins) |
+| O2 | `api/plugins.py` imports the private `workflow_schemas._dependencies` | Cross-module use of an underscore helper | LOW | Backend API | Rename it to a public helper if a third user appears | Any |
 | O3 | Architecture §42 (generated types) differs from practice (§5.2) | Documentation inconsistency | LOW | Docs | Amend §42 or add an ADR | Next docs pass |
 | O4 | Plugin list pagination (AGENTS §74) | Deviation from a guideline | LOW | Backend API | Paginate if installations grow large | Phase 20 at the earliest |
 | O5 | Remaining string-typed backend fields (`event_type`, `ErrorReport.kind`) | Less precise frontend types | LOW | Backend contract | Enum them when a consumer needs it | Phase 14/15 |
@@ -835,7 +835,7 @@ No changes affect XSS, CSRF, SSRF, file handling, expressions or WebSockets.
 2. **Reads are `queryOptions` factories; writes are hooks (§5.3).** Factories are reusable in route loaders. Writes need the `QueryClient` for invalidation.
 3. **Every mutation awaits its invalidation; there are no optimistic updates.** The backend is authoritative (AGENTS §85), and a pending state that covers the refetch prevents rendering pre-write data as current.
 4. **`setQueryData` only where the response is the full resource** (draft save, credential update). Everywhere else the cache is invalidated, so no response is reshaped client-side.
-5. **Key nesting expresses ownership** (`['projects', id, …]`, `['executions', id, …]`). Prefix invalidation then encodes "this changed the project and everything under it".
+5. **Key nesting expresses ownership** (`['workflows', id, …]`, `['executions', id, …]`). Prefix invalidation then encodes "this changed the workflow and everything under it".
 6. **Strict enums on the frontend.** Unknown statuses fail validation rather than render as unknown. A new backend status must be a deliberate contract change on both sides.
 7. **NodeExecution comes from the report.** No node-execution endpoint was added: the backend deliberately routes node-level detail through the report.
 8. **`/api/v1/plugins` is read-only and admin-only (§5.1).** Management stays in the CLI under the trusted-code model.
@@ -860,7 +860,7 @@ No changes affect XSS, CSRF, SSRF, file handling, expressions or WebSockets.
   - `backend/src/akasha/api/plugins.py`
   - `backend/tests/integration/test_plugins_api.py`
   - `docs/reports/frontend/phase-04-domain-types-server-state.md`
-  - `frontend/src/api/` modules: `credentials.ts`, `executions.ts`, `mutations.ts`, `nodes.ts`, `plugins.ts`, `projects.ts`, `queries.ts`, `reports.ts`, `schemas.ts`, `serverState.test.tsx`
+  - `frontend/src/api/` modules: `credentials.ts`, `executions.ts`, `mutations.ts`, `nodes.ts`, `plugins.ts`, `workflows.ts`, `queries.ts`, `reports.ts`, `schemas.ts`, `serverState.test.tsx`
 - **Unrelated changes:** none detected. The working tree was clean at the start of the phase.
 - The phase contains backend and frontend changes. Following AGENTS §65 (focused commits), they could be committed separately in this order:
   1. Backend plugins endpoint and status enums, plus the OpenAPI snapshot.
@@ -906,15 +906,15 @@ None.
 
 **What the next phase can assume:**
 
-- All reads go through `useQuery(<group>Queries.<name>(useApiClient(), …))`. The groups are `projectQueries`, `executionQueries`, `nodeQueries`, `pluginQueries` and `credentialQueries`.
+- All reads go through `useQuery(<group>Queries.<name>(useApiClient(), …))`. The groups are `workflowQueries`, `executionQueries`, `nodeQueries`, `pluginQueries` and `credentialQueries`.
 - All writes go through the hooks in `src/api/mutations.ts`.
 - Errors are `ApiError`; branch on `kind` and display `message`.
 
 **Data available for a dashboard:**
 
-- `projectQueries.list` returns summaries with `status`, `current_version` and `updated_at`.
-- `projectQueries.executions(projectId)` returns executions per project.
-- There is **no cross-project execution list** and no aggregate statistics endpoint. A dashboard showing "recent executions" or counts across projects either fans out per project or needs a new backend endpoint. Per this phase's rule, such an endpoint must be added to the backend, tested and documented, not computed client-side.
+- `workflowQueries.list` returns summaries with `status`, `current_version` and `updated_at`.
+- `workflowQueries.executions(workflowId)` returns executions per workflow.
+- There is **no cross-workflow execution list** and no aggregate statistics endpoint. A dashboard showing "recent executions" or counts across workflows either fans out per workflow or needs a new backend endpoint. Per this phase's rule, such an endpoint must be added to the backend, tested and documented, not computed client-side.
 
 **Do not change casually:**
 

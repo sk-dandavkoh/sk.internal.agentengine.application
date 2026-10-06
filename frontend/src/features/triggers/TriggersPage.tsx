@@ -4,14 +4,14 @@ import { useNavigate, useParams } from 'react-router'
 import type { ApiClient } from '../../api/client'
 import { useApiClient } from '../../api/context'
 import { ApiError, errorMessage } from '../../api/errors'
-import { useInvokeTrigger, useUpdateProject } from '../../api/mutations'
+import { useInvokeTrigger, useUpdateWorkflow } from '../../api/mutations'
 import type {
-    Project,
-    ProjectVersion,
+    Workflow,
+    WorkflowVersion,
     Trigger,
     ValidationIssue,
-} from '../../api/projects'
-import { projectQueries, queryKeys } from '../../api/queries'
+} from '../../api/workflows'
+import { workflowQueries, queryKeys } from '../../api/queries'
 import { QuerySection } from '../../components/QuerySection'
 import {
     Alert,
@@ -28,7 +28,7 @@ import {
 } from '../../components/ui'
 import { executionPath } from '../executions/format'
 import { diffVersions } from '../versions/compare'
-import { allows } from '../projects/access'
+import { allows } from '../workflows/access'
 import { VersionLink } from '../versions/shared'
 import { TriggerFormDialog } from './TriggerFormDialog'
 import { triggerSummary, triggerTypeLabels } from './triggerTypes'
@@ -39,20 +39,23 @@ type Action =
     | { kind: 'delete'; trigger: Trigger }
     | null
 
-const projectPath = (id: string) => `/projects/${encodeURIComponent(id)}`
+const workflowPath = (id: string) => `/workflows/${encodeURIComponent(id)}`
 
 /** Where the published state of draft trigger `id` stands. */
 type PublishState = 'unpublished' | 'changed' | 'published'
 
-function publishStates(project: Project, latest: ProjectVersion | undefined) {
+function publishStates(
+    workflow: Workflow,
+    latest: WorkflowVersion | undefined,
+) {
     if (latest === undefined)
         return { states: new Map<string, PublishState>(), removed: [] }
     const diff = diffVersions(latest, {
-        ...project.draft,
-        files: project.files,
+        ...workflow.draft,
+        files: workflow.files,
     }).triggers
     const states = new Map<string, PublishState>()
-    for (const t of project.draft.triggers)
+    for (const t of workflow.draft.triggers)
         states.set(
             t.id,
             diff.added.includes(t.id)
@@ -70,13 +73,13 @@ function endpoint(client: ApiClient, path: string) {
 
 function Endpoint({
     trigger,
-    projectId,
+    workflowId,
 }: {
     trigger: Trigger
-    projectId: string
+    workflowId: string
 }) {
     const client = useApiClient()
-    const ids = `${encodeURIComponent(projectId)}/${trigger.trigger_type === 'webhook' ? '' : 'triggers/'}${encodeURIComponent(trigger.id)}`
+    const ids = `${encodeURIComponent(workflowId)}/${trigger.trigger_type === 'webhook' ? '' : 'triggers/'}${encodeURIComponent(trigger.id)}`
     switch (trigger.trigger_type) {
         case 'webhook':
             return (
@@ -96,7 +99,7 @@ function Endpoint({
         case 'api':
             return (
                 <code className="font-mono text-xs break-all">
-                    POST {endpoint(client, `/projects/${ids}/invoke`)}
+                    POST {endpoint(client, `/workflows/${ids}/invoke`)}
                 </code>
             )
         default:
@@ -154,37 +157,37 @@ function Issues({
 }
 
 function TriggersView({
-    project,
+    workflow,
     latest,
 }: {
-    project: Project
-    latest: ProjectVersion | undefined
+    workflow: Workflow
+    latest: WorkflowVersion | undefined
 }) {
     const client = useApiClient()
     // Running and changing triggers needs edit access; the backend refuses
     // it regardless, this only stops offering it.
     const canEdit = allows(
-        useQuery(projectQueries.sharing(client, project.id)).data?.access,
+        useQuery(workflowQueries.sharing(client, workflow.id)).data?.access,
         'edit',
     )
     const [action, setAction] = useState<Action>(null)
-    const save = useUpdateProject()
+    const save = useUpdateWorkflow()
     const invoke = useInvokeTrigger()
     const navigate = useNavigate()
     const queryClient = useQueryClient()
     const toast = useToast()
     // The backend's verdict on the revision shown; refetched per save.
     const validation = useQuery({
-        ...projectQueries.validation(client, project.id, project.revision),
+        ...workflowQueries.validation(client, workflow.id, workflow.revision),
         retry: false,
     })
-    const { states, removed } = publishStates(project, latest)
+    const { states, removed } = publishStates(workflow, latest)
     // What fires is the published copy, not the draft row.
     const live = new Map(latest?.triggers.map((t) => [t.id, t]))
 
     function run(trigger: Trigger) {
         invoke.mutate(
-            { projectId: project.id, triggerId: trigger.id },
+            { workflowId: workflow.id, triggerId: trigger.id },
             {
                 onSuccess: (execution) => {
                     toast.notify({ tone: 'success', title: 'Run started' })
@@ -200,7 +203,7 @@ function TriggersView({
             },
         )
     }
-    const triggers = project.draft.triggers
+    const triggers = workflow.draft.triggers
 
     const issuesFor = (id: string) =>
         validation.data?.issues.filter((i) => i.trigger_id === id)
@@ -219,12 +222,12 @@ function TriggersView({
     ) {
         save.mutate(
             {
-                projectId: project.id,
+                workflowId: workflow.id,
                 input: {
-                    name: project.name,
-                    description: project.description,
-                    draft: { ...project.draft, triggers: next },
-                    expected_revision: project.revision,
+                    name: workflow.name,
+                    description: workflow.description,
+                    draft: { ...workflow.draft, triggers: next },
+                    expected_revision: workflow.revision,
                 },
             },
             {
@@ -236,7 +239,7 @@ function TriggersView({
                     // A stale copy: reload so a retry uses the current draft.
                     if (error instanceof ApiError && error.kind === 'conflict')
                         void queryClient.invalidateQueries({
-                            queryKey: queryKeys.projects.detail(project.id),
+                            queryKey: queryKeys.workflows.detail(workflow.id),
                         })
                 },
             },
@@ -273,7 +276,7 @@ function TriggersView({
             cell: (t) => (
                 <div className="flex flex-col gap-1">
                     <span>{triggerSummary(t)}</span>
-                    <Endpoint trigger={t} projectId={project.id} />
+                    <Endpoint trigger={t} workflowId={workflow.id} />
                 </div>
             ),
         },
@@ -359,8 +362,8 @@ function TriggersView({
             <PageHeader
                 title="Triggers"
                 description={
-                    <TextLink to={projectPath(project.id)}>
-                        Back to {project.name}
+                    <TextLink to={workflowPath(workflow.id)}>
+                        Back to {workflow.name}
                     </TextLink>
                 }
                 actions={
@@ -379,29 +382,30 @@ function TriggersView({
             <div className="flex flex-col gap-4">
                 {!canEdit && (
                     <Alert tone="info" title="View-only access">
-                        You can see this project's triggers, but only its owner,
-                        editors and administrators can change or run them.
+                        You can see this workflow's triggers, but only its
+                        owner, editors and administrators can change or run
+                        them.
                     </Alert>
                 )}
                 <Alert tone="info">
                     Triggers are saved to the draft (revision{' '}
-                    {String(project.revision)}) and fire only from the latest
+                    {String(workflow.revision)}) and fire only from the latest
                     published version
                     {latest ? (
                         <>
                             {' '}
                             (
                             <VersionLink
-                                projectId={project.id}
+                                workflowId={workflow.id}
                                 version={latest.version}
                             />
                             )
                         </>
                     ) : (
-                        ', and this project has none yet'
+                        ', and this workflow has none yet'
                     )}
                     . Publish from the{' '}
-                    <TextLink to={`${projectPath(project.id)}/editor`}>
+                    <TextLink to={`${workflowPath(workflow.id)}/editor`}>
                         editor
                     </TextLink>{' '}
                     to apply changes.
@@ -453,7 +457,7 @@ function TriggersView({
             </div>
 
             <TriggerFormDialog
-                project={project}
+                workflow={workflow}
                 open={action?.kind === 'create' || editing !== undefined}
                 onClose={close}
                 trigger={editing}
@@ -499,12 +503,12 @@ function TriggersView({
 }
 
 export function TriggersPage() {
-    const { projectId = '' } = useParams()
+    const { workflowId = '' } = useParams()
     const client = useApiClient()
-    const query = useQuery(projectQueries.detail(client, projectId))
+    const query = useQuery(workflowQueries.detail(client, workflowId))
     const current = query.data?.current_version ?? 0
     const latest = useQuery({
-        ...projectQueries.version(client, projectId, current),
+        ...workflowQueries.version(client, workflowId, current),
         enabled: current > 0,
     })
 
@@ -515,11 +519,11 @@ export function TriggersPage() {
     )
         return (
             <ErrorState
-                title="Project not found"
+                title="Workflow not found"
                 titleAs="h1"
                 description="It does not exist, was deleted, or you do not have access to it."
                 action={
-                    <TextLink to="/projects">Back to all projects</TextLink>
+                    <TextLink to="/workflows">Back to all workflows</TextLink>
                 }
             />
         )
@@ -527,7 +531,7 @@ export function TriggersPage() {
         <>
             {query.data === undefined && <PageHeader title="Triggers" />}
             <QuerySection query={query} subject="the triggers">
-                {(project) =>
+                {(workflow) =>
                     current > 0 && latest.data === undefined ? (
                         <QuerySection
                             query={latest}
@@ -535,13 +539,16 @@ export function TriggersPage() {
                         >
                             {(version) => (
                                 <TriggersView
-                                    project={project}
+                                    workflow={workflow}
                                     latest={version}
                                 />
                             )}
                         </QuerySection>
                     ) : (
-                        <TriggersView project={project} latest={latest.data} />
+                        <TriggersView
+                            workflow={workflow}
+                            latest={latest.data}
+                        />
                     )
                 }
             </QuerySection>

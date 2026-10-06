@@ -23,8 +23,8 @@ function DialogHarness({ onClose = vi.fn() }: { onClose?: () => void }) {
                     onClose()
                     setOpen(false)
                 }}
-                title="Rename project"
-                description="Shown in the project list."
+                title="Rename workflow"
+                description="Shown in the workflow list."
             >
                 <input aria-label="Name" data-autofocus />
             </Dialog>
@@ -47,8 +47,10 @@ describe('Dialog', () => {
 
         await user.click(screen.getByRole('button', { name: 'Open' }))
 
-        const dialog = screen.getByRole('dialog', { name: 'Rename project' })
-        expect(dialog).toHaveAccessibleDescription('Shown in the project list.')
+        const dialog = screen.getByRole('dialog', { name: 'Rename workflow' })
+        expect(dialog).toHaveAccessibleDescription(
+            'Shown in the workflow list.',
+        )
         expect(screen.getByRole('textbox', { name: 'Name' })).toHaveFocus()
     })
 
@@ -106,12 +108,12 @@ describe('ConfirmDialog', () => {
         render(
             <ConfirmDialog
                 open
-                title="Delete project?"
-                confirmLabel="Delete project"
+                title="Delete workflow?"
+                confirmLabel="Delete workflow"
                 {...handlers}
                 {...props}
             >
-                The project “Invoices” will be deleted.
+                The workflow “Invoices” will be deleted.
             </ConfirmDialog>,
         )
         return handlers
@@ -121,9 +123,9 @@ describe('ConfirmDialog', () => {
         renderConfirm({ irreversible: true })
 
         expect(
-            screen.getByRole('dialog', { name: 'Delete project?' }),
+            screen.getByRole('dialog', { name: 'Delete workflow?' }),
         ).toHaveAccessibleDescription(
-            'The project “Invoices” will be deleted. This cannot be undone.',
+            'The workflow “Invoices” will be deleted. This cannot be undone.',
         )
         expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus()
     })
@@ -132,7 +134,9 @@ describe('ConfirmDialog', () => {
         const user = userEvent.setup()
         const { onCancel, onConfirm } = renderConfirm()
 
-        await user.click(screen.getByRole('button', { name: 'Delete project' }))
+        await user.click(
+            screen.getByRole('button', { name: 'Delete workflow' }),
+        )
         await user.click(screen.getByRole('button', { name: 'Cancel' }))
 
         expect(onConfirm).toHaveBeenCalledOnce()
@@ -142,7 +146,7 @@ describe('ConfirmDialog', () => {
     it('cannot be confirmed twice or dismissed while pending', async () => {
         const user = userEvent.setup()
         const { onCancel, onConfirm } = renderConfirm({ pending: true })
-        const confirm = screen.getByRole('button', { name: 'Delete project' })
+        const confirm = screen.getByRole('button', { name: 'Delete workflow' })
 
         await user.click(confirm)
         fireEvent(
@@ -158,10 +162,10 @@ describe('ConfirmDialog', () => {
     })
 
     it('shows a failure as an alert inside the dialog', () => {
-        renderConfirm({ error: 'The project could not be deleted.' })
+        renderConfirm({ error: 'The workflow could not be deleted.' })
 
         expect(screen.getByRole('alert')).toHaveTextContent(
-            'Error: The project could not be deleted.',
+            'Error: The workflow could not be deleted.',
         )
     })
 })

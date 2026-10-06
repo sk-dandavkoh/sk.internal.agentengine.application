@@ -41,7 +41,7 @@ one without logging out everything.
 
 - *Longer session TTLs*: one setting for every browser and agent, no
   naming, no individual revocation. Rejected.
-- *Scoped tokens* (read-only, no plugins, per project): useful, but the
+- *Scoped tokens* (read-only, no plugins, per workflow): useful, but the
   authorization model is role- and owner-based; scopes would need checks
   in every REST route and MCP tool. Deferred. Today, a dedicated
   least-privileged user per agent gives the same effect.

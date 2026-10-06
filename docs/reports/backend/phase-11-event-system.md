@@ -11,7 +11,7 @@
 The acceptance criterion is: *"Execution lifecycle can be reconstructed from persisted events plus canonical execution state."*
 
 The phase prompt added four requirements:
-- "relevant project events";
+- "relevant workflow events";
 - correlation IDs, failure handling and duplicate handling;
 - proof that domain state stays correct when event consumers fail;
 - the loop IMPLEMENT → TEST → BREAK EVENT CONSUMER → VERIFY DOMAIN STATE → FIX.
@@ -19,14 +19,14 @@ The phase prompt added four requirements:
 **What was built.**
 - **Domain model** (`akasha.domain.event`):
   - An immutable, validated `Event`.
-  - 12 event types: the 5 execution and 4 node types from the roadmap, plus `execution.timed_out`, `node.cancelled` and `project.published`.
+  - 12 event types: the 5 execution and 4 node types from the roadmap, plus `execution.timed_out`, `node.cancelled` and `workflow.published`.
   - Payloads are closed per type and contain only scalar values.
 - **Events recorded by the aggregate.** The `Execution` aggregate records its lifecycle events inside its transition methods.
 - **Transactional persistence.** Events are appended to a new append-only `events` table (migration `0005_events`) in the same database transaction as the state change they describe.
   - The execution paths use `save_execution`.
-  - `project.published` is appended inside `ProjectService.publish_project`.
+  - `workflow.published` is appended inside `WorkflowService.publish_workflow`.
 - **In-process publisher.** `EventPublisher` delivers events only after commit. Each subscriber is isolated from errors and bounded by a timeout.
-- **Wiring.** One shared publisher lives on `Container.events` and is injected into `ProjectService` and `ExecutionService`. `ExecutionRuntime` accepts one through the new `events=` parameter.
+- **Wiring.** One shared publisher lives on `Container.events` and is injected into `WorkflowService` and `ExecutionService`. `ExecutionRuntime` accepts one through the new `events=` parameter.
 
 **Resulting state.**
 - Every execution transition that the runtime drives produces a persisted event. It commits atomically with the state and carries the execution's correlation ID.
@@ -53,14 +53,14 @@ The phase prompt added four requirements:
 - **Acceptance criterion:** the execution lifecycle can be reconstructed from persisted events plus canonical execution state.
 
 **Phase prompt additions**
-- Relevant execution, node *and project* events.
+- Relevant execution, node *and workflow* events.
 - Test serialization, correlation IDs, failure handling and duplicate handling.
 - Test that domain state stays correct even when event consumers fail.
 - "Events must not become the canonical source of domain state."
 - Completion condition: the event infrastructure is usable by later observability and frontend live-update work.
 
 **Architecture references**
-- §18 describes the event architecture and its fields: event_id, event_type, timestamp, execution_id, project_id, project_version_id, node_id, payload. It requires events to be immutable.
+- §18 describes the event architecture and its fields: event_id, event_type, timestamp, execution_id, workflow_id, workflow_version_id, node_id, payload. It requires events to be immutable.
 - §19 describes the event flow Runtime → Event Publisher → Persistence / WebSocket / Metrics / Audit.
 - §95 requires domain events and infrastructure events to be kept separate.
 
@@ -77,7 +77,7 @@ The phase prompt added four requirements:
 
 ### Domain
 - **New module `backend/src/akasha/domain/event.py`:**
-  - `EventType` (StrEnum) with 12 values: `execution.created`, `execution.started`, `execution.completed`, `execution.failed`, `execution.cancelled`, `execution.timed_out`, `node.started`, `node.completed`, `node.failed`, `node.skipped`, `node.cancelled`, `project.published`.
+  - `EventType` (StrEnum) with 12 values: `execution.created`, `execution.started`, `execution.completed`, `execution.failed`, `execution.cancelled`, `execution.timed_out`, `node.started`, `node.completed`, `node.failed`, `node.skipped`, `node.cancelled`, `workflow.published`.
   - `PAYLOAD_KEYS`: the exact payload keys for each event type (a closed schema).
   - `EVENT_SCHEMA_VERSION = 1`.
   - `PayloadValue = str | int | None`.
@@ -99,9 +99,9 @@ The phase prompt added four requirements:
   - New function `save_execution(uow, execution)`: it saves the aggregate and appends its pending events in the same transaction.
   - `ExecutionService.__init__` takes an optional `events: EventPublisher`.
   - `create_execution` publishes after commit.
-- **`backend/src/akasha/application/projects.py`:**
-  - `ProjectService.__init__` takes an optional `events: EventPublisher`.
-  - `publish_project` builds and appends a `project.published` event in the publish transaction and publishes it after commit.
+- **`backend/src/akasha/application/workflows.py`:**
+  - `WorkflowService.__init__` takes an optional `events: EventPublisher`.
+  - `publish_workflow` builds and appends a `workflow.published` event in the publish transaction and publishes it after commit.
 
 ### Runtime
 - **`backend/src/akasha/runtime/runtime.py`:**
@@ -120,7 +120,7 @@ The phase prompt added four requirements:
 ### Composition
 - **`backend/src/akasha/bootstrap.py`:**
   - `Container.events: EventPublisher`, using a default factory.
-  - `create_container` builds one publisher and passes it to `ProjectService` and `ExecutionService`.
+  - `create_container` builds one publisher and passes it to `WorkflowService` and `ExecutionService`.
 
 ### Testing
 - **New test files:**
@@ -148,7 +148,7 @@ The phase prompt added four requirements:
 | `backend/src/akasha/application/events.py` | Created (83 lines) | `EventPublisher`, `EventSubscriber` |
 | `backend/src/akasha/application/persistence.py` | Modified | `EventRepository` protocol; `UnitOfWork.events` |
 | `backend/src/akasha/application/executions.py` | Modified | `save_execution`; publisher injection; publish after commit |
-| `backend/src/akasha/application/projects.py` | Modified | `project.published` recorded, persisted and published |
+| `backend/src/akasha/application/workflows.py` | Modified | `workflow.published` recorded, persisted and published |
 | `backend/src/akasha/runtime/runtime.py` | Modified | `StateManager` persists and publishes events; `ExecutionRuntime(events=)` |
 | `backend/src/akasha/infrastructure/db_models.py` | Modified | `events` table definition |
 | `backend/src/akasha/infrastructure/persistence.py` | Modified | `SqlAlchemyEventRepository`; UoW wiring |
@@ -196,7 +196,7 @@ The event design follows architecture §18/§19. The decisions below fill in det
 **Consequences.**
 - New transitions must add an `_emit` call.
 - Retry and pause transitions exist in the domain but emit nothing yet (§19).
-- `project.published` is the exception: `Project` does not record events, and `ProjectService` builds this one (§5.5).
+- `workflow.published` is the exception: `Workflow` does not record events, and `WorkflowService` builds this one (§5.5).
 
 ### 5.2 Transactional append (same transaction as the state)
 
@@ -207,7 +207,7 @@ The event design follows architecture §18/§19. The decisions below fill in det
 **Chosen approach.**
 - `save_execution(uow, execution)` calls `uow.executions.save(execution)` and then `uow.events.append(execution.pending_events)`.
 - The caller commits, and then publishes `execution.pull_events()`.
-- `publish_project` appends inside its existing publish transaction.
+- `publish_workflow` appends inside its existing publish transaction.
 
 **Alternatives considered.** A persisting subscriber on the publisher.
 
@@ -242,24 +242,24 @@ The event design follows architecture §18/§19. The decisions below fill in det
 **Decision.** A `BIGINT GENERATED ALWAYS AS IDENTITY` column `position` defines event order. Events are inserted one statement at a time, in order.
 
 **Reason.**
-- Each execution and each project has exactly one writer at a time, enforced by the existing compare-and-swap on `revision`.
+- Each execution and each workflow has exactly one writer at a time, enforced by the existing compare-and-swap on `revision`.
 - The writer's transactions are sequential.
 - Identity values drawn in insertion order are therefore monotonic within a stream.
 
 **Consequences.**
-- Order is guaranteed per `execution_id` and per `project_id`.
+- Order is guaranteed per `execution_id` and per `workflow_id`.
 - Across unrelated streams, positions only approximate commit order. A global "after N" cursor may skip an event that committed concurrently. This is documented on `EventRepository.list`.
 
-### 5.5 `project.published` built by the service
+### 5.5 `workflow.published` built by the service
 
-**Decision.** `ProjectService.publish_project` constructs the event.
+**Decision.** `WorkflowService.publish_workflow` constructs the event.
 
 **Reason.**
-- It is the only project event in scope.
-- Adding event recording to `Project` for one event was not justified.
+- It is the only workflow event in scope.
+- Adding event recording to `Workflow` for one event was not justified.
 - The event is appended in the same transaction as the version insert, so atomicity is the same as for execution events.
 
-**Consequences.** If more project events are added (created, draft updated, deleted), consider moving recording into `Project` for consistency with §5.1.
+**Consequences.** If more workflow events are added (created, draft updated, deleted), consider moving recording into `Workflow` for consistency with §5.1.
 
 ### 5.6 Closed, scalar payloads
 
@@ -279,17 +279,17 @@ The event design follows architecture §18/§19. The decisions below fill in det
 |---|---|---|
 | `event_type` | `EventType` | Coerced from its string value (`EventType("node.skipped")`) |
 | `occurred_at` | `datetime` | Must be timezone-aware |
-| `project_id` | `str` | Validated domain ID |
-| `execution_id` | `str \| None` | Required for `execution.*` and `node.*`; forbidden for `project.*` |
+| `workflow_id` | `str` | Validated domain ID |
+| `execution_id` | `str \| None` | Required for `execution.*` and `node.*`; forbidden for `workflow.*` |
 | `node_id` | `str \| None` | Required for `node.*`; forbidden otherwise |
-| `project_version` | `int \| None` | Execution events: the pinned version; `project.published`: the new version |
+| `workflow_version` | `int \| None` | Execution events: the pinned version; `workflow.published`: the new version |
 | `correlation_id` | `str \| None` | Copied from `ExecutionMetadata.correlation_id` for execution/node events |
 | `payload` | `Mapping[str, str\|int\|None]` | Defensive copy; keys must equal `PAYLOAD_KEYS[event_type]` |
 | `event_id` | `str` | Default `new_id("evt")` |
 | `schema_version` | `int` | Default `EVENT_SCHEMA_VERSION = 1`; must be ≥ 1 |
 | `position` | `int \| None` | `None` until persisted; set when read back from the store |
 
-**Deviation from architecture §18.** The architecture lists `project_version_id`. The implementation carries `project_version` (the version number) instead. The rest of the persistence model identifies a version by `(project_id, version)`: the `executions.project_version` column and the FK to `project_versions(project_id, version)`. Logs also use the number.
+**Deviation from architecture §18.** The architecture lists `workflow_version_id`. The implementation carries `workflow_version` (the version number) instead. The rest of the persistence model identifies a version by `(workflow_id, version)`: the `executions.workflow_version` column and the FK to `workflow_versions(workflow_id, version)`. Logs also use the number.
 
 **Payload schema (`PAYLOAD_KEYS`)**
 
@@ -306,7 +306,7 @@ The event design follows architecture §18/§19. The decisions below fill in det
 | `node.failed` | `attempt`, `error_code`, `error_kind` |
 | `node.skipped` | — |
 | `node.cancelled` | — |
-| `project.published` | — |
+| `workflow.published` | — |
 
 ### `Execution` (changed)
 
@@ -340,14 +340,14 @@ The event design follows architecture §18/§19. The decisions below fill in det
 | `event_type` | VARCHAR | NOT NULL |
 | `schema_version` | INTEGER | NOT NULL |
 | `occurred_at` | TIMESTAMPTZ | NOT NULL |
-| `project_id` | VARCHAR | NOT NULL |
+| `workflow_id` | VARCHAR | NOT NULL |
 | `execution_id` | VARCHAR | NULL |
 | `node_id` | VARCHAR | NULL |
-| `project_version` | INTEGER | NULL |
+| `workflow_version` | INTEGER | NULL |
 | `correlation_id` | VARCHAR | NULL |
 | `payload` | JSONB | NOT NULL |
 
-- **Indexes:** `ix_events_execution_position (execution_id, position)` and `ix_events_project_position (project_id, position)`.
+- **Indexes:** `ix_events_execution_position (execution_id, position)` and `ix_events_workflow_position (workflow_id, position)`.
 - **Relationships:** none (deliberately no FKs, §22).
 
 **Compatibility.**
@@ -373,7 +373,7 @@ A round-trip test confirms that every field survives persistence.
 | Contract | Purpose | Input | Output | Errors / semantics |
 |---|---|---|---|---|
 | `EventRepository.append(events)` | Persist events in the caller's transaction | `Sequence[Event]` | None | Idempotent on `event_id` (`ON CONFLICT DO NOTHING`). Participates in the UoW transaction; any failure aborts it. |
-| `EventRepository.list(*, execution_id=None, project_id=None, after=0, limit=100)` | Read history / catch up | Optional stream filters, position cursor | Events with `position > after`, ascending | Order is guaranteed per execution and per project; across streams it is approximate. |
+| `EventRepository.list(*, execution_id=None, workflow_id=None, after=0, limit=100)` | Read history / catch up | Optional stream filters, position cursor | Events with `position > after`, ascending | Order is guaranteed per execution and per workflow; across streams it is approximate. |
 | `UnitOfWork.events` | New protocol member | — | — | **Breaking for implementations of `UnitOfWork`:** the only other implementation, `FakeUow` in `tests/application/test_trigger_service.py`, was updated. |
 | `EventPublisher.subscribe(subscriber, *, event_types=None)` | Register a consumer | Async callable; optional type filter | Unsubscribe callable | — |
 | `EventPublisher.publish(events)` | Fan out after commit | `Sequence[Event]` | None | Never raises for subscriber errors or timeouts (logged as `event_subscriber_failed`); propagates `CancelledError`. |
@@ -382,7 +382,7 @@ A round-trip test confirms that every field survives persistence.
 
 **Constructor changes (backward compatible, optional keyword or positional):**
 - `ExecutionService(uow, events=None)`
-- `ProjectService(uow, node_definitions, events=None)`
+- `WorkflowService(uow, node_definitions, events=None)`
 - `ExecutionRuntime(..., events=None)`
 
 When `None` is passed, each creates a private `EventPublisher` with no subscribers. Events are still persisted but nobody is notified.
@@ -406,18 +406,18 @@ When `None` is passed, each creates a private `EventPublisher` with no subscribe
 - `ExecutionService.create_execution` does `Execution.create(...)` (records `execution.created`), then `enqueue()`, `save_execution`, commit and publish.
 - `ExecutionRuntime.cancel` for an execution not running locally goes through `StateManager.save`, so it is evented too (tested).
 
-**Publish path (projects).** `publish_project`:
+**Publish path (workflows).** `publish_workflow`:
 1. validates the draft;
 2. calls `publish_draft()`;
-3. builds `Event(PROJECT_PUBLISHED, occurred_at=version.published_at, project_version=version.version)`;
-4. saves the project and the version, appends the event, commits;
+3. builds `Event(WORKFLOW_PUBLISHED, occurred_at=version.published_at, workflow_version=version.version)`;
+4. saves the workflow and the version, appends the event, commits;
 5. then publishes.
 
 A failed validation raises before anything is appended (tested).
 
 **Repository.**
 - `SqlAlchemyEventRepository.append` issues one `INSERT ... ON CONFLICT (event_id) DO NOTHING` per event, in order. One statement per event guarantees that identity values are drawn in event order.
-- `list` builds `SELECT ... WHERE position > :after [AND execution_id = ...] [AND project_id = ...] ORDER BY position LIMIT :limit`.
+- `list` builds `SELECT ... WHERE position > :after [AND execution_id = ...] [AND workflow_id = ...] ORDER BY position LIMIT :limit`.
 
 **Publisher concurrency.**
 - `publish` iterates over a copy of the subscription list, so a subscriber may unsubscribe during delivery (tested).
@@ -444,7 +444,7 @@ A failed validation raises before anything is appended (tested).
 ## 9. Findings
 
 ### F1 — Single-node graphs are rejected by validation
-- **Finding:** A draft with one node fails validation with `DISCONNECTED_NODE`. My first integration tests used single-node graphs and failed at `publish_project`.
+- **Finding:** A draft with one node fails validation with `DISCONNECTED_NODE`. My first integration tests used single-node graphs and failed at `publish_workflow`.
 - **Impact:** LOW (test authoring only).
 - **Resolution:** FIXED. The tests use two-node graphs.
 - **Notes:** This is existing Phase 04 behaviour and did not change.
@@ -462,7 +462,7 @@ A failed validation raises before anything is appended (tested).
 - **Notes:** This also shows a property of the isolation design: a consumer that reads the database is safe only after commit. Publishing before commit would deadlock that consumer against its producer until the timeout.
 
 ### F4 — Pre-existing: repositories advance `revision` in memory before commit
-- **Finding:** `SqlAlchemyExecutionRepository.save` (and the project repository) increments `execution.revision` right after the UPDATE, before `commit()`. If the commit then fails, the in-memory aggregate claims a revision that was never persisted.
+- **Finding:** `SqlAlchemyExecutionRepository.save` (and the workflow repository) increments `execution.revision` right after the UPDATE, before `commit()`. If the commit then fails, the in-memory aggregate claims a revision that was never persisted.
 - **Impact:** LOW for this phase. The runtime aborts on persistence errors, and pending events are not pulled on failure.
 - **Resolution:** OPEN (pre-existing, not changed).
 - **Notes:** This is why pulling events *after* commit is sufficient but not a retry mechanism. A retried save of the same aggregate would fail CAS anyway. Relevant for Phase 23 recovery.
@@ -486,7 +486,7 @@ A failed validation raises before anything is appended (tested).
 |---|---|---|---|---|---|---|
 | B1 | A committed-state test could not detect early publication | The subscriber checked only for mismatches; a timed-out subscriber was silently isolated | The test now requires positive observation of every event | `test_subscribers_only_see_committed_state` (verified by mutation) | Tests | Introduced and fixed during this phase |
 | B2 | A test helper `event(event_type, **overrides)` raised `TypeError` when overriding `event_type` | Parameter name collided with the override key | Renamed the parameter to `kind` | `test_event_type_is_coerced_from_its_wire_value`, `test_malformed_events_are_rejected[overrides5]` | Tests | Introduced and fixed during this phase |
-| B3 | An integration assertion expected no events at all after a rolled-back `create_execution` | The test's own `publish` legitimately records `project.published` | The assertion now checks that only `project.published` exists | `test_event_store_failure_rolls_back_the_state_change` | Tests | Introduced and fixed during this phase |
+| B3 | An integration assertion expected no events at all after a rolled-back `create_execution` | The test's own `publish` legitimately records `workflow.published` | The assertion now checks that only `workflow.published` exists | `test_event_store_failure_rolls_back_the_state_change` | Tests | Introduced and fixed during this phase |
 | B4 | Two convoluted assertions (out-of-process cancel, cancel cascade) in the first draft | Unclear authoring | Rewritten as explicit trail assertions (sorted cascade, since node ids are random) | the tests themselves | Tests | Introduced and fixed during this phase |
 
 No product-code bugs from earlier phases were found. F4 is a pre-existing design property, not a demonstrated defect. F5 was environmental.
@@ -521,9 +521,9 @@ No product-code bugs from earlier phases were found. F4 is a pre-existing design
   - immutability plus a defensive payload copy;
   - scope-id rules (5 cases);
   - a closed, scalar payload: missing key, unknown key, bool, float, dict and list all rejected;
-  - malformed input: naive datetime, bad project/event/node ids, `schema_version=0`, unknown type.
+  - malformed input: naive datetime, bad workflow/event/node ids, `schema_version=0`, unknown type.
 - **Aggregate recording:**
-  - `execution.created` context (project, version, correlation, trigger payload);
+  - `execution.created` context (workflow, version, correlation, trigger payload);
   - full success order and timestamps;
   - failure followed by the sorted cascade;
   - cancel records no reason (`password=hunter2` absent);
@@ -553,7 +553,7 @@ No product-code bugs from earlier phases were found. F4 is a pre-existing design
 | `test_events_are_ordered_by_position_and_paged_by_cursor` | Order by position, stream filtering, `after` cursor, `limit` |
 | `test_uncommitted_events_are_rolled_back` | Transaction participation |
 | `test_positions_cannot_be_forged` | `GENERATED ALWAYS` rejects explicit positions |
-| `test_successful_run_reconstructs_from_events_plus_state` | **Acceptance criterion:** exact trail, live = persisted, correlation/project/version on all events, event timestamps equal state timestamps, no outputs in payloads |
+| `test_successful_run_reconstructs_from_events_plus_state` | **Acceptance criterion:** exact trail, live = persisted, correlation/workflow/version on all events, event timestamps equal state timestamps, no outputs in payloads |
 | `test_failure_skip_and_cascade_events` | Failure, skip via a control-flow node, cancel cascade, failure payload |
 | `test_cancel_running_execution_events` | Cancel while running; the reason does not leak |
 | `test_out_of_process_cancel_of_queued_execution_is_evented` | The out-of-process cancel path records events |
@@ -561,7 +561,7 @@ No product-code bugs from earlier phases were found. F4 is a pre-existing design
 | `test_broken_and_hanging_consumers_do_not_affect_the_run` | **Broken consumer:** raising plus hanging subscribers leave the status COMPLETED, outputs persisted, 7/7 events stored, healthy subscriber received all |
 | `test_subscribers_only_see_committed_state` | Delivery only after commit (positive observation) |
 | `test_event_store_failure_rolls_back_the_state_change` | Atomicity: no execution row, nothing published |
-| `test_publish_records_project_published` | Project event persisted and published; timestamp = `published_at` |
+| `test_publish_records_workflow_published` | Workflow event persisted and published; timestamp = `published_at` |
 | `test_failed_publish_records_no_event` | Failed validation → no event |
 
 **Break-the-code loop (mutation verification).** Each mutation was applied, the 64 new tests were run, and the source was restored from a backup copy (`git status` afterwards showed only the intended changes). The first "publish before commit" run survived and led to fix §11.1; the table shows the final results.
@@ -575,12 +575,12 @@ No product-code bugs from earlier phases were found. F4 is a pre-existing design
 | No subscriber timeout | killed (2 failed) |
 | No `ON CONFLICT DO NOTHING` | killed (1 failed) |
 | No `node.cancelled` in the cascade | killed (6 failed) |
-| No `project.published` append | killed (2 failed) |
+| No `workflow.published` append | killed (2 failed) |
 
 ### Infrastructure Tests
 - `tests/integration/test_persistence.py::test_migrations_upgrade_downgrade_upgrade_on_empty_database` now expects head `0005_events` and asserts that the `events` table exists after upgrade and is gone after downgrade to base. It passes.
 - The existing `0002` upgrade-with-data test also migrates through `0005` to head. It passes.
-- `tests/test_lifecycle.py::test_container_wires_project_service_with_database` asserts `container.executions._events is container.events is container.projects._events`. It passes.
+- `tests/test_lifecycle.py::test_container_wires_workflow_service_with_database` asserts `container.executions._events is container.events is container.workflows._events`. It passes.
 
 ### Security Tests
 - A closed payload schema rejects unknown keys (`outputs`) and non-scalar values (domain tests).
@@ -604,7 +604,7 @@ All gates were executed in `backend/` on the final working tree.
 | Unit Tests | PASS | Included in the full run |
 | Integration Tests | PASS | Included in the full run; Docker reachable, 0 skipped |
 | Full test suite | PASS | `uv run pytest` → **905 passed, 0 skipped**, 1 warning (≈38 s). Before this phase: 841. |
-| API Tests | PASS | The existing API tests (projects, triggers) pass; no new API |
+| API Tests | PASS | The existing API tests (workflows, triggers) pass; no new API |
 | E2E Tests | N/A | No E2E suite exists for the backend in this phase |
 | Build | PASS | `uv build` (output to a scratch dir outside the repo) |
 | Security Checks | PASS | Ruff `S` rules pass; the security-relevant tests in §12 pass. No separate dependency audit was run (no dependency changes). |
@@ -642,7 +642,7 @@ There are none in `src`.
 
 | Requirement | Status | Evidence |
 |---|---|---|
-| Relevant execution/node/project events | PASS | 11 execution/node types + `project.published`; `test_publish_records_project_published`. Only `project.published` among project events (§19). |
+| Relevant execution/node/workflow events | PASS | 11 execution/node types + `workflow.published`; `test_publish_records_workflow_published`. Only `workflow.published` among workflow events (§19). |
 | Serialization | PASS | `test_events_round_trip_through_the_store` |
 | Correlation IDs | PASS | Asserted on every event of a run (domain + integration); included in subscriber-failure logs |
 | Failure handling | PASS | Subscriber errors and timeouts isolated; event-store failure aborts the transaction |
@@ -682,7 +682,7 @@ No criterion is PARTIAL or FAIL.
   - A terminal cascade records one `node.cancelled` per unfinished node plus the terminal event, i.e. N+1 round trips.
   - This is marked with a `ponytail:` comment in `SqlAlchemyEventRepository.append`, with the upgrade path "batch when large graphs make it show".
 - **Publisher latency:** delivery is inline. Each event adds the sum of the subscriber durations to the producer, bounded by `subscriber_timeout` per subscriber and event. With no subscribers the cost is a loop over an empty list. This is marked with a `ponytail:` comment in `EventPublisher.publish`.
-- **Reads:** `(execution_id, position)` and `(project_id, position)` indexes serve the stream-cursor query. An unfiltered `list()` scans by the primary key.
+- **Reads:** `(execution_id, position)` and `(workflow_id, position)` indexes serve the stream-cursor query. An unfiltered `list()` scans by the primary key.
 - **Growth:** the table grows by roughly (2 × nodes + 3) rows per execution. There is no retention yet.
 - **Measurements:** none were taken. The full suite runtime went from about 36 s to about 38–40 s, which reflects the added tests rather than a benchmark. No performance claims are made.
 
@@ -697,7 +697,7 @@ No criterion is PARTIAL or FAIL.
 | Module docstrings | Maintainer knowledge | `domain/event.py`, `application/events.py` (delivery contract), `domain/execution.py` (which transitions are evented and which are not), `runtime/runtime.py` (event rule), `application/persistence.py` (`EventRepository` contract), `0005_events.py` |
 
 **Should be updated in a future phase:**
-- architecture §18 still lists `project_version_id` (the implementation uses `project_version`, see §6);
+- architecture §18 still lists `workflow_version_id` (the implementation uses `workflow_version`, see §6);
 - the WebSocket event schema section (architecture "Event Stream") once live updates exist;
 - retention policy documentation when event retention is implemented.
 
@@ -724,7 +724,7 @@ No criterion is PARTIAL or FAIL.
 | Metrics and audit subscribers | Observability is Phase 12 | 12 | No |
 | Outbox relay / cross-process fan-out (Redis) | Only needed with workers; at-most-once in-process is sufficient now | 22 | No |
 | Events for `retry_node`, `pause`, `wait`, `resume`, `mark_node_ready`, `enqueue` | No runtime path drives retry/pause/wait/resume yet; `enqueue` is folded into `execution.created`; readiness is internal scheduling detail | 23 (retries/recovery) | No: the roadmap does not list these events |
-| Additional project events (created, draft updated, deleted) | Not required; `project.published` is the lifecycle event executions depend on | Unassigned | No |
+| Additional workflow events (created, draft updated, deleted) | Not required; `workflow.published` is the lifecycle event executions depend on | Unassigned | No |
 | Event retention/pruning | No retention framework exists yet | Later operational phase | No |
 | Passing `container.events` into `ExecutionRuntime` from the container | The runtime is not yet constructed by `create_container` | 21/22 | No |
 
@@ -734,13 +734,13 @@ No criterion is PARTIAL or FAIL.
 
 1. **At-most-once live delivery.** If the process dies after commit and before `publish`, subscribers miss the notification. The event itself is persisted.
 2. **Inline subscribers.** A slow subscriber delays the execution by up to `subscriber_timeout` (5 s default) per event and subscriber. Live-update consumers must only enqueue.
-3. **No global order.** `position` orders events within one execution or one project. Across streams, a global `after` cursor can skip concurrently committed events.
+3. **No global order.** `position` orders events within one execution or one workflow. Across streams, a global `after` cursor can skip concurrently committed events.
 4. **Timeout does not stop the subscriber's side effects.** The timeout cancels the awaited coroutine. A subscriber that spawned its own tasks or threads is not stopped.
 5. **Not every transition is evented** (see §19). Pause, wait, resume and retry states would currently not appear in the event log if some code drove them.
 6. **Executions created before migration `0005_events` have no events.** Their lifecycle is available only from state.
 7. **Append-only by contract, not by database permission.** A role with UPDATE/DELETE privileges on `events` could alter history.
 8. **The event store is on the write path.** If the `events` insert fails, the state transition fails with it. This is by design (atomicity), but the event table's health now affects execution progress.
-9. **`project.published` is recorded by the service, not the `Project` aggregate** (see §5.5).
+9. **`workflow.published` is recorded by the service, not the `Workflow` aggregate** (see §5.5).
 
 ---
 
@@ -749,7 +749,7 @@ No criterion is PARTIAL or FAIL.
 | Issue | Impact | Severity | Area | Recommended next action | Target phase |
 |---|---|---|---|---|---|
 | Runtime not wired to `Container.events` | Runtime events would reach only a private publisher if the runtime were constructed without `events=` | MEDIUM | Composition | Pass `events=container.events` when the container constructs the runtime or worker | 21/22 |
-| Architecture §18 names `project_version_id`; the implementation uses the version number | Documentation inconsistency | LOW | Docs | Update §18 or add the id if a consumer needs it | 12 or frontend live phase |
+| Architecture §18 names `workflow_version_id`; the implementation uses the version number | Documentation inconsistency | LOW | Docs | Update §18 or add the id if a consumer needs it | 12 or frontend live phase |
 | Pre-existing: in-memory `revision` advanced before commit (F4) | Stale aggregate after a failed commit | LOW | Persistence | Review together with recovery semantics | 23 |
 | Transient Docker ping (F5) | Integration tests may be skipped silently in a slow environment | LOW | Test infrastructure | Consider a longer ping timeout or failing in CI when Docker is expected | CI hardening |
 
@@ -775,7 +775,7 @@ No criterion is PARTIAL or FAIL.
 - **Base commit:** `dd7cb18 backend phase 10 - trigger system`.
 - **Working tree:** uncommitted Phase 11 changes; nothing staged or committed during this phase.
 - **Modified (13):**
-  - `backend/src/akasha/application/{executions,persistence,projects}.py`
+  - `backend/src/akasha/application/{executions,persistence,workflows}.py`
   - `backend/src/akasha/bootstrap.py`
   - `backend/src/akasha/domain/execution.py`
   - `backend/src/akasha/infrastructure/{db_models,persistence}.py`
@@ -804,7 +804,7 @@ No criterion is PARTIAL or FAIL.
 - `EventPublisher`, `EventSubscriber`, `EventRepository` and its SQLAlchemy implementation;
 - migration `0005_events`;
 - lifecycle recording in the `Execution` aggregate (11 execution/node event types);
-- `project.published`;
+- `workflow.published`;
 - transactional append;
 - after-commit, isolated publication;
 - container wiring for the services.
@@ -817,7 +817,7 @@ No criterion is PARTIAL or FAIL.
 ### Not Implemented
 - Event access over HTTP or WebSocket.
 - Events for retry, pause, wait and resume.
-- Project events other than `published`.
+- Workflow events other than `published`.
 
 ### Deferred
 See §19. None are in the Phase 11 roadmap scope.
@@ -835,7 +835,7 @@ None.
 ## 25. Handoff to Next Phase
 
 **What Phase 12 (Observability) and later phases can assume:**
-- Every execution and node lifecycle transition driven by the runtime produces a persisted `Event`. It is atomic with the state and carries `correlation_id`, `project_id`, `project_version`, `execution_id` and, for node events, `node_id`.
+- Every execution and node lifecycle transition driven by the runtime produces a persisted `Event`. It is atomic with the state and carries `correlation_id`, `workflow_id`, `workflow_version`, `execution_id` and, for node events, `node_id`.
 - `container.events.subscribe(callback, event_types=[...])` delivers events in order after commit. It is suitable for metrics counters (execution/node success and failure counts, and durations derived from start/finish events of the same id).
 - `uow.events.list(execution_id=..., after=position, limit=...)` returns the ordered history of one execution for catch-up and inspection.
 
@@ -859,5 +859,5 @@ None.
 
 **Prerequisites and open items for next phases:**
 - Pass `events=container.events` when the container starts constructing `ExecutionRuntime` or workers.
-- Resolve the §18 `project_version_id` naming when the first external consumer (WebSocket) is designed.
+- Resolve the §18 `workflow_version_id` naming when the first external consumer (WebSocket) is designed.
 - For multi-process workers (Phase 22), add an outbox relay that reads `events` by position, because in-process publication does not cross processes.

@@ -27,7 +27,7 @@ The session prompt added:
 - **Accessible editing path:** a new `ConnectionsPanel` with edge lists, Remove buttons and a "New connection" form.
 - **Backend:** the port type rule existed only as Python code (`ports_compatible`). It is now also published as data: `GET /api/v1/nodes` returns `port_compatibility`, generated from that function. The frontend uses it and does not re-implement the rule.
 
-**Resulting state.** Every new operation is one undo step and is saved through the existing draft save, autosave and revision-conflict handling. A full-stack test against the real backend connects `core.input → core.log → core.output` by dragging and saves. The backend stores the edges, `POST /projects/{id}/validate` returns `{valid: true, issues: []}`, and a page reload shows the same graph.
+**Resulting state.** Every new operation is one undo step and is saved through the existing draft save, autosave and revision-conflict handling. A full-stack test against the real backend connects `core.input → core.log → core.output` by dragging and saves. The backend stores the edges, `POST /workflows/{id}/validate` returns `{valid: true, issues: []}`, and a page reload shows the same graph.
 
 **Acceptance criteria.** All three roadmap criteria pass (§14). Limitations remain, for example no cycle pre-check and no canvas-level keyboard connecting (§20).
 
@@ -188,7 +188,7 @@ No directories were created or deleted. No migrations, no dependency or configur
 | `frontend/src/styles/index.css` | Modified | connection/edge feedback styles |
 | `frontend/src/test/setup.ts` | Modified | `SVGElement.getBBox` stand-in for edge labels |
 | `frontend/tests/e2e/editor.spec.ts` | Modified | 2 new tests; `fakeBackend` takes an optional draft/catalog; fixture port type `any` → `json` |
-| `frontend/tests/fullstack/projects.spec.ts` | Modified | 2 new full-stack tests |
+| `frontend/tests/fullstack/workflows.spec.ts` | Modified | 2 new full-stack tests |
 | `docs/architecture.md` | Modified | §45 port rule as data; §22 endpoint table |
 | `frontend/README.md` | Modified | Draft editor section |
 | `docs/reports/frontend/phase-10-graph-editing.md` | Created | this report |
@@ -369,7 +369,7 @@ Handled by `onKeyDown` on the editor container. Text inputs are ignored (`isText
 - Submit dispatches `connect`. Remove dispatches `delete` with a single edge key.
 
 ### Persistence
-The mechanism is unchanged from Phase 07. Edges are part of `draft.graph` in `PUT /api/v1/projects/{id}` with `expected_revision`. Autosave (1.5 s), the single-flight save, the 409 conflict flow, the leave guard and "the undo stack survives saves" all cover the new operations without extra code.
+The mechanism is unchanged from Phase 07. Edges are part of `draft.graph` in `PUT /api/v1/workflows/{id}` with `expected_revision`. Autosave (1.5 s), the single-flight save, the 409 conflict flow, the leave guard and "the undo stack survives saves" all cover the new operations without extra code.
 
 ### Purity
 The reducer generates no ids and reads no time. New ids for duplicate and paste come from `useDraftEditor.freshIds`.
@@ -415,7 +415,7 @@ The reducer generates no ids and reads no time. New ids for duplicate and paste 
   - The editor's canvas is about 310–400 px wide inside the page's max width.
   - Dragging library items that sit far down the list scrolls the page, so dropped nodes overlapped.
   - A later press then hit a node body instead of a handle.
-  - The full-stack connection test now seeds three nodes through `PUT /projects/{id}`. Node insertion by drag stays covered by Phase 08 tests and the mocked E2E.
+  - The full-stack connection test now seeds three nodes through `PUT /workflows/{id}`. Node insertion by drag stays covered by Phase 08 tests and the mocked E2E.
   - Product behavior is unaffected.
 
 ### Finding 8 — Frontend unit tests are sensitive to CPU load
@@ -717,7 +717,7 @@ No measurements were made.
 | Auto layout | Optional in the roadmap; `placeUnpositioned` already lays out never-placed nodes | not scheduled | none | No |
 | Cycle pre-check while connecting | Graph validity is the backend's; future loop nodes may allow marked cycles | Phase 11 decides whether the validation UX surfaces it earlier | loop-node design | No (validation reports `cycle_detected`) |
 | Focusing a node, port or edge from a validation issue | Validation UX | Phase 11 | none | No |
-| System clipboard (paste across tabs or projects) | The internal clipboard meets the roadmap; the system clipboard means parsing untrusted JSON | not scheduled | none | No |
+| System clipboard (paste across tabs or workflows) | The internal clipboard meets the roadmap; the system clipboard means parsing untrusted JSON | not scheduled | none | No |
 | Node label editing | Not in scope | later | none | No |
 | Automated accessibility audit | Accessibility phase | Phase 25 | none | No |
 
@@ -764,7 +764,7 @@ No measurements were made.
 - **Branch:** `main`.
 - **HEAD:** `b53d24f frontend phase 09 - node configuration inspector`.
 - **Working tree:** uncommitted changes from this phase only. Nothing was committed.
-  - **Modified (22):** the four backend files, `docs/architecture.md`, `frontend/README.md`, `openapi.json`, `api/nodes.ts`, the nine editor files and tests listed in §4, `index.css`, `test/setup.ts`, `tests/e2e/editor.spec.ts` and `tests/fullstack/projects.spec.ts`.
+  - **Modified (22):** the four backend files, `docs/architecture.md`, `frontend/README.md`, `openapi.json`, `api/nodes.ts`, the nine editor files and tests listed in §4, `index.css`, `test/setup.ts`, `tests/e2e/editor.spec.ts` and `tests/fullstack/workflows.spec.ts`.
   - **Untracked (4):** `connections.ts`, `connections.test.ts`, `ConnectionsPanel.tsx`, and this report.
 - **Generated artifacts:** `frontend/test-results/` and `frontend/dist/` hold Playwright and build output from the runs. Both are git-ignored.
 - **Unrelated changes:** none detected. The tree was clean at the start of the session.

@@ -38,7 +38,7 @@ from akasha.domain.node import (
     NodeResult,
     PortType,
 )
-from akasha.domain.project import Project, ProjectDraft
+from akasha.domain.workflow import Workflow, WorkflowDraft
 from akasha.errors import ConfigurationError, DomainValidationError
 from akasha.runtime.credentials import NodeCredentials
 from akasha.runtime.executor import NodeOutcome, execute_node
@@ -275,16 +275,16 @@ def test_clean_configs_pass(config: dict[str, Any]) -> None:
 
 
 def test_draft_with_plaintext_secret_is_rejected_without_echoing_it() -> None:
-    project = Project.create("p")
+    workflow = Workflow.create("p")
     node = NodeInstance.create("core.smtp", config={"password": CANARY})
     graph = Graph()
     graph.add_node(node)
     with pytest.raises(PlaintextSecretError) as exc:
-        project.replace_draft(ProjectDraft(graph=graph), name="p")
+        workflow.replace_draft(WorkflowDraft(graph=graph), name="p")
     assert exc.value.code == "PLAINTEXT_SECRET"
     assert exc.value.details == {"paths": [f"nodes.{node.id}.config.password"]}
     assert CANARY not in f"{exc.value} {exc.value.details}"
-    assert project.draft.graph.nodes == {}  # nothing stored
+    assert workflow.draft.graph.nodes == {}  # nothing stored
 
 
 def test_legacy_plaintext_blocks_validation() -> None:

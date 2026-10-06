@@ -1,4 +1,4 @@
-"""Project Graph validation (roadmap Phase 04).
+"""Workflow Graph validation (roadmap Phase 04).
 
 Structural integrity already lives on ``Graph``/``Edge`` (Phase 02). This
 module adds the semantic layer: given a graph and the Node Definitions its
@@ -40,7 +40,7 @@ class ValidationCode(StrEnum):
     PLAINTEXT_SECRET = auto()
     CYCLE_DETECTED = auto()
     DISCONNECTED_NODE = auto()
-    # Declared project dependencies (architecture §3.8/§144).
+    # Declared workflow dependencies (architecture §3.8/§144).
     MISSING_DEPENDENCY = auto()
     INCOMPATIBLE_DEPENDENCY = auto()
     INVALID_DEPENDENCY = auto()

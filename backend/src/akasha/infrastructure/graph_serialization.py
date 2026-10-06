@@ -13,8 +13,8 @@ from collections.abc import Mapping
 from typing import Any
 
 from akasha.domain.graph import Edge, Graph, NodeInstance, Position
-from akasha.domain.project import Dependency
 from akasha.domain.trigger import Trigger, TriggerType
+from akasha.domain.workflow import Dependency
 
 
 def serialize_graph(graph: Graph) -> dict[str, Any]:

@@ -41,13 +41,13 @@ from akasha.application.persistence import (
     ExecutionSummary,
     NodeLogRepository,
     NodeSample,
-    ProjectMemberRepository,
-    ProjectRepository,
-    ProjectSort,
-    ProjectVersionRepository,
     SessionRepository,
     UnitOfWork,
     UserRepository,
+    WorkflowMemberRepository,
+    WorkflowRepository,
+    WorkflowSort,
+    WorkflowVersionRepository,
 )
 from akasha.domain.credentials import Credential, CredentialKind
 from akasha.domain.event import Event, EventType
@@ -67,21 +67,21 @@ from akasha.domain.execution import (
 )
 from akasha.domain.identity import (
     AccessToken,
-    ProjectMember,
-    ProjectRole,
     Role,
     User,
     UserSession,
+    WorkflowMember,
+    WorkflowRole,
 )
 from akasha.domain.node import NodeErrorKind
 from akasha.domain.primitives import Timestamps, is_storable
-from akasha.domain.project import (
-    Project,
-    ProjectDraft,
-    ProjectStatus,
-    ProjectVersion,
-)
 from akasha.domain.trigger import TriggerType
+from akasha.domain.workflow import (
+    Workflow,
+    WorkflowDraft,
+    WorkflowStatus,
+    WorkflowVersion,
+)
 from akasha.errors import DomainValidationError
 from akasha.infrastructure import db_models as m
 from akasha.infrastructure.database import Database
@@ -102,17 +102,17 @@ def _ensure_utc(dt: datetime) -> datetime:
     return dt if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
 
 
-# Scans the JSONB documents in SQL: no project is loaded into memory.
+# Scans the JSONB documents in SQL: no workflow is loaded into memory.
 _USING_PLUGIN = text(
     """
-    SELECT p.id FROM projects p
+    SELECT p.id FROM workflows p
     WHERE EXISTS (SELECT 1 FROM jsonb_array_elements(p.draft_graph->'nodes') n
                   WHERE n->>'node_type' = ANY(:types))
        OR EXISTS (SELECT 1 FROM jsonb_array_elements(p.draft_dependencies) d
                   WHERE d->>'kind' = 'plugin' AND d->>'name' = :plugin)
        OR EXISTS (
-            SELECT 1 FROM project_versions v
-            WHERE v.project_id = p.id
+            SELECT 1 FROM workflow_versions v
+            WHERE v.workflow_id = p.id
               AND (EXISTS (SELECT 1 FROM jsonb_array_elements(v.graph->'nodes') n
                            WHERE n->>'node_type' = ANY(:types))
                    OR EXISTS (SELECT 1 FROM jsonb_array_elements(v.dependencies) d
@@ -122,15 +122,15 @@ _USING_PLUGIN = text(
 )
 
 
-class SqlAlchemyProjectRepository(ProjectRepository):
+class SqlAlchemyWorkflowRepository(WorkflowRepository):
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def get(self, project_id: str) -> Project | None:
+    async def get(self, workflow_id: str) -> Workflow | None:
         row = (
             (
                 await self._session.execute(
-                    select(m.projects).where(m.projects.c.id == project_id)
+                    select(m.workflows).where(m.workflows.c.id == workflow_id)
                 )
             )
             .mappings()
@@ -140,54 +140,54 @@ class SqlAlchemyProjectRepository(ProjectRepository):
             return None
         return self._to_domain(row)
 
-    async def save(self, project: Project) -> None:
+    async def save(self, workflow: Workflow) -> None:
         values = {
-            "name": project.name,
-            "description": project.draft.description,
-            "status": project.status.value,
-            "draft_graph": serialize_graph(project.draft.graph),
-            "draft_triggers": [serialize_trigger(t) for t in project.draft.triggers],
+            "name": workflow.name,
+            "description": workflow.draft.description,
+            "status": workflow.status.value,
+            "draft_graph": serialize_graph(workflow.draft.graph),
+            "draft_triggers": [serialize_trigger(t) for t in workflow.draft.triggers],
             "draft_dependencies": [
-                serialize_dependency(d) for d in project.draft.dependencies
+                serialize_dependency(d) for d in workflow.draft.dependencies
             ],
-            "draft_files": serialize_files(project.draft.files),
-            "current_version": project.current_version,
-            "revision": project.revision + 1,
-            "created_at": project.timestamps.created_at,
-            "updated_at": project.timestamps.updated_at,
+            "draft_files": serialize_files(workflow.draft.files),
+            "current_version": workflow.current_version,
+            "revision": workflow.revision + 1,
+            "created_at": workflow.timestamps.created_at,
+            "updated_at": workflow.timestamps.updated_at,
         }
         # Single-statement CAS: PostgreSQL re-checks the WHERE clause after
         # waiting for a concurrent writer's row lock, so two writers holding
         # the same revision can never both succeed (no lost updates).
-        if project.revision == 0:
+        if workflow.revision == 0:
             stmt: Insert | Update = (
-                pg_insert(m.projects)
-                .values(id=project.id, owner_id=project.owner_id, **values)
-                .on_conflict_do_nothing(index_elements=[m.projects.c.id])
+                pg_insert(m.workflows)
+                .values(id=workflow.id, owner_id=workflow.owner_id, **values)
+                .on_conflict_do_nothing(index_elements=[m.workflows.c.id])
             )
         else:
             stmt = (
-                m.projects.update()
+                m.workflows.update()
                 .where(
-                    m.projects.c.id == project.id,
-                    m.projects.c.revision == project.revision,
+                    m.workflows.c.id == workflow.id,
+                    m.workflows.c.revision == workflow.revision,
                 )
                 .values(**values)
             )
         result = cast("CursorResult[Any]", await self._session.execute(stmt))
         if result.rowcount != 1:
             raise ConcurrentModificationError(
-                "The project was modified concurrently; reload and retry.",
-                details={"project_id": project.id},
+                "The workflow was modified concurrently; reload and retry.",
+                details={"workflow_id": workflow.id},
             )
-        project.revision += 1
+        workflow.revision += 1
 
-    async def delete(self, project_id: str, *, revision: int) -> bool:
+    async def delete(self, workflow_id: str, *, revision: int) -> bool:
         result = cast(
             "CursorResult[Any]",
             await self._session.execute(
-                delete(m.projects).where(
-                    m.projects.c.id == project_id, m.projects.c.revision == revision
+                delete(m.workflows).where(
+                    m.workflows.c.id == workflow_id, m.workflows.c.revision == revision
                 )
             ),
         )
@@ -200,16 +200,16 @@ class SqlAlchemyProjectRepository(ProjectRepository):
         limit: int = 100,
         visible_to: str | None = None,
         search: str | None = None,
-        statuses: Collection[ProjectStatus] = (),
-        sort: ProjectSort = ProjectSort.CREATED,
-    ) -> Sequence[Project]:
-        c = m.projects.c
-        query = select(m.projects)
+        statuses: Collection[WorkflowStatus] = (),
+        sort: WorkflowSort = WorkflowSort.CREATED,
+    ) -> Sequence[Workflow]:
+        c = m.workflows.c
+        query = select(m.workflows)
         if visible_to is not None:
             query = query.where(_visible(visible_to))
         if search:
             # ponytail: unindexed substring scan; add a pg_trgm index if
-            # project counts make it slow.
+            # workflow counts make it slow.
             literal = (
                 search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
             )
@@ -234,17 +234,17 @@ class SqlAlchemyProjectRepository(ProjectRepository):
         )
         return [self._to_domain(row) for row in rows]
 
-    async def lock_owner(self, project_id: str) -> str | None:
-        p = m.projects.c
+    async def lock_owner(self, workflow_id: str) -> str | None:
+        p = m.workflows.c
         owner: str | None = await self._session.scalar(
-            select(p.owner_id).where(p.id == project_id).with_for_update()
+            select(p.owner_id).where(p.id == workflow_id).with_for_update()
         )
         return owner
 
-    async def set_owner(self, project_id: str, owner_id: str) -> None:
+    async def set_owner(self, workflow_id: str, owner_id: str) -> None:
         await self._session.execute(
-            m.projects.update()
-            .where(m.projects.c.id == project_id)
+            m.workflows.update()
+            .where(m.workflows.c.id == workflow_id)
             .values(owner_id=owner_id)
         )
 
@@ -257,20 +257,20 @@ class SqlAlchemyProjectRepository(ProjectRepository):
         return list(result.scalars())
 
     @staticmethod
-    def _to_domain(row: RowMapping) -> Project:
+    def _to_domain(row: RowMapping) -> Workflow:
         r = dict(row)
-        draft = ProjectDraft(
+        draft = WorkflowDraft(
             graph=deserialize_graph(dict(r["draft_graph"])),
             triggers=[deserialize_trigger(t) for t in r["draft_triggers"]],
             dependencies=[deserialize_dependency(d) for d in r["draft_dependencies"]],
             description=r["description"],
             files=deserialize_files(r["draft_files"]),
         )
-        return Project(
+        return Workflow(
             id=r["id"],
             name=r["name"],
             draft=draft,
-            status=ProjectStatus(r["status"]),
+            status=WorkflowStatus(r["status"]),
             current_version=r["current_version"],
             revision=r["revision"],
             timestamps=Timestamps(
@@ -281,17 +281,17 @@ class SqlAlchemyProjectRepository(ProjectRepository):
         )
 
 
-class SqlAlchemyProjectVersionRepository(ProjectVersionRepository):
+class SqlAlchemyWorkflowVersionRepository(WorkflowVersionRepository):
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def get(self, project_id: str, version: int) -> ProjectVersion | None:
+    async def get(self, workflow_id: str, version: int) -> WorkflowVersion | None:
         row = (
             (
                 await self._session.execute(
-                    select(m.project_versions).where(
-                        m.project_versions.c.project_id == project_id,
-                        m.project_versions.c.version == version,
+                    select(m.workflow_versions).where(
+                        m.workflow_versions.c.workflow_id == workflow_id,
+                        m.workflow_versions.c.version == version,
                     )
                 )
             )
@@ -302,14 +302,14 @@ class SqlAlchemyProjectVersionRepository(ProjectVersionRepository):
             return None
         return self._to_domain(row)
 
-    async def save(self, project_id: str, version: ProjectVersion) -> None:
-        # Insert-only by contract: a second save of the same (project_id,
+    async def save(self, workflow_id: str, version: WorkflowVersion) -> None:
+        # Insert-only by contract: a second save of the same (workflow_id,
         # version) violates the unique constraint — the database is the last
         # line of defence for immutability (architecture §3.7).
         await self._session.execute(
-            m.project_versions.insert().values(
+            m.workflow_versions.insert().values(
                 id=version.id,
-                project_id=project_id,
+                workflow_id=workflow_id,
                 version=version.version,
                 schema_version=version.schema_version,
                 graph=serialize_graph(version.graph),
@@ -324,14 +324,14 @@ class SqlAlchemyProjectVersionRepository(ProjectVersionRepository):
         )
 
     async def list(
-        self, project_id: str, *, offset: int = 0, limit: int = 100
-    ) -> Sequence[ProjectVersion]:
+        self, workflow_id: str, *, offset: int = 0, limit: int = 100
+    ) -> Sequence[WorkflowVersion]:
         rows = (
             (
                 await self._session.execute(
-                    select(m.project_versions)
-                    .where(m.project_versions.c.project_id == project_id)
-                    .order_by(m.project_versions.c.version)
+                    select(m.workflow_versions)
+                    .where(m.workflow_versions.c.workflow_id == workflow_id)
+                    .order_by(m.workflow_versions.c.version)
                     .offset(offset)
                     .limit(limit)
                 )
@@ -342,39 +342,39 @@ class SqlAlchemyProjectVersionRepository(ProjectVersionRepository):
         return [self._to_domain(row) for row in rows]
 
     async def list_latest(
-        self, *, project_id: str | None = None
-    ) -> Sequence[tuple[str, ProjectVersion]]:
-        # ponytail: the scheduler scans one full row per project and filters
+        self, *, workflow_id: str | None = None
+    ) -> Sequence[tuple[str, WorkflowVersion]]:
+        # ponytail: the scheduler scans one full row per workflow and filters
         # triggers in Python; push trigger matching into SQL (JSONB ops) when
-        # catalogs get large. Webhook/invoke resolution passes project_id.
+        # catalogs get large. Webhook/invoke resolution passes workflow_id.
         latest = select(
-            m.project_versions.c.project_id,
-            func.max(m.project_versions.c.version).label("max_version"),
-        ).group_by(m.project_versions.c.project_id)
-        if project_id is not None:
-            latest = latest.where(m.project_versions.c.project_id == project_id)
+            m.workflow_versions.c.workflow_id,
+            func.max(m.workflow_versions.c.version).label("max_version"),
+        ).group_by(m.workflow_versions.c.workflow_id)
+        if workflow_id is not None:
+            latest = latest.where(m.workflow_versions.c.workflow_id == workflow_id)
         newest = latest.subquery()
         rows = (
             (
                 await self._session.execute(
-                    select(m.project_versions)
+                    select(m.workflow_versions)
                     .join(
                         newest,
-                        (m.project_versions.c.project_id == newest.c.project_id)
-                        & (m.project_versions.c.version == newest.c.max_version),
+                        (m.workflow_versions.c.workflow_id == newest.c.workflow_id)
+                        & (m.workflow_versions.c.version == newest.c.max_version),
                     )
-                    .order_by(m.project_versions.c.project_id)
+                    .order_by(m.workflow_versions.c.workflow_id)
                 )
             )
             .mappings()
             .all()
         )
-        return [(row["project_id"], self._to_domain(row)) for row in rows]
+        return [(row["workflow_id"], self._to_domain(row)) for row in rows]
 
     @staticmethod
-    def _to_domain(row: RowMapping) -> ProjectVersion:
+    def _to_domain(row: RowMapping) -> WorkflowVersion:
         r = dict(row)
-        return ProjectVersion(
+        return WorkflowVersion(
             id=r["id"],
             version=r["version"],
             schema_version=r["schema_version"],
@@ -390,27 +390,27 @@ class SqlAlchemyProjectVersionRepository(ProjectVersionRepository):
 
 
 def _visible(user_id: str) -> ColumnElement[bool]:
-    """Projects ``user_id`` owns or is a member of (``project_access``)."""
-    pm = m.project_members.c
+    """Workflows ``user_id`` owns or is a member of (``workflow_access``)."""
+    pm = m.workflow_members.c
     return or_(
-        m.projects.c.owner_id == user_id,
-        m.projects.c.id.in_(select(pm.project_id).where(pm.user_id == user_id)),
+        m.workflows.c.owner_id == user_id,
+        m.workflows.c.id.in_(select(pm.workflow_id).where(pm.user_id == user_id)),
     )
 
 
 def _owned[S: Select[Any]](query: S, visible_to: str | None) -> S:
-    """Limit an executions query to the projects ``visible_to`` that user
+    """Limit an executions query to the workflows ``visible_to`` that user
     (None: all)."""
     if visible_to is None:
         return query
-    return query.join(m.projects, m.projects.c.id == m.executions.c.project_id).where(
-        _visible(visible_to)
-    )
+    return query.join(
+        m.workflows, m.workflows.c.id == m.executions.c.workflow_id
+    ).where(_visible(visible_to))
 
 
 class SqlAlchemyExecutionRepository(ExecutionRepository):
     def __init__(
-        self, session: AsyncSession, versions: ProjectVersionRepository
+        self, session: AsyncSession, versions: WorkflowVersionRepository
     ) -> None:
         self._session = session
         self._versions = versions
@@ -434,10 +434,10 @@ class SqlAlchemyExecutionRepository(ExecutionRepository):
         )
         if row is None:
             return None
-        version = await self._versions.get(row["project_id"], row["project_version"])
+        version = await self._versions.get(row["workflow_id"], row["workflow_version"])
         if version is None:  # unreachable while the FK holds
             raise DomainValidationError(
-                "execution references a missing project version",
+                "execution references a missing workflow version",
                 details={"execution_id": execution_id},
             )
         node_rows = (
@@ -454,8 +454,8 @@ class SqlAlchemyExecutionRepository(ExecutionRepository):
         nodes = [_node_to_domain(r) for r in node_rows]
         return Execution(
             id=row["id"],
-            project_id=row["project_id"],
-            project_version=version,
+            workflow_id=row["workflow_id"],
+            workflow_version=version,
             metadata=_metadata(row["metadata"]),
             retry_policy=_retry_policy(row["retry_policy"]),
             timeout_policy=_timeout_policy(row["timeout_policy"]),
@@ -480,34 +480,34 @@ class SqlAlchemyExecutionRepository(ExecutionRepository):
     async def list_summaries(
         self,
         *,
-        project_id: str | None = None,
-        project_version: int | None = None,
+        workflow_id: str | None = None,
+        workflow_version: int | None = None,
         visible_to: str | None = None,
         statuses: Collection[ExecutionStatus] = (),
         offset: int = 0,
         limit: int = 100,
     ) -> Sequence[ExecutionSummary]:
         e = m.executions.c
-        p = m.projects.c
-        # Inner join: versions RESTRICT project deletion, so every execution
-        # has its project row.
+        p = m.workflows.c
+        # Inner join: versions RESTRICT workflow deletion, so every execution
+        # has its workflow row.
         query = select(
             e.id,
-            e.project_id,
-            p.name.label("project_name"),
-            e.project_version,
+            e.workflow_id,
+            p.name.label("workflow_name"),
+            e.workflow_version,
             e.status,
             e.metadata,
             e.created_at,
             e.started_at,
             e.finished_at,
-        ).select_from(m.executions.join(m.projects, p.id == e.project_id))
+        ).select_from(m.executions.join(m.workflows, p.id == e.workflow_id))
         if visible_to is not None:
             query = query.where(_visible(visible_to))
-        if project_id is not None:
-            query = query.where(e.project_id == project_id)
-        if project_version is not None:
-            query = query.where(e.project_version == project_version)
+        if workflow_id is not None:
+            query = query.where(e.workflow_id == workflow_id)
+        if workflow_version is not None:
+            query = query.where(e.workflow_version == workflow_version)
         if statuses:
             query = query.where(e.status.in_([s.value for s in statuses]))
         rows = (
@@ -520,9 +520,9 @@ class SqlAlchemyExecutionRepository(ExecutionRepository):
         return [
             ExecutionSummary(
                 id=r["id"],
-                project_id=r["project_id"],
-                project_name=r["project_name"],
-                project_version=r["project_version"],
+                workflow_id=r["workflow_id"],
+                workflow_name=r["workflow_name"],
+                workflow_version=r["workflow_version"],
                 status=ExecutionStatus(r["status"]),
                 metadata=_metadata(r["metadata"]),
                 created_at=_ensure_utc(r["created_at"]),
@@ -571,7 +571,7 @@ class SqlAlchemyExecutionRepository(ExecutionRepository):
     async def sample_node_executions(
         self, *, since: datetime, until: datetime, visible_to: str | None = None
     ) -> Sequence[NodeSample]:
-        e, ne, v = m.executions.c, m.node_executions.c, m.project_versions.c
+        e, ne, v = m.executions.c, m.node_executions.c, m.workflow_versions.c
         # The node type lives in the pinned version's graph, not on the row.
         node_type = func.jsonb_path_query_first(
             v.graph,
@@ -591,8 +591,8 @@ class SqlAlchemyExecutionRepository(ExecutionRepository):
             .select_from(m.node_executions)
             .join(m.executions, e.id == ne.execution_id)
             .join(
-                m.project_versions,
-                (v.project_id == e.project_id) & (v.version == e.project_version),
+                m.workflow_versions,
+                (v.workflow_id == e.workflow_id) & (v.version == e.workflow_version),
             ),
             visible_to,
         ).where(e.created_at >= since, e.created_at < until)
@@ -625,19 +625,19 @@ class SqlAlchemyExecutionRepository(ExecutionRepository):
         )
         return list(rows.scalars())
 
-    async def count_unfinished(self, project_id: str) -> int:
+    async def count_unfinished(self, workflow_id: str) -> int:
         # NO KEY UPDATE: serializes admissions without blocking the key-share
-        # locks taken by inserts that reference the project.
+        # locks taken by inserts that reference the workflow.
         await self._session.execute(
-            select(m.projects.c.id)
-            .where(m.projects.c.id == project_id)
+            select(m.workflows.c.id)
+            .where(m.workflows.c.id == workflow_id)
             .with_for_update(key_share=True)
         )
         count = await self._session.scalar(
             select(func.count())
             .select_from(m.executions)
             .where(
-                m.executions.c.project_id == project_id,
+                m.executions.c.workflow_id == workflow_id,
                 m.executions.c.status.notin_(
                     [s.value for s in TERMINAL_EXECUTION_STATUSES]
                 ),
@@ -722,15 +722,15 @@ class SqlAlchemyExecutionRepository(ExecutionRepository):
             "started_at": e.started_at,
             "finished_at": e.finished_at,
         }
-        # Same single-statement CAS as projects (see there): a second writer
+        # Same single-statement CAS as workflows (see there): a second writer
         # holding a stale revision loses instead of interleaving state.
         if e.revision == 0:
             stmt: Insert | Update = (
                 pg_insert(m.executions)
                 .values(
                     id=e.id,
-                    project_id=e.project_id,
-                    project_version=e.project_version.version,
+                    workflow_id=e.workflow_id,
+                    workflow_version=e.workflow_version.version,
                     # Immutable after creation: written by the insert only.
                     input=e.input,
                     **values,
@@ -900,10 +900,10 @@ class SqlAlchemyEventRepository(EventRepository):
                     event_type=e.event_type.value,
                     schema_version=e.schema_version,
                     occurred_at=e.occurred_at,
-                    project_id=e.project_id,
+                    workflow_id=e.workflow_id,
                     execution_id=e.execution_id,
                     node_id=e.node_id,
-                    project_version=e.project_version,
+                    workflow_version=e.workflow_version,
                     correlation_id=e.correlation_id,
                     payload=dict(e.payload),
                 )
@@ -915,7 +915,7 @@ class SqlAlchemyEventRepository(EventRepository):
         self,
         *,
         execution_id: str | None = None,
-        project_id: str | None = None,
+        workflow_id: str | None = None,
         after: int = 0,
         limit: int = 100,
         positions: Collection[int] | None = None,
@@ -925,8 +925,8 @@ class SqlAlchemyEventRepository(EventRepository):
             stmt = stmt.where(m.events.c.position.in_(list(positions)))
         if execution_id is not None:
             stmt = stmt.where(m.events.c.execution_id == execution_id)
-        if project_id is not None:
-            stmt = stmt.where(m.events.c.project_id == project_id)
+        if workflow_id is not None:
+            stmt = stmt.where(m.events.c.workflow_id == workflow_id)
         rows = (
             (
                 await self._session.execute(
@@ -942,10 +942,10 @@ class SqlAlchemyEventRepository(EventRepository):
                 event_type=EventType(r["event_type"]),
                 schema_version=r["schema_version"],
                 occurred_at=_ensure_utc(r["occurred_at"]),
-                project_id=r["project_id"],
+                workflow_id=r["workflow_id"],
                 execution_id=r["execution_id"],
                 node_id=r["node_id"],
-                project_version=r["project_version"],
+                workflow_version=r["workflow_version"],
                 correlation_id=r["correlation_id"],
                 payload=dict(r["payload"]),
                 position=r["position"],
@@ -1462,70 +1462,70 @@ def _access_token(row: Mapping[Any, Any], created: str) -> AccessToken:
     )
 
 
-class SqlAlchemyProjectMemberRepository(ProjectMemberRepository):
+class SqlAlchemyWorkflowMemberRepository(WorkflowMemberRepository):
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def role(self, project_id: str, user_id: str) -> ProjectRole | None:
-        pm = m.project_members.c
+    async def role(self, workflow_id: str, user_id: str) -> WorkflowRole | None:
+        pm = m.workflow_members.c
         value = await self._session.scalar(
-            select(pm.role).where(pm.project_id == project_id, pm.user_id == user_id)
+            select(pm.role).where(pm.workflow_id == workflow_id, pm.user_id == user_id)
         )
-        return None if value is None else ProjectRole(value)
+        return None if value is None else WorkflowRole(value)
 
-    async def list(self, project_id: str) -> Sequence[ProjectMember]:
-        pm, u = m.project_members.c, m.users.c
+    async def list(self, workflow_id: str) -> Sequence[WorkflowMember]:
+        pm, u = m.workflow_members.c, m.users.c
         rows = (
             await self._session.execute(
                 select(pm.user_id, u.username, u.display_name, pm.role, pm.created_at)
                 .join(m.users, u.id == pm.user_id)
-                .where(pm.project_id == project_id)
+                .where(pm.workflow_id == workflow_id)
                 .order_by(u.username)
             )
         ).mappings()
         return [
-            ProjectMember(
+            WorkflowMember(
                 user_id=r["user_id"],
                 username=r["username"],
                 display_name=r["display_name"],
-                role=ProjectRole(r["role"]),
+                role=WorkflowRole(r["role"]),
                 created_at=_ensure_utc(r["created_at"]),
             )
             for r in rows
         ]
 
-    async def count(self, project_id: str) -> int:
-        pm = m.project_members.c
+    async def count(self, workflow_id: str) -> int:
+        pm = m.workflow_members.c
         return int(
             await self._session.scalar(
-                select(func.count()).where(pm.project_id == project_id)
+                select(func.count()).where(pm.workflow_id == workflow_id)
             )
             or 0
         )
 
     async def put(
-        self, project_id: str, user_id: str, role: ProjectRole, at: datetime
+        self, workflow_id: str, user_id: str, role: WorkflowRole, at: datetime
     ) -> None:
-        stmt = pg_insert(m.project_members).values(
-            project_id=project_id, user_id=user_id, role=role.value, created_at=at
+        stmt = pg_insert(m.workflow_members).values(
+            workflow_id=workflow_id, user_id=user_id, role=role.value, created_at=at
         )
         await self._session.execute(
             stmt.on_conflict_do_update(
                 index_elements=[
-                    m.project_members.c.project_id,
-                    m.project_members.c.user_id,
+                    m.workflow_members.c.workflow_id,
+                    m.workflow_members.c.user_id,
                 ],
                 set_={"role": stmt.excluded.role},
             )
         )
 
-    async def delete(self, project_id: str, user_id: str) -> bool:
-        pm = m.project_members.c
+    async def delete(self, workflow_id: str, user_id: str) -> bool:
+        pm = m.workflow_members.c
         result = cast(
             "CursorResult[Any]",
             await self._session.execute(
-                delete(m.project_members).where(
-                    pm.project_id == project_id, pm.user_id == user_id
+                delete(m.workflow_members).where(
+                    pm.workflow_id == workflow_id, pm.user_id == user_id
                 )
             ),
         )
@@ -1537,8 +1537,8 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
 
     def __init__(self, database: Database) -> None:
         self._session = database.session()
-        self.projects: ProjectRepository = SqlAlchemyProjectRepository(self._session)
-        self.versions: ProjectVersionRepository = SqlAlchemyProjectVersionRepository(
+        self.workflows: WorkflowRepository = SqlAlchemyWorkflowRepository(self._session)
+        self.versions: WorkflowVersionRepository = SqlAlchemyWorkflowVersionRepository(
             self._session
         )
         self.executions: ExecutionRepository = SqlAlchemyExecutionRepository(
@@ -1554,7 +1554,7 @@ class SqlAlchemyUnitOfWork(UnitOfWork):
         self.access_tokens: AccessTokenRepository = SqlAlchemyAccessTokenRepository(
             self._session
         )
-        self.members: ProjectMemberRepository = SqlAlchemyProjectMemberRepository(
+        self.members: WorkflowMemberRepository = SqlAlchemyWorkflowMemberRepository(
             self._session
         )
 

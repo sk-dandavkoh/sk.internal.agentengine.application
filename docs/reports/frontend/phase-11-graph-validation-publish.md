@@ -4,11 +4,11 @@ Report date: 2026-10-02. Base commit: `5ed516e` (frontend phase 10). All changes
 
 ## 1. Executive Summary
 
-**Supposed to achieve.** Roadmap §17 (`docs/roadmap-frontend.md`): show the full Draft → Save → Validate → Validation Results → Fix → Validate → Publish → Immutable Project Version workflow in the UI, with the backend as the authoritative validator. The session prompt added: map errors to nodes and ports, a validation summary, publish confirmation, published-version information, publish failure handling, unsaved-changes handling, and tests for a stale draft. It also asked to implement, test and document any missing backend API.
+**Supposed to achieve.** Roadmap §17 (`docs/roadmap-frontend.md`): show the full Draft → Save → Validate → Validation Results → Fix → Validate → Publish → Immutable Workflow Version workflow in the UI, with the backend as the authoritative validator. The session prompt added: map errors to nodes and ports, a validation summary, publish confirmation, published-version information, publish failure handling, unsaved-changes handling, and tests for a stale draft. It also asked to implement, test and document any missing backend API.
 
 **Actually implemented.**
 - **Backend:**
-  - `POST /api/v1/projects/{id}/validate` now accepts an optional body `{"expected_revision": n}`. A different stored revision answers 409 `CONCURRENT_MODIFICATION`.
+  - `POST /api/v1/workflows/{id}/validate` now accepts an optional body `{"expected_revision": n}`. A different stored revision answers 409 `CONCURRENT_MODIFICATION`.
   - Before this, a validation result could describe a draft other than the one the user sees, and nothing on the wire said which revision was checked.
 - **Frontend** (`frontend/src/features/editor/`):
   - a new `ValidationPanel` with `usePublishWorkflow`. Results are tied to the revision they checked and can become "Outdated".
@@ -34,7 +34,7 @@ Report date: 2026-10-02. Base commit: `5ed516e` (frontend phase 10). All changes
 
 **Acceptance criteria.** All five roadmap criteria pass (§14). Two scope details remain:
 - the roadmap's "Warnings": the backend has no warning severity (§9, finding 3);
-- navigation to trigger and project-wide issues: no editor surface exists yet.
+- navigation to trigger and workflow-wide issues: no editor surface exists yet.
 
 **Phase Status:** COMPLETE WITH LIMITATIONS
 
@@ -45,7 +45,7 @@ Report date: 2026-10-02. Base commit: `5ed516e` (frontend phase 10). All changes
 **Roadmap §17.**
 - **Ziel:** "Den vollständigen Draft → Validate → Publish Workflow abbilden."
 - **Scope:**
-  - Draft → Save → Validate → Validation Results → Fix Errors → Validate → Publish → Immutable Project Version.
+  - Draft → Save → Validate → Validation Results → Fix Errors → Validate → Publish → Immutable Workflow Version.
   - Validation UI: Fehler, Warnings, Node, Port, Configuration, Graph, Navigation zum betroffenen Node.
 - **Acceptance criteria:**
   - Backend Validation wird dargestellt.
@@ -56,7 +56,7 @@ Report date: 2026-10-02. Base commit: `5ed516e` (frontend phase 10). All changes
 - **Prompt constraint:** "Publish darf nicht als rein lokale Frontend-Entscheidung implementiert werden."
 
 **Session prompt additions:**
-- the explicit UX chain Draft → Validate → Publish → Immutable Project Version;
+- the explicit UX chain Draft → Validate → Publish → Immutable Workflow Version;
 - "Never silently publish. Never hide backend validation errors.";
 - tests for valid graph, invalid graph, multiple errors, node-specific errors, publish success, publish failure, unsaved changes and stale draft;
 - implement, test and document missing backend APIs.
@@ -72,9 +72,9 @@ Report date: 2026-10-02. Base commit: `5ed516e` (frontend phase 10). All changes
 ## 3. Scope Implemented
 
 ### Backend/API
-- `ProjectService.validate_project(project_id, *, expected_revision=None)` (`backend/src/akasha/application/projects.py`) reuses the existing `_check_revision`, the same check publish uses.
-- New request model `ValidateProjectRequest` (`backend/src/akasha/api/project_schemas.py`).
-- The `/validate` route (`backend/src/akasha/api/projects.py`) takes an optional body. Existing callers (CLI `project validate`, tests, import) are unchanged.
+- `WorkflowService.validate_workflow(workflow_id, *, expected_revision=None)` (`backend/src/akasha/application/workflows.py`) reuses the existing `_check_revision`, the same check publish uses.
+- New request model `ValidateWorkflowRequest` (`backend/src/akasha/api/workflow_schemas.py`).
+- The `/validate` route (`backend/src/akasha/api/workflows.py`) takes an optional body. Existing callers (CLI `workflow validate`, tests, import) are unchanged.
 
 ### Frontend/UI
 - **Workflow panel** `ValidationPanel.tsx`, at the top of the editor's right column:
@@ -88,18 +88,18 @@ Report date: 2026-10-02. Base commit: `5ed516e` (frontend phase 10). All changes
     - rejected with N errors.
   - **Badge:** Valid / "N errors" / Outdated, always as text.
   - **Buttons:** Validate and "Publish…", both `aria-describedby` the status line.
-  - **Summary line:** "Nodes: 2 · Connections: 1 · Triggers: 1 · Project: 1".
+  - **Summary line:** "Nodes: 2 · Connections: 1 · Triggers: 1 · Workflow: 1".
   - **Issue lists** grouped by scope. Each issue shows its location ("Node "Log" → port "value"", trigger id, or connection endpoints), the backend message and the stable code.
   - **Locatable issues are buttons:** a node issue whose node still exists, or an issue with an edge. Other issues are plain items.
   - **Publish confirmation:** `ConfirmDialog` titled "Publish version N?", `tone="primary"`, `irreversible`. It explains that the backend re-validates and freezes the draft and that versions are immutable.
 - **Workflow state** `usePublishWorkflow.ts`:
   - holds the last result with the revision it was requested for;
   - tracks `stale` and the dialog;
-  - wraps `useValidateProject` / `usePublishProject`.
+  - wraps `useValidateWorkflow` / `usePublishWorkflow`.
 - **Mapping** `validation.ts`:
-  - `issueScope`: node > connection > trigger > project;
+  - `issueScope`: node > connection > trigger > workflow;
   - `issueCounts`: errors per `node_id`;
-  - `publishIssues`: parses `details.issues` of a 422 `PROJECT_VALIDATION_FAILED` with zod, `null` otherwise;
+  - `publishIssues`: parses `details.issues` of a 422 `WORKFLOW_VALIDATION_FAILED` with zod, `null` otherwise;
   - `isConflict`.
 - **Canvas marker:** `NodeCard` has a new `issues` prop that gives a danger border and the text "N validation error(s)". It is fed through `GraphCanvas` prop `issueCounts` → `CanvasNodeData.issues`.
 - **Node list:** each node shows "N validation error(s)" in the side list.
@@ -107,11 +107,11 @@ Report date: 2026-10-02. Base commit: `5ed516e` (frontend phase 10). All changes
   - wires the workflow;
   - `locate(issue)` focuses the node (existing `focusNode`) or selects the edge;
   - the existing conflict alert also covers `workflow.stale`. Its text and button ("Reload the draft" vs "Discard my changes and reload") now depend on whether there are unsaved changes;
-  - after publish: a success toast, a persistent success `Alert` ("Version N is published", timestamp, immutability note, link to project), and a draft reload.
+  - after publish: a success toast, a persistent success `Alert` ("Version N is published", timestamp, immutability note, link to workflow), and a draft reload.
 
 ### API layer
-- `validateProject(client, projectId, expectedRevision?)` in `frontend/src/api/projects.ts`.
-- `useValidateProject` now takes `{ projectId, expectedRevision? }` (`frontend/src/api/mutations.ts`). It had no callers before this phase.
+- `validateWorkflow(client, workflowId, expectedRevision?)` in `frontend/src/api/workflows.ts`.
+- `useValidateWorkflow` now takes `{ workflowId, expectedRevision? }` (`frontend/src/api/mutations.ts`). It had no callers before this phase.
 
 ### Testing
 - See §12.
@@ -123,18 +123,18 @@ Report date: 2026-10-02. Base commit: `5ed516e` (frontend phase 10). All changes
 
 | File | Change | Reason |
 |---|---|---|
-| `backend/src/akasha/application/projects.py` | Modified | `validate_project` accepts `expected_revision`, checked with `_check_revision` |
-| `backend/src/akasha/api/project_schemas.py` | Modified | New `ValidateProjectRequest` |
-| `backend/src/akasha/api/projects.py` | Modified | `/validate` reads the optional body |
-| `backend/tests/integration/test_projects_api.py` | Modified | New `test_validate_pinned_to_revision`; import path `tests.integration.fixtures` |
+| `backend/src/akasha/application/workflows.py` | Modified | `validate_workflow` accepts `expected_revision`, checked with `_check_revision` |
+| `backend/src/akasha/api/workflow_schemas.py` | Modified | New `ValidateWorkflowRequest` |
+| `backend/src/akasha/api/workflows.py` | Modified | `/validate` reads the optional body |
+| `backend/tests/integration/test_workflows_api.py` | Modified | New `test_validate_pinned_to_revision`; import path `tests.integration.fixtures` |
 | `backend/tests/conftest.py` | Modified | `pytest_plugins = ["tests.integration.fixtures", "tests.nodes.fixtures"]` plus a comment explaining why |
 | `backend/tests/integration/conftest.py` → `fixtures.py` | Renamed (content unchanged) | Fixture visibility fix (§10) |
 | `backend/tests/nodes/conftest.py` → `fixtures.py` | Renamed (content unchanged) | Same latent problem |
-| `backend/tests/integration/test_{auth_api,cli,credentials,executions_api,plugins_api,project_packages,project_packages_api,reports,triggers_api,workers}.py` | Modified (one import line each) | `tests.integration.conftest` → `tests.integration.fixtures` |
-| `frontend/src/api/openapi.json` | Modified (generated) | Regenerated with `AKASHA_UPDATE_OPENAPI_SNAPSHOT=1`; adds `ValidateProjectRequest` and the `/validate` request body |
-| `frontend/src/api/projects.ts` | Modified | `validateProject` with `expectedRevision` |
-| `frontend/src/api/mutations.ts` | Modified | `useValidateProject` variables |
-| `frontend/src/api/contract.node.test.ts` | Modified | Calls `validateProject(recorder, 'p', 1)`, so the request body field name is contract-checked |
+| `backend/tests/integration/test_{auth_api,cli,credentials,executions_api,plugins_api,workflow_packages,workflow_packages_api,reports,triggers_api,workers}.py` | Modified (one import line each) | `tests.integration.conftest` → `tests.integration.fixtures` |
+| `frontend/src/api/openapi.json` | Modified (generated) | Regenerated with `AKASHA_UPDATE_OPENAPI_SNAPSHOT=1`; adds `ValidateWorkflowRequest` and the `/validate` request body |
+| `frontend/src/api/workflows.ts` | Modified | `validateWorkflow` with `expectedRevision` |
+| `frontend/src/api/mutations.ts` | Modified | `useValidateWorkflow` variables |
+| `frontend/src/api/contract.node.test.ts` | Modified | Calls `validateWorkflow(recorder, 'p', 1)`, so the request body field name is contract-checked |
 | `frontend/src/features/editor/validation.ts` | Created | Issue scope, per-node counts, publish-422 parsing |
 | `frontend/src/features/editor/validation.test.ts` | Created | Unit tests for the above |
 | `frontend/src/features/editor/usePublishWorkflow.ts` | Created | Workflow state and mutations |
@@ -146,7 +146,7 @@ Report date: 2026-10-02. Base commit: `5ed516e` (frontend phase 10). All changes
 | `frontend/src/features/editor/NodeInspector.test.tsx` | Modified | `beforeAll` preload of the editor module (§10, problem 3) |
 | `frontend/src/app/routes.test.tsx` | Modified | `beforeAll` preload of the editor module: the same latent cold-import race (§10, problem 3) |
 | `frontend/tests/e2e/dashboard.spec.ts` | Modified | Wait for the page-level error heading before counting alerts (§10, problem 4) |
-| `frontend/tests/fullstack/projects.spec.ts` | Modified | New full-stack test "validate, fix and publish a draft as an immutable version" |
+| `frontend/tests/fullstack/workflows.spec.ts` | Modified | New full-stack test "validate, fix and publish a draft as an immutable version" |
 | `docs/architecture.md` | Modified | `/validate` and `/publish` `expected_revision` semantics; publish advances the draft revision |
 | `frontend/README.md` | Modified | New section "Validate and publish" |
 
@@ -171,7 +171,7 @@ Report date: 2026-10-02. Base commit: `5ed516e` (frontend phase 10). All changes
 
 **Alternatives considered.**
 - *Return the validated `revision` in `ValidationResponse`.* Rejected: the service returns the domain `ValidationResult`, so this would change the service return type and all its callers (CLI, import response, tests). It would also still leave the client to compare revisions itself.
-- *Two calls (GET project, then validate).* Rejected: racy.
+- *Two calls (GET workflow, then validate).* Rejected: racy.
 
 **Reason.** It is the smallest additive change, it reuses the existing check, and it has no breaking effect.
 
@@ -181,13 +181,13 @@ Report date: 2026-10-02. Base commit: `5ed516e` (frontend phase 10). All changes
 
 ### Decision 2 — The editor reloads the draft after publishing
 
-**Context.** Discovered during implementation: `ProjectService.publish_project` saves the project row, which advances `revision`. The existing API test asserts revision 2 → 3 after publish. The editor keeps the revision it last saw and pins saves to it. Without a reload, the first save after publishing would be refused as a conflict.
+**Context.** Discovered during implementation: `WorkflowService.publish_workflow` saves the workflow row, which advances `revision`. The existing API test asserts revision 2 → 3 after publish. The editor keeps the revision it last saw and pins saves to it. Without a reload, the first save after publishing would be refused as a conflict.
 
 **Chosen approach.** On publish success, `EditorPage` calls its existing `reload()`, which refetches and remounts `DraftEditor` with a new session key.
 
 **Alternatives considered.**
 - *Assume `revision + 1`.* Rejected: it depends on a storage detail and would silently adopt a concurrent writer's revision.
-- *Return the new project revision from `/publish`.* Rejected: it is a contract change to `ProjectVersionDetail`, which describes a version, not the project.
+- *Return the new workflow revision from `/publish`.* Rejected: it is a contract change to `WorkflowVersionDetail`, which describes a version, not the workflow.
 
 **Reason.**
 - Publish is only reachable with a clean editor, so the reload loses no edits.
@@ -206,24 +206,24 @@ See §10, problem 2. Test infrastructure only. The comment in `backend/tests/con
 ## 6. Domain / Data Model Changes
 
 - No domain entities, enums, database tables or migrations changed.
-- One new API request model: `ValidateProjectRequest { expected_revision: int | null (ge=1) }`, a separate class with the same shape as `PublishProjectRequest`.
+- One new API request model: `ValidateWorkflowRequest { expected_revision: int | null (ge=1) }`, a separate class with the same shape as `PublishWorkflowRequest`.
 - Frontend: `CanvasNodeData` gained `issues: number`, and `NodeCardProps` gained `issues?: number`. These are UI types only.
 
 ---
 
 ## 7. API / Contract Changes
 
-**`POST /api/v1/projects/{project_id}/validate`** (changed, additive)
+**`POST /api/v1/workflows/{workflow_id}/validate`** (changed, additive)
 
 | | Before | After |
 |---|---|---|
 | Request | no body | optional JSON `{"expected_revision": int ≥ 1 \| null}` |
 | 200 | `{valid, issues[]}` | unchanged |
-| 409 | not possible | `CONCURRENT_MODIFICATION` when the stored revision ≠ `expected_revision`; `details`: `project_id`, `expected_revision`, `current_revision` |
+| 409 | not possible | `CONCURRENT_MODIFICATION` when the stored revision ≠ `expected_revision`; `details`: `workflow_id`, `expected_revision`, `current_revision` |
 | 422 | — | `VALIDATION_ERROR` for a malformed body (e.g. `expected_revision: 0`) |
 
-- **Error documentation:** 404/409/413/415/422/500 are already declared router-wide as `ErrorResponse` (`projects.py`, `responses=errors`).
-- **Compatibility:** backward compatible. No body means the old behaviour. The CLI (`akasha project validate`) and the import flow do not send a revision.
+- **Error documentation:** 404/409/413/415/422/500 are already declared router-wide as `ErrorResponse` (`workflows.py`, `responses=errors`).
+- **Compatibility:** backward compatible. No body means the old behaviour. The CLI (`akasha workflow validate`) and the import flow do not send a revision.
 - **Contract snapshot:** `frontend/src/api/openapi.json` was regenerated. `backend/tests/test_openapi_contract.py` and `frontend/src/api/contract.node.test.ts` pass against it.
 - **Other endpoints:** `/publish` is unchanged and was already pinnable. The frontend now always pins it.
 
@@ -246,11 +246,11 @@ No WebSocket, event, node, plugin or SDK contract changes.
 
 ### Publish flow
 1. `requestPublish` resets the previous mutation error and opens the dialog. Nothing is sent before the user confirms.
-2. On confirm, `publish` runs `usePublishProject` with `expectedRevision`.
+2. On confirm, `publish` runs `usePublishWorkflow` with `expectedRevision`.
 3. The outcome is handled by type:
-   - **Success:** `usePublishProject` first invalidates `projects.detail(id)` (covering versions and executions) and `projects.lists()`. Then `onPublished(version)` sets the success notice and calls `reload()`.
+   - **Success:** `usePublishWorkflow` first invalidates `workflows.detail(id)` (covering versions and executions) and `workflows.lists()`. Then `onPublished(version)` sets the success notice and calls `reload()`.
    - **409:** the dialog closes and `stale` is set, which shows the conflict alert. Validate and Publish are disabled until the user reloads.
-   - **422 `PROJECT_VALIDATION_FAILED`:** the dialog closes and the issues from `details.issues` replace the shown result. This covers a backend that changed between validate and publish, e.g. a node catalog change.
+   - **422 `WORKFLOW_VALIDATION_FAILED`:** the dialog closes and the issues from `details.issues` replace the shown result. This covers a backend that changed between validate and publish, e.g. a node catalog change.
    - **Any other error** (network, 500, 403): the dialog stays open with `errorMessage(error)` for a retry.
 
 ### Validate errors
@@ -327,7 +327,7 @@ Issues for deleted nodes show "deleted node <id>" and are not clickable.
 - **Affected area:** `EditorPage.test.tsx` ("never overwrites a draft changed elsewhere…", "a saved graph comes back the same…").
 
 ### Problem 2 — Integration fixtures missing for interleaved paths (pre-existing, fixed)
-- **Problem:** `uv run pytest tests/integration/test_projects_api.py tests/test_cli.py tests/integration/test_project_service.py` gave 20 errors: `fixture 'clean_db' not found`. Reproduced identically on a clean tree (stash).
+- **Problem:** `uv run pytest tests/integration/test_workflows_api.py tests/test_cli.py tests/integration/test_workflow_service.py` gave 20 errors: `fixture 'clean_db' not found`. Reproduced identically on a clean tree (stash).
 - **Root cause:**
   - With interleaved paths (`tests/integration/…`, `tests/…`, `tests/integration/…`), pytest 9.1.1 collects two separate `<Package integration>` nodes (confirmed with `--co`).
   - The fixtures from `tests/integration/conftest.py` were visible to the first only.
@@ -348,7 +348,7 @@ Issues for deleted nodes show "deleted node <id>" and are not clickable.
 - **Root cause (measured):**
   - The editor route is code-split (`src/app/routes.tsx`, `lazy: () => import('../features/editor/EditorPage')`). The first test in a file that renders it pays the cold module import (React Flow and the editor) inside its `findBy*` wait, which defaults to 1000 ms.
   - A throwaway test measured that import at **601 ms alone** and **1085 ms during a full parallel run**. Phase 11 adds three modules to the editor chunk, which pushed it over the limit.
-  - `src/app/routes.test.tsx` ("serves the per-project editor route") had the same latent exposure.
+  - `src/app/routes.test.tsx` ("serves the per-workflow editor route") had the same latent exposure.
 - **Fix:**
   - `beforeAll(() => import('./EditorPage'))` in `EditorPage.test.tsx` and `NodeInspector.test.tsx`, and `beforeAll(() => import('../features/editor/EditorPage'))` in `routes.test.tsx`, each with a comment.
   - The import then happens once per file under the 10 s hook timeout, and the route's `lazy()` resolves from the module cache.
@@ -409,19 +409,19 @@ Issues for deleted nodes show "deleted node <id>" and are not clickable.
 3. Unsaved changes: after an edit, "Outdated" and "Save the draft first"; Validate and Publish disabled. After autosave, "results are for revision 3"; Publish still disabled. No extra validate request.
 4. Stale at validate (409): conflict alert, buttons disabled, "Reload the draft" → revision 4, buttons enabled.
 5. Stale at publish (409): dialog closes, conflict alert, no success notice.
-6. Publish refused with 422 `PROJECT_VALIDATION_FAILED`: dialog closes, "1 error", issue shown, Publish disabled.
+6. Publish refused with 422 `WORKFLOW_VALIDATION_FAILED`: dialog closes, "1 error", issue shown, Publish disabled.
 7. Publish 500: dialog stays open with the message; no notice; revision unchanged.
 
 - **Result:** pass.
 - **Stability:** after the preload fix (§10, problem 3), the full suite (299 tests, 24 files) passed in 13 consecutive runs.
 
 ### API Tests
-- `backend/tests/integration/test_projects_api.py::test_validate_pinned_to_revision` (real PostgreSQL via Testcontainers): stale pin → 409 with `current_revision: 2`; current pin → 200 `{valid: true, issues: []}`; `expected_revision: 0` → 422.
+- `backend/tests/integration/test_workflows_api.py::test_validate_pinned_to_revision` (real PostgreSQL via Testcontainers): stale pin → 409 with `current_revision: 2`; current pin → 200 `{valid: true, issues: []}`; `expected_revision: 0` → 422.
 - **Result:** pass.
 
 ### Contract Tests
 - `backend/tests/test_openapi_contract.py`: failed after the API change as intended, then passed once the snapshot was regenerated.
-- `frontend/src/api/contract.node.test.ts`: passes with the pinned `validateProject` call.
+- `frontend/src/api/contract.node.test.ts`: passes with the pinned `validateWorkflow` call.
 
 ### Integration Tests
 - Full backend suite (`uv run pytest`, Testcontainers PostgreSQL/Redis etc.): **1910 passed, 6 skipped**, run after the fixture change.
@@ -491,21 +491,21 @@ All results are from the final tree.
 | Acceptance Criterion | Status | Evidence |
 |---|---|---|
 | Backend Validation wird dargestellt | PASS | `ValidationPanel` lists every issue from `POST /validate` (message, code, location), plus summary and count badge. Component test 2 asserts all 5 messages; full-stack test against the real backend |
-| Fehler können angeklickt werden | PASS | Node and connection issues are `<button>`s. Component test 2 clicks a node issue and a connection issue; the full-stack test clicks a node issue. Trigger/project issues are not clickable: the editor has no trigger or dependency surface yet (§20) |
+| Fehler können angeklickt werden | PASS | Node and connection issues are `<button>`s. Component test 2 clicks a node issue and a connection issue; the full-stack test clicks a node issue. Trigger/workflow issues are not clickable: the editor has no trigger or dependency surface yet (§20) |
 | Editor navigiert zum betroffenen Node | PASS | `locate` → `focusNode` selects and centres the node. Asserted via `aria-pressed` in component test 2 and the full-stack test |
 | Publish ist nur bei gültigem Zustand möglich | PASS | Frontend: Publish enabled only for a current, valid, non-stale result (tests 1, 2, 3, 6). Backend: `/publish` re-validates and is pinned to the revision (422/409 handled, tests 5, 6). Publish is never a local decision |
 | Published Version wird klar von Draft unterschieden | PASS | Header keeps the "Draft" badge and "editing the draft (revision N)"; the confirmation explains that the version is immutable; after publish, "Version N is published" with timestamp and immutability text; the step strip names "Immutable version N". Tests 1 and full-stack |
 | Scope item "Warnings" | NOT IMPLEMENTED | The backend has no warning severity (Finding 3). Does not block the acceptance criteria |
 
-All acceptance criteria pass, and all quality gates pass (§13). "COMPLETE WITH LIMITATIONS" reflects the roadmap scope item "Warnings", which has no backend counterpart, and the deferred trigger and project navigation.
+All acceptance criteria pass, and all quality gates pass (§13). "COMPLETE WITH LIMITATIONS" reflects the roadmap scope item "Warnings", which has no backend counterpart, and the deferred trigger and workflow navigation.
 
 ---
 
 ## 15. Security Considerations
 
-- **Authorization:** `/validate` and `/publish` keep their existing project authorization. No new endpoint.
+- **Authorization:** `/validate` and `/publish` keep their existing workflow authorization. No new endpoint.
 - **Input validation:** `expected_revision` is checked as `int ≥ 1` or `null`; malformed bodies get 422 `VALIDATION_ERROR` (tested).
-- **Error disclosure:** 409 details expose only project id and revision numbers, the same as the existing publish and save conflicts.
+- **Error disclosure:** 409 details expose only workflow id and revision numbers, the same as the existing publish and save conflicts.
 - **Sensitive data:** validation issues contain no config values (backend `issue_payload`). Nothing is logged or stored client-side, and the result is not cached in TanStack Query.
 - **XSS:** issue messages, codes and ids are rendered as React text.
 - **Safety of publish:**
@@ -566,16 +566,16 @@ Checked: no other document (`backend/README.md`, `backend/AGENTS.md`, `docs/*.md
 
 - Validation runs only on the saved draft. Validate does not save first, so the user must save (or wait 1.5 s for autosave) before validating.
 - Undo/redo history is cleared by publishing, because the draft reloads.
-- Trigger and project-wide issues are listed but cannot be navigated to.
-- The success notice links to the project page, not to the version (no version page until Phase 12).
-- The version number in the confirmation (`current_version + 1`) comes from the loaded project. If another user publishes concurrently, the backend's revision pin turns that into a 409, so a wrong number cannot be frozen. The dialog text itself is not re-checked.
+- Trigger and workflow-wide issues are listed but cannot be navigated to.
+- The success notice links to the workflow page, not to the version (no version page until Phase 12).
+- The version number in the confirmation (`current_version + 1`) comes from the loaded workflow. If another user publishes concurrently, the backend's revision pin turns that into a 409, so a wrong number cannot be frozen. The dialog text itself is not re-checked.
 - All issues are called "errors"; there are no warnings.
 
 ---
 
 ## 21. Open Issues
 
-1. **Revision bump on publish** is now documented, but the backend still models publish as a project save.
+1. **Revision bump on publish** is now documented, but the backend still models publish as a workflow save.
    - **Impact:** every client must reload after publish.
    - **Severity:** LOW.
    - **Recommended action:** none required; revisit only if the reload becomes a UX problem.
@@ -599,11 +599,11 @@ Checked: no other document (`backend/README.md`, `backend/AGENTS.md`, `docs/*.md
 ## 23. Repository / Git State
 
 - **Branch:** `main`, HEAD `5ed516e` (frontend phase 10). Nothing committed for Phase 11.
-- **Modified:** 4 backend source/test-infrastructure files (`application/projects.py`, `api/projects.py`, `api/project_schemas.py`, `tests/conftest.py`), 11 backend test files (one changed import line in 10 of them, plus the new test in `test_projects_api.py`), `docs/architecture.md`, `frontend/README.md`, and 12 frontend files:
-  - `src/api/contract.node.test.ts`, `mutations.ts`, `openapi.json`, `projects.ts`;
+- **Modified:** 4 backend source/test-infrastructure files (`application/workflows.py`, `api/workflows.py`, `api/workflow_schemas.py`, `tests/conftest.py`), 11 backend test files (one changed import line in 10 of them, plus the new test in `test_workflows_api.py`), `docs/architecture.md`, `frontend/README.md`, and 12 frontend files:
+  - `src/api/contract.node.test.ts`, `mutations.ts`, `openapi.json`, `workflows.ts`;
   - `src/app/routes.test.tsx`;
   - `src/features/editor/EditorPage.tsx`, `EditorPage.test.tsx`, `GraphCanvas.tsx`, `NodeCard.tsx`, `NodeInspector.test.tsx`;
-  - `tests/e2e/dashboard.spec.ts`, `tests/fullstack/projects.spec.ts`.
+  - `tests/e2e/dashboard.spec.ts`, `tests/fullstack/workflows.spec.ts`.
 - **Renamed (staged by `git mv`):** `backend/tests/integration/conftest.py → fixtures.py`, `backend/tests/nodes/conftest.py → fixtures.py`.
 - **Untracked:** `frontend/src/features/editor/{ValidationPanel.tsx, usePublishWorkflow.ts, validation.ts, validation.test.ts}`, and this report.
 - **Unrelated changes:** none detected.
@@ -639,7 +639,7 @@ Checked: no other document (`backend/README.md`, `backend/AGENTS.md`, `docs/*.md
 - Structured config-field locations.
 
 ### Open
-- Only the LOW item in §21 (publish modelled as a project save).
+- Only the LOW item in §21 (publish modelled as a workflow save).
 
 ### Blocking Issues
 - None.
@@ -654,17 +654,17 @@ Checked: no other document (`backend/README.md`, `backend/AGENTS.md`, `docs/*.md
   - a component test file that renders a code-split route preloads it in `beforeAll` (see `EditorPage.test.tsx`);
   - e2e tests wait for the final element before strict assertions.
 - **Available contracts:**
-  - `POST /projects/{id}/validate` and `/publish` accept `{"expected_revision"}` and answer 409 when stale.
-  - `/publish` returns `ProjectVersionDetail` (201) and advances the project `revision`.
-  - 422 `PROJECT_VALIDATION_FAILED` carries `details.issues` in the `/validate` issue shape.
+  - `POST /workflows/{id}/validate` and `/publish` accept `{"expected_revision"}` and answer 409 when stale.
+  - `/publish` returns `WorkflowVersionDetail` (201) and advances the workflow `revision`.
+  - 422 `WORKFLOW_VALIDATION_FAILED` carries `details.issues` in the `/validate` issue shape.
 - **Frontend building blocks:**
   - `usePublishWorkflow`, `ValidationPanel`;
   - `validation.ts` (`issueScope`, `issueCounts`, `publishIssues`, `isConflict`);
   - `NodeCard` `issues` and `GraphCanvas` `issueCounts` props.
-- **Cache behaviour for Phase 12:** `usePublishProject` invalidates `['projects', id]`, which includes `['projects', id, 'versions', …]`, so a version list on any page refetches after a publish.
+- **Cache behaviour for Phase 12:** `usePublishWorkflow` invalidates `['workflows', id]`, which includes `['workflows', id, 'versions', …]`, so a version list on any page refetches after a publish.
 - **Do not change casually:**
   - always pin validate and publish to the shown revision;
   - never enable Publish from local checks;
   - reload the draft after publish (or obtain the new revision from the backend);
   - keep backend package fixtures as `pytest_plugins`.
-- **Prerequisites for Phase 12:** none beyond the existing `GET /projects/{id}/versions[/{n}]`. The success notice in the editor should then link to the new version page.
+- **Prerequisites for Phase 12:** none beyond the existing `GET /workflows/{id}/versions[/{n}]`. The success notice in the editor should then link to the new version page.

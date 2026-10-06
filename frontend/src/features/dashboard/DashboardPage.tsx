@@ -7,20 +7,20 @@ import { useApiClient } from '../../api/context'
 import { errorMessage } from '../../api/errors'
 import {
     executionQueries,
-    projectQueries,
+    workflowQueries,
     systemQueries,
 } from '../../api/queries'
 import { Button, ErrorState, PageHeader } from '../../components/ui'
 import {
     activeExecutions,
-    PROJECT_SAMPLE,
+    WORKFLOW_SAMPLE,
     recentExecutions,
     recentFailures,
 } from './format'
 import {
     ExecutionCountsCard,
     ExecutionListCard,
-    ProjectsCard,
+    WorkflowsCard,
     SystemStatusCard,
 } from './sections'
 
@@ -40,7 +40,7 @@ function useOutage() {
             executionQueries.list(client, recentFailures),
             executionQueries.list(client, recentExecutions),
             systemQueries.status(client),
-            projectQueries.list(client, PROJECT_SAMPLE),
+            workflowQueries.list(client, WORKFLOW_SAMPLE),
         ],
         combine: (results) =>
             results.every((r) => r.isError && r.data === undefined)
@@ -84,7 +84,7 @@ export function DashboardPage() {
                 <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-3">
                     {/* DOM order is reading order on every width: on narrow screens
                     the system status follows the outcomes instead of trailing
-                    every list; wide screens place it and the projects in a
+                    every list; wide screens place it and the workflows in a
                     side column. */}
                     <ExecutionCountsCard className="lg:col-span-2" />
                     <SystemStatusCard />
@@ -109,10 +109,10 @@ export function DashboardPage() {
                         description="The newest executions of every status."
                         params={recentExecutions}
                         emptyTitle="No executions yet"
-                        emptyDescription="Runs of published projects appear here."
+                        emptyDescription="Runs of published workflows appear here."
                         className={LIST}
                     />
-                    <ProjectsCard className="lg:col-start-3 lg:row-span-3 lg:row-start-2" />
+                    <WorkflowsCard className="lg:col-start-3 lg:row-span-3 lg:row-start-2" />
                 </div>
             )}
         </>

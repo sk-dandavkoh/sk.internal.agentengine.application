@@ -33,7 +33,7 @@ test('sidebar navigation changes the URL and page', async ({ page }) => {
 test('deep links to nested and unknown routes resolve client-side', async ({
     page,
 }) => {
-    await page.goto('/projects/p_1/editor')
+    await page.goto('/workflows/p_1/editor')
     await expect(
         page.getByRole('heading', { level: 1, name: 'Editor' }),
     ).toBeVisible()

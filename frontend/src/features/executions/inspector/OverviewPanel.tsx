@@ -10,10 +10,10 @@ import { Item, JsonBlock, Mono, None } from './display'
 
 function Details({
     execution: e,
-    projectName,
+    workflowName,
 }: {
     execution: Execution
-    projectName: string | null | undefined
+    workflowName: string | null | undefined
 }) {
     return (
         <Card title="Details">
@@ -21,15 +21,18 @@ function Details({
                 <Item term="Status">
                     <StatusBadge status={e.status} />
                 </Item>
-                <Item term="Project">
+                <Item term="Workflow">
                     <TextLink
-                        to={`/projects/${encodeURIComponent(e.project_id)}`}
+                        to={`/workflows/${encodeURIComponent(e.workflow_id)}`}
                     >
-                        {projectName ?? e.project_id}
+                        {workflowName ?? e.workflow_id}
                     </TextLink>
                 </Item>
                 <Item term="Version">
-                    <VersionLink projectId={e.project_id} version={e.version} />
+                    <VersionLink
+                        workflowId={e.workflow_id}
+                        version={e.version}
+                    />
                 </Item>
                 <Item term="Trigger">
                     {e.trigger_type}
@@ -125,10 +128,10 @@ export function RunSnapshot({ report }: { report: ExecutionReport }) {
                     <Mono>{report.execution.engine_version}</Mono>
                 </Item>
                 <Item term="Version published">
-                    <Time iso={report.project.published_at} />
+                    <Time iso={report.workflow.published_at} />
                 </Item>
                 <Item term="Version description">
-                    {report.project.version_description || <None />}
+                    {report.workflow.version_description || <None />}
                 </Item>
                 <Item term="Node versions">
                     {versions.length === 0 ? (
@@ -161,7 +164,7 @@ export function OverviewPanel({
         <div className="flex flex-col gap-6">
             <Details
                 execution={execution}
-                projectName={report.data?.project.name}
+                workflowName={report.data?.workflow.name}
             />
             <Card
                 title="Usage"

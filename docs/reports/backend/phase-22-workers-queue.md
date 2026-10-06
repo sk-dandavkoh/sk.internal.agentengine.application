@@ -21,7 +21,7 @@ implementation.
 
 - `ExecutionService.create_execution` stored executions as `QUEUED`, but
   nothing ran them.
-- Only the CLI's `akasha project run` called `ExecutionRuntime.run`, in the
+- Only the CLI's `akasha workflow run` called `ExecutionRuntime.run`, in the
   same process.
 - Every execution created through the API (manual execute, trigger invoke,
   webhook, scheduler) stayed `QUEUED` forever.
@@ -68,7 +68,7 @@ scope (roadmap Phase 23) and are documented as a limitation.
 - tests for enqueue, dequeue, worker execution, worker failure, duplicate
   delivery handling, heartbeat and queue recovery.
 
-**Acceptance criterion:** "Long-running Projects do not depend on an open
+**Acceptance criterion:** "Long-running Workflows do not depend on an open
 HTTP request."
 
 **Responsible for:**
@@ -155,7 +155,7 @@ Resource limits belong to Phase 24.
 - **CLI:**
   - new `akasha worker` command: SIGTERM/SIGINT trigger a graceful stop,
     and it prints `worker <id> running` once registered;
-  - `project run` now creates its execution with `dispatch=False` and still
+  - `workflow run` now creates its execution with `dispatch=False` and still
     runs it in-process.
 - **`Settings`:** `redis_url` (`SecretStr`), `queue_prefix`,
   `worker_enabled`, `worker_concurrency`, `worker_poll_seconds`,
@@ -187,7 +187,7 @@ Resource limits belong to Phase 24.
 | `backend/src/akasha/application/triggers.py` | Modified | `dispatch` pass-through on `fire_manual` / `_create` |
 | `backend/src/akasha/bootstrap.py` | Modified (+49/−5) | Wires queue, worker, manager, readiness; lifecycle |
 | `backend/src/akasha/config.py` | Modified | Worker/queue settings |
-| `backend/src/akasha/cli.py` | Modified | `worker` command; `project run` uses `dispatch=False` |
+| `backend/src/akasha/cli.py` | Modified | `worker` command; `workflow run` uses `dispatch=False` |
 | `backend/src/akasha/observability/metrics.py` | Modified | `queue_depth` gauge |
 | `backend/src/akasha/api/triggers.py` | Modified (docstring only) | Removed the stale statement "until then a caller must hand the id to ExecutionRuntime.run" |
 | `backend/src/akasha/runtime/runtime.py` | Modified (docstrings only) | Removed stale "no queue/worker (Phase 22)" scope notes |
@@ -308,9 +308,9 @@ break the out-of-the-box single-process setup.
 `AKASHA_WORKER_ENABLED=false` on the API processes to keep all work on the
 workers.
 
-### 5.5 The CLI `project run` stays in-process
+### 5.5 The CLI `workflow run` stays in-process
 
-**Decision.** `project run` creates its execution with `dispatch=False` and
+**Decision.** `workflow run` creates its execution with `dispatch=False` and
 runs it itself. It keeps its Phase 21 Ctrl-C cancellation behavior.
 
 **Context.** If it enqueued and also ran the execution itself, a worker
@@ -361,7 +361,7 @@ age.
 ## 7. API / Contract Changes
 
 **HTTP API.** No endpoints were added, removed or changed in shape.
-`POST /api/v1/projects/{id}/versions/{v}/execute`, trigger invoke and
+`POST /api/v1/workflows/{id}/versions/{v}/execute`, trigger invoke and
 webhooks still return the created execution with status `queued` (201).
 
 **Behavior change.** Those executions are now run by a worker; before this
@@ -563,7 +563,7 @@ completion.
 
 | Problem | Root cause | Fix | Regression test |
 |---|---|---|---|
-| 16 of 24 new worker tests failed with `ProjectValidationFailedError` | The test graph had one node; graph validation rejects `DISCONNECTED_NODE` | Test graph is now `test.gate → test.sink` | All tests in `test_workers.py` |
+| 16 of 24 new worker tests failed with `WorkflowValidationFailedError` | The test graph had one node; graph validation rejects `DISCONNECTED_NODE` | Test graph is now `test.gate → test.sink` | All tests in `test_workers.py` |
 | Container test failed: `pydantic ValidationError` on `queue_prefix` | The test prefix `t-<32 hex>` exceeded the 32-character pattern | Truncated to `new_id("t")[:24]` | `test_container_wires_queue_worker_and_readiness` |
 | `test_container_wires_queue_worker_and_readiness` found no registered worker | `WorkerManager.start()` returned before the worker task's first heartbeat (a real race, not only a test issue) | `start()` now awaits `worker.beat()` before creating tasks | Same test; 6 consecutive green runs |
 | First draft of the concurrency test busy-waited with `asyncio.sleep(0)` (violates "no sleep-based synchronization") | Written without a start signal | `Gate.each_start` queue; the test awaits two starts | `test_worker_runs_up_to_its_concurrency_at_once` |
@@ -717,7 +717,7 @@ session-requested items are evaluated as well.
 
 | Acceptance Criterion | Status | Evidence |
 |---|---|---|
-| Long-running Projects do not depend on an open HTTP request | PASS | `test_execution_outlives_the_http_request`: the response is 201/`queued` while the node is still blocked; the worker completes it after the response |
+| Long-running Workflows do not depend on an open HTTP request | PASS | `test_execution_outlives_the_http_request`: the response is 201/`queued` while the node is still blocked; the worker completes it after the response |
 | Roadmap test: enqueue | PASS | `test_enqueue_dequeue_ack_is_fifo_and_empties_the_queue`, `test_created_execution_is_dispatched_and_run_by_a_worker` |
 | Roadmap test: dequeue | PASS | same, plus `test_undecodable_job_is_dropped_not_redelivered` |
 | Roadmap test: worker execution | PASS | `test_created_execution_is_dispatched_and_run_by_a_worker`, `test_worker_runs_up_to_its_concurrency_at_once` |
@@ -782,9 +782,9 @@ session-requested items are evaluated as well.
 | File | Reason | What |
 |---|---|---|
 | `docs/architecture.md` §72 | New implementation | Implementation note: truth vs. signal, recovery, reliable-queue layout, at-least-once and duplicates, heartbeat, worker failure, graceful stop, crash, placement |
-| `docs/architecture.md` §58 | CLI behavior changed | `project run` does not dispatch; `akasha worker` |
+| `docs/architecture.md` §58 | CLI behavior changed | `workflow run` does not dispatch; `akasha worker` |
 | `docs/architecture.md` §113 | Metric added | `akasha_queue_depth`; removed from "not yet emitted" |
-| `backend/README.md` | New config and command | Worker/queue env var table, `worker` CLI row, `project run` wording, layout entry for `workers.py` |
+| `backend/README.md` | New config and command | Worker/queue env var table, `worker` CLI row, `workflow run` wording, layout entry for `workers.py` |
 | Module docstrings | New and stale text | `application/queue.py`, `infrastructure/redis_queue.py`, `workers.py`, `application/executions.py`, `api/triggers.py`, `runtime/runtime.py`, `runtime/scheduler.py` |
 
 **Should be updated later:**
@@ -870,7 +870,7 @@ session-requested items are evaluated as well.
   truthful, terminal and needs no resumption support.
 - **The recovery age doubles as the re-dispatch threshold.** One setting,
   `queue_recovery_seconds`. It also protects the CLI's in-process
-  `project run` from being picked up by a worker.
+  `workflow run` from being picked up by a worker.
 - **`WorkerManager.start()` registers synchronously.** When `start()`
   returns, the worker is visible to operators and tests.
 
@@ -950,7 +950,7 @@ boundary: crashed-worker `RUNNING` executions and retry policy.
 
 - **Stale `RUNNING` detection:** an execution is stale when it is `RUNNING`
   and no live worker lists it in `active_executions` (and it is older than
-  a threshold). Runs started by the CLI's in-process `project run` are not
+  a threshold). Runs started by the CLI's in-process `workflow run` are not
   in any worker registration, so account for them.
 - **Retries:** the runtime still refuses `retry_policy.max_attempts > 1`.
   Implement node retries inside the runtime, not in the worker.

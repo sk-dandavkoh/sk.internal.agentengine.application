@@ -120,7 +120,7 @@ backend AGENTS §78):
     `node_executions: dict[node_id, NodeExecution]`,
     `error: ExecutionError | None`, `cancellation: CancellationState | None`.
   - `Execution.create()` builds one `PENDING` NodeExecution per node of the
-    pinned `ProjectVersion.graph`.
+    pinned `WorkflowVersion.graph`.
   - Execution transitions: `enqueue, start, pause, wait, resume, complete,
     fail, request_cancellation, cancel, time_out`.
   - Guarded node operations: `mark_node_ready, start_node, skip_node,
@@ -793,7 +793,7 @@ None.
 
 ## 23. Repository / Git State
 
-- Branch: `main`. HEAD: `a4184bf backend phase 06 - project application services`.
+- Branch: `main`. HEAD: `a4184bf backend phase 06 - workflow application services`.
 - Working tree (uncommitted, nothing staged except the intent-to-add
   marker):
   - `M backend/src/akasha/domain/execution.py`
@@ -849,7 +849,7 @@ None.
 ## 25. Handoff to Next Phase
 
 **Phase 08 — Execution Runtime** can assume:
-- `Execution.create(project_id, project_version, metadata=, retry_policy=,
+- `Execution.create(workflow_id, workflow_version, metadata=, retry_policy=,
   timeout_policy=, now=)` pins the immutable version and pre-creates one
   PENDING NodeExecution per graph node.
 - The legal operation sequence for the runtime:

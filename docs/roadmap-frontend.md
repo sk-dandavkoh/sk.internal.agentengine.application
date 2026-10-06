@@ -8,8 +8,8 @@ Das Frontend wird unabhängig vom Backend entwickelt, darf aber niemals eine eig
 
 Das Backend ist die autoritative Quelle für:
 
-- Projekte
-- Projektversionen
+- Workflows
+- Workflowversionen
 - Nodes
 - Node Contracts
 - Graphen
@@ -68,11 +68,11 @@ Das Frontend muss insbesondere folgende Bereiche unterstützen:
 ```text
 Application Shell
 ├── Dashboard
-├── Projects
-│   ├── Project List
-│   ├── Project Details
-│   ├── Project Versions
-│   └── Project Editor
+├── Workflows
+│   ├── Workflow List
+│   ├── Workflow Details
+│   ├── Workflow Versions
+│   └── Workflow Editor
 ├── Node Library
 ├── Executions
 │   ├── Execution List
@@ -102,7 +102,7 @@ Beispielsweise darf das Frontend nicht selbst entscheiden:
     
 -   ob ein Port kompatibel ist
     
--   ob ein Projekt veröffentlicht werden darf
+-   ob ein Workflow veröffentlicht werden darf
     
 -   welche Execution States gültig sind
     
@@ -160,7 +160,7 @@ Hardcodierte Node-spezifische Formulare sollen vermieden werden.
 
 Server State:
 
--   Projects
+-   Workflows
     
 -   Nodes
     
@@ -203,15 +203,15 @@ Diese beiden Kategorien dürfen nicht unnötig vermischt werden.
 Der Graph Editor benötigt einen klar definierten Zustand:
 
 ```text
-Project Draft
+Workflow Draft
     ↓
 Graph Editor State
     ↓
-Backend Project Draft
+Backend Workflow Draft
     ↓
 Validation
     ↓
-Published Project Version
+Published Workflow Version
 ```
 
 Der Editor darf nicht automatisch eine veröffentlichte Version verändern.
@@ -256,7 +256,7 @@ API-Aufrufe müssen zentralisiert werden.
 Nicht:
 
 ```tsx
-fetch("/api/v1/projects")
+fetch("/api/v1/workflows")
 ```
 
 in beliebigen Komponenten.
@@ -266,7 +266,7 @@ Sondern beispielsweise:
 ```text
 api/
   client.ts
-  projects.ts
+  workflows.ts
   nodes.ts
   executions.ts
   triggers.ts
@@ -339,13 +339,13 @@ Phase 02  Design System + UI Foundation
 Phase 03  API Client + Backend Integration Foundation
 Phase 04  Domain Types + Server State
 Phase 05  Dashboard
-Phase 06  Project Management
-Phase 07  Project Draft + Graph Editor Foundation
+Phase 06  Workflow Management
+Phase 07  Workflow Draft + Graph Editor Foundation
 Phase 08  Node Library
 Phase 09  Node Configuration Inspector
 Phase 10  Graph Editing + Connections
 Phase 11  Graph Validation + Publish Workflow
-Phase 12  Project Versions
+Phase 12  Workflow Versions
 Phase 13  Execution UI
 Phase 14  Live Execution + WebSocket
 Phase 15  Execution Inspector + Logs
@@ -529,7 +529,7 @@ Navigation:
 
 ```text
 Dashboard
-Projects
+Workflows
 Executions
 Monitoring
 Reports
@@ -665,7 +665,7 @@ Baue eine konsistente UI Foundation und ein wiederverwendbares Design System.
 
 Implementiere nur generische UI-Komponenten.
 
-Keine fachlichen Project-, Node-, Execution- oder Backend-Features.
+Keine fachlichen Workflow-, Node-, Execution- oder Backend-Features.
 
 Schreibe Component Tests für relevante Komponenten.
 
@@ -715,7 +715,7 @@ Beispiel:
 api/
 ├── client.ts
 ├── errors.ts
-├── projects.ts
+├── workflows.ts
 ├── nodes.ts
 ├── executions.ts
 ├── triggers.ts
@@ -776,11 +776,11 @@ Eine typisierte Frontend-Repräsentation der Backend-Domäne schaffen.
 
 Types für:
 
--   Project
+-   Workflow
     
--   ProjectDraft
+-   WorkflowDraft
     
--   ProjectVersion
+-   WorkflowVersion
     
 -   Graph
     
@@ -910,17 +910,17 @@ STOP nach Phase 05.
 
 ----------
 
-# 12. Phase 06 — Project Management
+# 12. Phase 06 — Workflow Management
 
 ## Ziel
 
-Projekte vollständig verwalten können.
+Workflows vollständig verwalten können.
 
 ## Scope
 
 Implementieren:
 
--   Project List
+-   Workflow List
     
 -   Suche
     
@@ -928,9 +928,9 @@ Implementieren:
     
 -   Sortierung
     
--   Project Details
+-   Workflow Details
     
--   Create Project
+-   Create Workflow
     
 -   Rename
     
@@ -940,7 +940,7 @@ Implementieren:
     
 -   Open Editor
     
--   Project Status
+-   Workflow Status
     
 
 ## Acceptance Criteria
@@ -948,7 +948,7 @@ Implementieren:
 Ein Benutzer kann:
 
 ```text
-Project erstellen
+Workflow erstellen
 → öffnen
 → bearbeiten
 → speichern
@@ -960,7 +960,7 @@ Project erstellen
 ```text
 Implementiere ausschließlich Phase 06.
 
-Implementiere die Project Management UI.
+Implementiere die Workflow Management UI.
 
 Unterstütze:
 - Liste
@@ -982,11 +982,11 @@ STOP nach Phase 06.
 
 ----------
 
-# 13. Phase 07 — Project Draft + Graph Editor Foundation
+# 13. Phase 07 — Workflow Draft + Graph Editor Foundation
 
 ## Ziel
 
-Den visuellen Projekt-Editor als technische Grundlage implementieren.
+Den visuellen Workflow-Editor als technische Grundlage implementieren.
 
 ## Scope
 
@@ -1059,7 +1059,7 @@ Noch keine vollständige Node Library.
 Noch keine komplexe Node-Konfiguration.
 Noch kein Publish Workflow.
 
-Die Trennung zwischen Project Draft und veröffentlichter Version muss erhalten bleiben.
+Die Trennung zwischen Workflow Draft und veröffentlichter Version muss erhalten bleiben.
 
 STOP nach Phase 07.
 ```
@@ -1334,7 +1334,7 @@ Validate
  ↓
 Publish
  ↓
-Immutable Project Version
+Immutable Workflow Version
 ```
 
 Validation UI:
@@ -1392,7 +1392,7 @@ STOP nach Phase 11.
 
 ----------
 
-# 18. Phase 12 — Project Versions
+# 18. Phase 12 — Workflow Versions
 
 ## Ziel
 
@@ -1435,7 +1435,7 @@ Implementieren:
 ```text
 Implementiere ausschließlich Phase 12.
 
-Implementiere die Project Version UI.
+Implementiere die Workflow Version UI.
 
 Zeige:
 - Versionen
@@ -1465,9 +1465,9 @@ Execution List:
 
 -   Status
     
--   Project
+-   Workflow
     
--   Project Version
+-   Workflow Version
     
 -   Trigger
     
@@ -1526,7 +1526,7 @@ Implementiere Execution List und grundlegende Execution Details.
 Verwende ausschließlich die Backend Execution States.
 
 Zeige:
-- Project
+- Workflow
 - Version
 - Trigger
 - Status
@@ -2391,12 +2391,12 @@ Kritische Benutzerabläufe automatisiert absichern.
 
 Playwright E2E Tests für:
 
-### Project Flow
+### Workflow Flow
 
 ```text
 Login
-→ Project erstellen
-→ Project öffnen
+→ Workflow erstellen
+→ Workflow öffnen
 → Node hinzufügen
 → Node konfigurieren
 → Graph speichern
@@ -2407,7 +2407,7 @@ Login
 ### Execution Flow
 
 ```text
-Project öffnen
+Workflow öffnen
 → Run
 → Execution öffnen
 → Live Status
@@ -2420,7 +2420,7 @@ Project öffnen
 ```text
 Export
 → Import
-→ Project öffnen
+→ Workflow öffnen
 → Validate
 → Run
 ```
@@ -2446,7 +2446,7 @@ Baue robuste Playwright E2E Tests für die wichtigsten V1 Workflows.
 
 Mindestens:
 - Login
-- Project Creation
+- Workflow Creation
 - Node Creation
 - Node Configuration
 - Graph Save
@@ -2546,9 +2546,9 @@ Login
  ↓
 Dashboard
  ↓
-Project
+Workflow
  ↓
-Project Draft
+Workflow Draft
  ↓
 Node Library
  ↓
@@ -2560,7 +2560,7 @@ Validation
  ↓
 Publish
  ↓
-Project Version
+Workflow Version
  ↓
 Trigger
  ↓
@@ -2631,14 +2631,14 @@ Prüfe den vollständigen User Journey:
 
 Login
 → Dashboard
-→ Project
+→ Workflow
 → Draft
 → Node Library
 → Graph Editor
 → Node Configuration
 → Validation
 → Publish
-→ Project Version
+→ Workflow Version
 → Trigger
 → Execution
 → Live Execution
@@ -2904,11 +2904,11 @@ Login
   ↓
 Dashboard
   ↓
-Project erstellen
+Workflow erstellen
   ↓
-Project öffnen
+Workflow öffnen
   ↓
-Project Draft bearbeiten
+Workflow Draft bearbeiten
   ↓
 Node aus Node Library auswählen
   ↓
@@ -2922,9 +2922,9 @@ Graph validieren
   ↓
 Validation Errors beheben
   ↓
-Project publishen
+Workflow publishen
   ↓
-Project Version erhalten
+Workflow Version erhalten
   ↓
 Execution starten
   ↓
@@ -2942,13 +2942,13 @@ Kosten/Token Usage untersuchen
   ↓
 Report öffnen
   ↓
-Project exportieren
+Workflow exportieren
   ↓
-Project importieren
+Workflow importieren
   ↓
-importiertes Project validieren
+importiertes Workflow validieren
   ↓
-importiertes Project erneut ausführen
+importiertes Workflow erneut ausführen
 ```
 
 Zusätzlich müssen folgende Bereiche funktionieren:
@@ -3096,13 +3096,13 @@ Graph Editor
         ↓
 Node Inspector
         ↓
-Project Draft
+Workflow Draft
         ↓
 Backend Validation
         ↓
 Publish
         ↓
-Project Version
+Workflow Version
         ↓
 Trigger
         ↓
@@ -3136,7 +3136,7 @@ Frontend Node Library
     ↓
 Graph Editor
     ↓
-Project
+Workflow
     ↓
 Execution Runtime
 ```

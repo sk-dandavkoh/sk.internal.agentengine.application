@@ -28,7 +28,7 @@ function sessionBackend(handlers: Record<string, Handler> = {}) {
             state.signedIn = false
             return { status: 204 }
         },
-        'GET /projects': () => (state.signedIn ? ok(emptyPage) : noSession()),
+        'GET /workflows': () => (state.signedIn ? ok(emptyPage) : noSession()),
         ...handlers,
     })
     return { state, requests }
@@ -50,7 +50,7 @@ const loginHeading = () =>
 describe('protected routes', () => {
     it('send a visitor without a session to the login page, loading nothing', async () => {
         const { requests } = sessionBackend()
-        const { router } = renderRoute('/projects?q=x')
+        const { router } = renderRoute('/workflows?q=x')
 
         expect(await loginHeading()).toBeInTheDocument()
         expect(router.state.location.pathname).toBe('/login')
@@ -64,10 +64,10 @@ describe('protected routes', () => {
     it('restore the session after a reload without asking to sign in', async () => {
         const { state } = sessionBackend()
         state.signedIn = true // the cookie from an earlier sign-in
-        renderRoute('/projects')
+        renderRoute('/workflows')
 
         expect(
-            await screen.findByRole('heading', { level: 1, name: 'Projects' }),
+            await screen.findByRole('heading', { level: 1, name: 'Workflows' }),
         ).toBeInTheDocument()
         expect(screen.getByText('ada')).toBeInTheDocument()
     })
@@ -100,15 +100,15 @@ describe('protected routes', () => {
 describe('login', () => {
     it('signs in by cookie and returns to the page that was requested', async () => {
         const { state } = sessionBackend()
-        const { router, queryClient } = renderRoute('/projects?q=x')
+        const { router, queryClient } = renderRoute('/workflows?q=x')
         await loginHeading()
 
         await signIn()
 
         expect(
-            await screen.findByRole('heading', { level: 1, name: 'Projects' }),
+            await screen.findByRole('heading', { level: 1, name: 'Workflows' }),
         ).toBeInTheDocument()
-        expect(router.state.location.pathname).toBe('/projects')
+        expect(router.state.location.pathname).toBe('/workflows')
         expect(router.state.location.search).toBe('?q=x')
         expect(state.loginBodies).toEqual([
             {
@@ -221,7 +221,7 @@ describe('first-run setup', () => {
 
     it('creates the first admin and signs in as it', async () => {
         const { state, setupBodies } = freshBackend()
-        const { router } = renderRoute('/projects')
+        const { router } = renderRoute('/workflows')
 
         expect(
             await screen.findByRole('heading', { name: 'Set up Akasha' }),
@@ -229,9 +229,9 @@ describe('first-run setup', () => {
         await fillSetup('a long enough password')
 
         expect(
-            await screen.findByRole('heading', { level: 1, name: 'Projects' }),
+            await screen.findByRole('heading', { level: 1, name: 'Workflows' }),
         ).toBeInTheDocument()
-        expect(router.state.location.pathname).toBe('/projects')
+        expect(router.state.location.pathname).toBe('/workflows')
         expect(setupBodies).toEqual([
             { username: 'root', password: 'a long enough password' },
         ])
@@ -320,7 +320,7 @@ describe('session end', () => {
         fireEvent.click(
             within(screen.getByRole('navigation', { name: 'Main' })).getByRole(
                 'link',
-                { name: 'Projects' },
+                { name: 'Workflows' },
             ),
         )
 
@@ -331,16 +331,16 @@ describe('session end', () => {
 
         await signIn()
         expect(
-            await screen.findByRole('heading', { level: 1, name: 'Projects' }),
+            await screen.findByRole('heading', { level: 1, name: 'Workflows' }),
         ).toBeInTheDocument()
-        expect(router.state.location.pathname).toBe('/projects')
+        expect(router.state.location.pathname).toBe('/workflows')
     })
 
     it('signs out on the server and forgets the previous user’s data', async () => {
         const { state, requests } = sessionBackend()
         state.signedIn = true
-        const { router, queryClient } = renderRoute('/projects')
-        await screen.findByRole('heading', { level: 1, name: 'Projects' })
+        const { router, queryClient } = renderRoute('/workflows')
+        await screen.findByRole('heading', { level: 1, name: 'Workflows' })
 
         fireEvent.click(screen.getByRole('button', { name: 'Sign out' }))
 
@@ -368,8 +368,8 @@ describe('session end', () => {
                 apiError(503, 'SERVICE_UNAVAILABLE', 'Engine restarting.'),
         })
         state.signedIn = true
-        const { router } = renderRoute('/projects')
-        await screen.findByRole('heading', { level: 1, name: 'Projects' })
+        const { router } = renderRoute('/workflows')
+        await screen.findByRole('heading', { level: 1, name: 'Workflows' })
 
         fireEvent.click(screen.getByRole('button', { name: 'Sign out' }))
 
@@ -378,7 +378,7 @@ describe('session end', () => {
         ).toBeInTheDocument()
         // The server session (and its cookie) is still valid: pretending
         // otherwise would leave it usable behind the user's back.
-        expect(router.state.location.pathname).toBe('/projects')
+        expect(router.state.location.pathname).toBe('/workflows')
     })
 })
 
@@ -387,8 +387,8 @@ describe('readLoginState', () => {
         const from = (pathname: string) => ({
             from: { pathname, search: '?a=1', hash: '#h' },
         })
-        expect(readLoginState(from('/projects')).returnTo).toBe(
-            '/projects?a=1#h',
+        expect(readLoginState(from('/workflows')).returnTo).toBe(
+            '/workflows?a=1#h',
         )
         expect(readLoginState(from('//evil.example')).returnTo).toBe('/')
         expect(readLoginState(from('https://evil.example')).returnTo).toBe('/')

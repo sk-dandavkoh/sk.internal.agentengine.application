@@ -6,12 +6,12 @@ import { timestamp } from './schemas'
 // edit) is enforced there; `access` only lets the UI hide what the backend
 // would refuse.
 
-export const projectRoleSchema = z.enum(['viewer', 'editor'])
-export type ProjectRole = z.infer<typeof projectRoleSchema>
+export const workflowRoleSchema = z.enum(['viewer', 'editor'])
+export type WorkflowRole = z.infer<typeof workflowRoleSchema>
 
 /** The caller's access: manage (owner, admin) ⊃ edit (editor) ⊃ view. */
-export const projectAccessSchema = z.enum(['manage', 'edit', 'view'])
-export type ProjectAccess = z.infer<typeof projectAccessSchema>
+export const workflowAccessSchema = z.enum(['manage', 'edit', 'view'])
+export type WorkflowAccess = z.infer<typeof workflowAccessSchema>
 
 const personSchema = z.object({
     user_id: z.string(),
@@ -20,77 +20,77 @@ const personSchema = z.object({
 })
 export type Person = z.infer<typeof personSchema>
 
-export const projectMemberSchema = personSchema.extend({
-    role: projectRoleSchema,
+export const workflowMemberSchema = personSchema.extend({
+    role: workflowRoleSchema,
     created_at: timestamp,
 })
-export type ProjectMember = z.infer<typeof projectMemberSchema>
+export type WorkflowMember = z.infer<typeof workflowMemberSchema>
 
-export const projectSharingSchema = z.object({
-    access: projectAccessSchema,
-    /** Null: an ownerless project (admin-only unless shared). */
+export const workflowSharingSchema = z.object({
+    access: workflowAccessSchema,
+    /** Null: an ownerless workflow (admin-only unless shared). */
     owner: personSchema.nullable(),
-    members: z.array(projectMemberSchema),
+    members: z.array(workflowMemberSchema),
 })
-export type ProjectSharing = z.infer<typeof projectSharingSchema>
+export type WorkflowSharing = z.infer<typeof workflowSharingSchema>
 
-const path = (projectId: string, username?: string) =>
-    `/projects/${encodeURIComponent(projectId)}/members` +
+const path = (workflowId: string, username?: string) =>
+    `/workflows/${encodeURIComponent(workflowId)}/members` +
     (username === undefined ? '' : `/${encodeURIComponent(username)}`)
 
-export function getProjectSharing(
+export function getWorkflowSharing(
     client: ApiClient,
-    projectId: string,
+    workflowId: string,
     signal?: AbortSignal,
 ) {
-    return client.request('GET', path(projectId), projectSharingSchema, {
+    return client.request('GET', path(workflowId), workflowSharingSchema, {
         signal,
     })
 }
 
-/** Shares the project with `username`, or changes their role. */
-export function putProjectMember(
+/** Shares the workflow with `username`, or changes their role. */
+export function putWorkflowMember(
     client: ApiClient,
-    projectId: string,
+    workflowId: string,
     username: string,
-    role: ProjectRole,
+    role: WorkflowRole,
 ) {
     return client.request(
         'PUT',
-        path(projectId, username),
-        projectMemberSchema,
+        path(workflowId, username),
+        workflowMemberSchema,
         { body: { role } },
     )
 }
 
-export function removeProjectMember(
+export function removeWorkflowMember(
     client: ApiClient,
-    projectId: string,
+    workflowId: string,
     username: string,
 ) {
-    return client.request('DELETE', path(projectId, username), z.undefined())
+    return client.request('DELETE', path(workflowId, username), z.undefined())
 }
 
 /** Makes `username` the owner; the caller (if the owner) stays an editor.
  * Answers the sharing as the caller sees it afterwards. */
-export function transferProjectOwnership(
+export function transferWorkflowOwnership(
     client: ApiClient,
-    projectId: string,
+    workflowId: string,
     username: string,
 ) {
     return client.request(
         'PUT',
-        `/projects/${encodeURIComponent(projectId)}/owner`,
-        projectSharingSchema,
+        `/workflows/${encodeURIComponent(workflowId)}/owner`,
+        workflowSharingSchema,
         { body: { username } },
     )
 }
 
 /** The caller stops being a member (owners transfer instead). */
-export function leaveProject(client: ApiClient, projectId: string) {
+export function leaveWorkflow(client: ApiClient, workflowId: string) {
     return client.request(
         'DELETE',
-        `/projects/${encodeURIComponent(projectId)}/membership`,
+        `/workflows/${encodeURIComponent(workflowId)}/membership`,
         z.undefined(),
     )
 }

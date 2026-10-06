@@ -66,29 +66,29 @@ async def scaffold(client: Client) -> dict[str, str]:
     return files
 
 
-async def shout_project(client: Client) -> dict[str, Any]:
+async def shout_workflow(client: Client) -> dict[str, Any]:
     """core.input(title) → acme.shout(suffix '!') → core.output."""
-    project = await call(client, "project_create", name="shouting")
-    pid = project["id"]
+    workflow = await call(client, "workflow_create", name="shouting")
+    pid = workflow["id"]
     source = await call(
         client,
         "graph_node_add",
-        project_id=pid,
-        expected_revision=project["revision"],
+        workflow_id=pid,
+        expected_revision=workflow["revision"],
         node_type="core.input",
         config={"field": "title"},
     )
     shout = await call(
         client,
         "graph_node_add",
-        project_id=pid,
+        workflow_id=pid,
         expected_revision=source["revision"],
         node_type="acme.shout",
     )
     configured = await call(
         client,
         "graph_node_update",
-        project_id=pid,
+        workflow_id=pid,
         expected_revision=shout["revision"],
         node_id=shout["node_id"],
         config={"suffix": "!"},
@@ -96,14 +96,14 @@ async def shout_project(client: Client) -> dict[str, Any]:
     sink = await call(
         client,
         "graph_node_add",
-        project_id=pid,
+        workflow_id=pid,
         expected_revision=configured["revision"],
         node_type="core.output",
     )
     first = await call(
         client,
         "graph_edge_add",
-        project_id=pid,
+        workflow_id=pid,
         expected_revision=sink["revision"],
         source_node_id=source["node_id"],
         source_port="value",
@@ -113,7 +113,7 @@ async def shout_project(client: Client) -> dict[str, Any]:
     last = await call(
         client,
         "graph_edge_add",
-        project_id=pid,
+        workflow_id=pid,
         expected_revision=first["revision"],
         source_node_id=shout["node_id"],
         source_port="result",
@@ -125,7 +125,7 @@ async def shout_project(client: Client) -> dict[str, Any]:
 
 async def run(engine: Engine, client: Client, pid: str, **start: Any) -> dict[str, Any]:
     started = await call(
-        client, "execution_start", project_id=pid, input={"title": "hi"}, **start
+        client, "execution_start", workflow_id=pid, input={"title": "hi"}, **start
     )
     await engine.run(started["id"])
     return await call(client, "execution_get", execution_id=started["id"])
@@ -189,16 +189,16 @@ async def test_an_agent_extends_the_engine_with_a_node_it_needs(
         contract = await call(client, "node_type_get", node_type="acme.shout")
         assert [p["name"] for p in contract["inputs"]] == ["text"]
         assert "suffix" in contract["config_schema"]["properties"]
-        # 17-20. a project using it: add, configure, connect
-        built = await shout_project(client)
-        pid = built["project_id"]
+        # 17-20. a workflow using it: add, configure, connect
+        built = await shout_workflow(client)
+        pid = built["workflow_id"]
         # 21. validate
-        assert (await call(client, "project_validate", project_id=pid))["valid"]
+        assert (await call(client, "workflow_validate", workflow_id=pid))["valid"]
         # 22. publish: the version pins the plugin version
         version = await call(
             client,
-            "project_publish",
-            project_id=pid,
+            "workflow_publish",
+            workflow_id=pid,
             expected_revision=built["revision"],
         )
         assert version["plugin_versions"] == {"acme": "0.1.0"}
@@ -231,17 +231,17 @@ async def test_published_versions_never_run_on_another_plugin_version(
     async with mcp(engine, engine.admin_token) as client:
         v1_files = await scaffold(client)
         await call(client, "plugin_install", files=v1_files)
-        built = await shout_project(client)
-        pid = built["project_id"]
-        await call(client, "project_publish", project_id=pid)
+        built = await shout_workflow(client)
+        pid = built["workflow_id"]
+        await call(client, "workflow_publish", workflow_id=pid)
 
         v2_files = with_behavior(v1_files, '"v2:" + context.inputs["text"]', "0.2.0")
         blocked = await fails(client, "plugin_update", files=v2_files)
         assert blocked["code"] == "PLUGIN_IN_USE"
-        assert blocked["details"]["projects"] == [pid]
+        assert blocked["details"]["workflows"] == [pid]
         updated = await call(client, "plugin_update", files=v2_files, force=True)
         assert updated["plugin"]["metadata"]["version"] == "0.2.0"
-        assert updated["affected_projects"] == [pid]
+        assert updated["affected_workflows"] == [pid]
 
         # Version 1 was published against acme 0.1.0: it refuses to run on
         # 0.2.0 instead of silently changing behavior.
@@ -252,7 +252,7 @@ async def test_published_versions_never_run_on_another_plugin_version(
         assert not [n for n in old["nodes"] if n["status"] == "completed"]
 
         # Publishing again pins the new version, which runs the new code.
-        v2 = await call(client, "project_publish", project_id=pid)
+        v2 = await call(client, "workflow_publish", workflow_id=pid)
         assert v2["plugin_versions"] == {"acme": "0.2.0"}
         new = await run(engine, client, pid, version=2)
         assert new["status"] == "completed"
@@ -278,9 +278,11 @@ async def test_a_failed_update_restores_the_previous_version(engine: Engine) -> 
         assert (plugin["state"], plugin["metadata"]["version"]) == ("enabled", "0.1.0")
         tested = await call(client, "node_type_get", node_type="acme.shout")
         assert tested["version"] == "0.1.0"
-        built = await shout_project(client)
-        await call(client, "project_publish", project_id=built["project_id"])
-        assert (await run(engine, client, built["project_id"]))["status"] == "completed"
+        built = await shout_workflow(client)
+        await call(client, "workflow_publish", workflow_id=built["workflow_id"])
+        assert (await run(engine, client, built["workflow_id"]))[
+            "status"
+        ] == "completed"
 
 
 # -- lifecycle ---------------------------------------------------------------------
@@ -307,19 +309,19 @@ async def test_disable_enable_remove_are_state_and_dependency_aware(
         ] == "disabled"
         await call(client, "plugin_enable", plugin_id="acme")
 
-        built = await shout_project(client)
-        await call(client, "project_publish", project_id=built["project_id"])
+        built = await shout_workflow(client)
+        await call(client, "workflow_publish", workflow_id=built["workflow_id"])
         blocked = await fails(client, "plugin_remove", plugin_id="acme")
         assert blocked["code"] == "PLUGIN_IN_USE"
-        assert blocked["details"]["projects"] == [built["project_id"]]
+        assert blocked["details"]["workflows"] == [built["workflow_id"]]
         assert (await call(client, "plugin_list"))["items"][0]["state"] == "enabled"
 
         removed = await call(client, "plugin_remove", plugin_id="acme", force=True)
-        assert removed["affected_projects"] == [built["project_id"]]
+        assert removed["affected_workflows"] == [built["workflow_id"]]
         assert (await call(client, "plugin_list"))["items"] == []
         gone = await fails(client, "node_type_get", node_type="acme.shout")
         assert gone["code"] == "NODE_NOT_FOUND"
-        run_after = await run(engine, client, built["project_id"])
+        run_after = await run(engine, client, built["workflow_id"])
         assert run_after["status"] == "failed"
 
 

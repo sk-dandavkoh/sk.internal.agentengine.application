@@ -22,13 +22,13 @@ from akasha.application.credentials import (
     CredentialService,
 )
 from akasha.application.executions import ExecutionService
-from akasha.application.projects import ProjectService
+from akasha.application.workflows import WorkflowService
 from akasha.bootstrap import Container
 from akasha.config import Settings
 from akasha.domain.credentials import CredentialKind, Secret
 from akasha.domain.execution import Execution, ExecutionStatus
 from akasha.domain.graph import Edge, Graph, NodeInstance
-from akasha.domain.project import ProjectDraft
+from akasha.domain.workflow import WorkflowDraft
 from akasha.infrastructure.database import Database
 from akasha.infrastructure.persistence import SqlAlchemyUnitOfWork
 from akasha.nodes.builtins import create_builtin_registry
@@ -210,14 +210,14 @@ async def test_management_and_resolution_never_log_the_value(
 async def api(
     database: Database,
     credentials: CredentialService,
-    project_service: ProjectService,
+    workflow_service: WorkflowService,
     auth_kit: AuthKit,
 ) -> AsyncIterator[httpx.AsyncClient]:
     settings = Settings(environment="test", log_level="CRITICAL")
     container = Container(
         settings=settings,
         database=database,
-        projects=project_service,
+        workflows=workflow_service,
         credentials=credentials,
         **auth_kit.container_fields(),
     )
@@ -328,7 +328,7 @@ async def test_openapi_responses_have_no_value_field(api: httpx.AsyncClient) -> 
     assert schemas["CreateCredentialRequest"]["properties"]["value"]["writeOnly"]
 
 
-# -- project configuration only ever holds references ----------------------------
+# -- workflow configuration only ever holds references ----------------------------
 
 
 def http_graph(config: dict[str, Any]) -> tuple[Graph, dict[str, str]]:
@@ -373,14 +373,14 @@ def draft_payload(config: dict[str, Any]) -> dict[str, Any]:
         {"url": "http://example.test/", "header_credentials": {"X-Api-Key": CANARY}},
     ],
 )
-async def test_project_api_rejects_plaintext_secrets(
+async def test_workflow_api_rejects_plaintext_secrets(
     api: httpx.AsyncClient, database: Database, config: dict[str, Any]
 ) -> None:
-    project = (await api.post("/api/v1/projects", json={"name": "p"})).json()
+    workflow = (await api.post("/api/v1/workflows", json={"name": "p"})).json()
     response = await api.put(
-        f"/api/v1/projects/{project['id']}",
+        f"/api/v1/workflows/{workflow['id']}",
         json={
-            "expected_revision": project["revision"],
+            "expected_revision": workflow["revision"],
             "name": "p",
             "draft": draft_payload(config),
         },
@@ -391,7 +391,7 @@ async def test_project_api_rejects_plaintext_secrets(
     assert CANARY not in await dump_database(database)
 
 
-async def test_project_stores_and_returns_only_the_reference(
+async def test_workflow_stores_and_returns_only_the_reference(
     api: httpx.AsyncClient,
 ) -> None:
     await api.post(URL, json={"name": "crm", "value": CANARY})
@@ -399,17 +399,17 @@ async def test_project_stores_and_returns_only_the_reference(
         "url": "http://example.test/",
         "header_credentials": {"X-Api-Key": "credential:crm"},
     }
-    project = (await api.post("/api/v1/projects", json={"name": "p"})).json()
+    workflow = (await api.post("/api/v1/workflows", json={"name": "p"})).json()
     saved = await api.put(
-        f"/api/v1/projects/{project['id']}",
+        f"/api/v1/workflows/{workflow['id']}",
         json={
-            "expected_revision": project["revision"],
+            "expected_revision": workflow["revision"],
             "name": "p",
             "draft": draft_payload(config),
         },
     )
     assert saved.status_code == 200, saved.text
-    fetched = await api.get(f"/api/v1/projects/{project['id']}")
+    fetched = await api.get(f"/api/v1/workflows/{workflow['id']}")
     assert "credential:crm" in fetched.text
     assert CANARY not in fetched.text + saved.text
 
@@ -438,17 +438,17 @@ async def run(
     graph: Graph,
 ) -> Execution:
     uow = uow_factory(database)
-    projects = ProjectService(uow, registry.definitions)
-    project = await projects.create_project("creds")
-    await projects.update_draft(
-        project.id,
-        expected_revision=project.revision,
+    workflows = WorkflowService(uow, registry.definitions)
+    workflow = await workflows.create_workflow("creds")
+    await workflows.update_draft(
+        workflow.id,
+        expected_revision=workflow.revision,
         name="creds",
-        draft=ProjectDraft(graph=graph),
+        draft=WorkflowDraft(graph=graph),
     )
-    version = await projects.publish_project(project.id)
+    version = await workflows.publish_workflow(workflow.id)
     executions = ExecutionService(uow)
-    queued = await executions.create_execution(project.id, version.version)
+    queued = await executions.create_execution(workflow.id, version.version)
     runtime = ExecutionRuntime(uow, registry.catalog, credentials=credentials)
     await runtime.run(queued.id)
     return await executions.get_execution(queued.id)
@@ -558,18 +558,18 @@ async def test_smtp_authenticates_with_a_stored_credential(
     auth_mailpit.clear()
 
     uow = uow_factory(database)
-    projects = ProjectService(uow, registry.definitions)
-    project = await projects.create_project("smtp")
-    await projects.update_draft(
-        project.id,
-        expected_revision=project.revision,
+    workflows = WorkflowService(uow, registry.definitions)
+    workflow = await workflows.create_workflow("smtp")
+    await workflows.update_draft(
+        workflow.id,
+        expected_revision=workflow.revision,
         name="smtp",
-        draft=ProjectDraft(graph=graph),
+        draft=WorkflowDraft(graph=graph),
     )
-    version = await projects.publish_project(project.id)
+    version = await workflows.publish_workflow(workflow.id)
     executions = ExecutionService(uow)
     queued = await executions.create_execution(
-        project.id, version.version, input={"s": "hi"}
+        workflow.id, version.version, input={"s": "hi"}
     )
     await ExecutionRuntime(uow, registry.catalog, credentials=credentials).run(
         queued.id

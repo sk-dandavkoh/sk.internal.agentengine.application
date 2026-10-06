@@ -23,12 +23,12 @@ from datetime import datetime, timedelta
 
 from akasha.application.executions import ExecutionNotFoundError, load_execution
 from akasha.application.persistence import UnitOfWork
-from akasha.application.projects import (
+from akasha.application.workflows import (
     Page,
-    ProjectNotFoundError,
     UowFactory,
+    WorkflowNotFoundError,
     check_page,
-    load_project,
+    load_workflow,
     to_page,
 )
 from akasha.domain.identity import (
@@ -39,9 +39,9 @@ from akasha.domain.identity import (
     Role,
     User,
     UserSession,
-    project_access,
     validate_password,
     validate_token_name,
+    workflow_access,
 )
 from akasha.domain.primitives import Timestamps, new_id, utcnow
 from akasha.domain.trigger import EVENT_SOURCE_FIELD, Trigger, TriggerType
@@ -78,7 +78,7 @@ class PermissionDeniedError(AkashaError):
 
 
 class TriggerSourceNotFoundError(AkashaError):
-    """An event trigger names a source project the caller cannot see."""
+    """An event trigger names a source workflow the caller cannot see."""
 
     code = "TRIGGER_SOURCE_NOT_FOUND"
     http_status = 422
@@ -563,31 +563,31 @@ class AuthorizationService:
     def __init__(self, uow: UowFactory) -> None:
         self._uow = uow
 
-    async def require_project(
-        self, identity: Identity, project_id: str, need: Access = Access.VIEW
+    async def require_workflow(
+        self, identity: Identity, workflow_id: str, need: Access = Access.VIEW
     ) -> Access:
-        """The caller's access to the project, if at least ``need``. No
+        """The caller's access to the workflow, if at least ``need``. No
         access at all answers not found; too little answers forbidden (the
-        caller already knows the project exists)."""
+        caller already knows the workflow exists)."""
         async with self._uow() as uow:
-            project = await load_project(uow, project_id)
-            access = await _access(uow, identity.user, project.id, project.owner_id)
+            workflow = await load_workflow(uow, workflow_id)
+            access = await _access(uow, identity.user, workflow.id, workflow.owner_id)
         if access is None:
-            raise _project_not_found(project_id)
-        _require(identity, access, need, project_id=project_id)
+            raise _workflow_not_found(workflow_id)
+        _require(identity, access, need, workflow_id=workflow_id)
         return access
 
     async def require_execution(
         self, identity: Identity, execution_id: str, need: Access = Access.VIEW
     ) -> Access:
-        """An execution is reachable exactly as its project is."""
+        """An execution is reachable exactly as its workflow is."""
         async with self._uow() as uow:
             execution = await load_execution(uow, execution_id)
-            project = await uow.projects.get(execution.project_id)
+            workflow = await uow.workflows.get(execution.workflow_id)
             access = (
                 None
-                if project is None
-                else await _access(uow, identity.user, project.id, project.owner_id)
+                if workflow is None
+                else await _access(uow, identity.user, workflow.id, workflow.owner_id)
             )
         if access is None:
             # The same answer as an unknown id.
@@ -603,49 +603,49 @@ class AuthorizationService:
         before: Sequence[Trigger],
         after: Sequence[Trigger],
     ) -> None:
-        """Every event-trigger source the caller adds must be a project they
-        can see. Without this, an editor of a shared project could point a
-        trigger at a project only its owner sees and read that project's
+        """Every event-trigger source the caller adds must be a workflow they
+        can see. Without this, an editor of a shared workflow could point a
+        trigger at a workflow only its owner sees and read that workflow's
         outputs through the runs it starts. Sources already in the draft
         (set by someone allowed to) stay as they are."""
         existing = {s for t in before if (s := _event_source(t)) is not None}
         added = {s for t in after if (s := _event_source(t)) is not None} - existing
         for source in sorted(added):
             try:
-                await self.require_project(identity, source)
-            except ProjectNotFoundError:
+                await self.require_workflow(identity, source)
+            except WorkflowNotFoundError:
                 raise TriggerSourceNotFoundError(
-                    "An event trigger's source project does not exist or is not"
+                    "An event trigger's source workflow does not exist or is not"
                     " visible to you.",
-                    details={"source_project_id": source},
+                    details={"source_workflow_id": source},
                 ) from None
 
     @staticmethod
     def visible_to(identity: Identity) -> str | None:
-        """Whose visible projects a listing is limited to (owned or shared);
-        None = all projects (admins)."""
+        """Whose visible workflows a listing is limited to (owned or shared);
+        None = all workflows (admins)."""
         return None if identity.user.is_admin else identity.user.id
 
 
 async def _access(
-    uow: UnitOfWork, user: User, project_id: str, owner_id: str | None
+    uow: UnitOfWork, user: User, workflow_id: str, owner_id: str | None
 ) -> Access | None:
     owns = user.is_admin or owner_id == user.id
-    role = None if owns else await uow.members.role(project_id, user.id)
-    return project_access(user, owner_id, role)
+    role = None if owns else await uow.members.role(workflow_id, user.id)
+    return workflow_access(user, owner_id, role)
 
 
 def _require(identity: Identity, access: Access, need: Access, **ids: str) -> None:
     if access < need:
         _audit(
-            "project_access_denied",
+            "workflow_access_denied",
             user_id=identity.user.id,
             access=access.name.lower(),
             need=need.name.lower(),
             **ids,
         )
         raise PermissionDeniedError(
-            "Your access to this project does not allow this operation.",
+            "Your access to this workflow does not allow this operation.",
             details={"access": access.name.lower(), "required": need.name.lower()},
         )
 
@@ -663,9 +663,9 @@ def require_admin(identity: Identity) -> None:
         raise PermissionDeniedError("This operation requires an admin.")
 
 
-def _project_not_found(project_id: str) -> ProjectNotFoundError:
-    return ProjectNotFoundError(
-        "Project not found.", details={"project_id": project_id}
+def _workflow_not_found(workflow_id: str) -> WorkflowNotFoundError:
+    return WorkflowNotFoundError(
+        "Workflow not found.", details={"workflow_id": workflow_id}
     )
 
 

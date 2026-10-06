@@ -18,7 +18,7 @@ from sqlalchemy.exc import DBAPIError
 
 from akasha.application.events import EventPublisher
 from akasha.application.executions import ExecutionService
-from akasha.application.projects import ProjectService, ProjectValidationFailedError
+from akasha.application.workflows import WorkflowService, WorkflowValidationFailedError
 from akasha.domain.event import Event, EventType
 from akasha.domain.execution import ExecutionStatus, NodeExecutionStatus
 from akasha.domain.graph import Graph
@@ -33,7 +33,7 @@ from akasha.domain.node import (
     PortType,
 )
 from akasha.domain.primitives import new_id
-from akasha.domain.project import ProjectDraft
+from akasha.domain.workflow import WorkflowDraft
 from akasha.infrastructure.database import Database
 from akasha.infrastructure.persistence import SqlAlchemyUnitOfWork
 from akasha.runtime.plan import NodeCatalog
@@ -94,22 +94,22 @@ def trail(events: Sequence[Event], ids: Mapping[str, str]) -> list[str]:
     ]
 
 
-def evt(event_type: EventType, project_id: str, **kw: Any) -> Event:
-    return Event(event_type=event_type, occurred_at=T0, project_id=project_id, **kw)
+def evt(event_type: EventType, workflow_id: str, **kw: Any) -> Event:
+    return Event(event_type=event_type, occurred_at=T0, workflow_id=workflow_id, **kw)
 
 
 # -- event store -----------------------------------------------------------------
 
 
 async def test_events_round_trip_through_the_store(eh: EventHarness) -> None:
-    project_id, execution_id, node_id = new_id("proj"), new_id("exec"), new_id("node")
+    workflow_id, execution_id, node_id = new_id("wf"), new_id("exec"), new_id("node")
     original = Event(
         event_type=EventType.NODE_FAILED,
         occurred_at=T0,
-        project_id=project_id,
+        workflow_id=workflow_id,
         execution_id=execution_id,
         node_id=node_id,
-        project_version=4,
+        workflow_version=4,
         correlation_id="corr-rt",
         payload={"attempt": 2, "error_code": "BOOM", "error_kind": "permanent"},
     )
@@ -125,8 +125,8 @@ async def test_events_round_trip_through_the_store(eh: EventHarness) -> None:
 
 
 async def test_append_is_idempotent_on_event_id(eh: EventHarness) -> None:
-    project_id = new_id("proj")
-    event = evt(EventType.PROJECT_PUBLISHED, project_id, project_version=1)
+    workflow_id = new_id("wf")
+    event = evt(EventType.WORKFLOW_PUBLISHED, workflow_id, workflow_version=1)
     async with eh.uow() as uow:
         await uow.events.append([event])
         await uow.commit()
@@ -134,47 +134,47 @@ async def test_append_is_idempotent_on_event_id(eh: EventHarness) -> None:
         await uow.events.append([event, event])
         await uow.commit()
 
-    stored = await eh.stored(project_id=project_id)
+    stored = await eh.stored(workflow_id=workflow_id)
     assert [e.event_id for e in stored] == [event.event_id]
 
 
 async def test_events_are_ordered_by_position_and_paged_by_cursor(
     eh: EventHarness,
 ) -> None:
-    project_id, other = new_id("proj"), new_id("proj")
+    workflow_id, other = new_id("wf"), new_id("wf")
     ours = [
-        evt(EventType.PROJECT_PUBLISHED, project_id, project_version=v)
+        evt(EventType.WORKFLOW_PUBLISHED, workflow_id, workflow_version=v)
         for v in (1, 2, 3)
     ]
     async with eh.uow() as uow:
-        await uow.events.append([ours[0], evt(EventType.PROJECT_PUBLISHED, other)])
+        await uow.events.append([ours[0], evt(EventType.WORKFLOW_PUBLISHED, other)])
         await uow.events.append(ours[1:])
         await uow.commit()
 
-    stored = await eh.stored(project_id=project_id)
+    stored = await eh.stored(workflow_id=workflow_id)
     assert [e.event_id for e in stored] == [e.event_id for e in ours]
     positions = [e.position or 0 for e in stored]
     assert positions == sorted(positions)
 
     async with eh.uow() as uow:
-        first = await uow.events.list(project_id=project_id, limit=1)
+        first = await uow.events.list(workflow_id=workflow_id, limit=1)
         rest = await uow.events.list(
-            project_id=project_id, after=first[0].position or 0, limit=10
+            workflow_id=workflow_id, after=first[0].position or 0, limit=10
         )
     assert [e.event_id for e in [*first, *rest]] == [e.event_id for e in ours]
 
 
 async def test_uncommitted_events_are_rolled_back(eh: EventHarness) -> None:
-    project_id = new_id("proj")
+    workflow_id = new_id("wf")
     async with eh.uow() as uow:
-        await uow.events.append([evt(EventType.PROJECT_PUBLISHED, project_id)])
+        await uow.events.append([evt(EventType.WORKFLOW_PUBLISHED, workflow_id)])
         # no commit: leaving the unit of work rolls back
-    assert await eh.stored(project_id=project_id) == []
+    assert await eh.stored(workflow_id=workflow_id) == []
 
 
 async def test_positions_cannot_be_forged(database: Database, eh: EventHarness) -> None:
-    project_id = new_id("proj")
-    event = evt(EventType.PROJECT_PUBLISHED, project_id)
+    workflow_id = new_id("wf")
+    event = evt(EventType.WORKFLOW_PUBLISHED, workflow_id)
     async with eh.uow() as uow:
         await uow.events.append([event])
         await uow.commit()
@@ -184,10 +184,10 @@ async def test_positions_cannot_be_forged(database: Database, eh: EventHarness) 
             await conn.execute(
                 text(
                     "INSERT INTO events (position, event_id, event_type,"
-                    " schema_version, occurred_at, project_id, payload)"
-                    " VALUES (1, 'evt_x', 'project.published', 1, now(), :p, '{}')"
+                    " schema_version, occurred_at, workflow_id, payload)"
+                    " VALUES (1, 'evt_x', 'workflow.published', 1, now(), :p, '{}')"
                 ),
-                {"p": project_id},
+                {"p": workflow_id},
             )
 
 
@@ -220,8 +220,8 @@ async def test_successful_run_reconstructs_from_events_plus_state(
     # Live subscribers saw exactly the persisted history, in the same order.
     assert [e.event_id for e in live.seen] == [e.event_id for e in events]
     # Every event carries the execution's context and correlation id.
-    assert {(e.project_id, e.project_version, e.correlation_id) for e in events} == {
-        (queued.project_id, queued.project_version.version, "corr-1")
+    assert {(e.workflow_id, e.workflow_version, e.correlation_id) for e in events} == {
+        (queued.workflow_id, queued.workflow_version.version, "corr-1")
     }
     # Events and canonical state agree on what happened when.
     state = await eh.load(queued.id)
@@ -346,9 +346,9 @@ async def test_concurrent_executions_keep_per_execution_order(
         },
         ["A.out>B.text", "B.out>C.text"],
     )
-    project_id, version = await eh.publish(catalog, graph)
+    workflow_id, version = await eh.publish(catalog, graph)
     queued = [
-        await eh.executions.create_execution(project_id, version) for _ in range(6)
+        await eh.executions.create_execution(workflow_id, version) for _ in range(6)
     ]
     runtime = eh.runtime(catalog)
     async with asyncio.timeout(GUARD):
@@ -466,7 +466,7 @@ async def test_event_store_failure_rolls_back_the_state_change(
         {"A": ("test.emit", {"value": "a"}), "B": ("test.append", {"suffix": "b"})},
         ["A.out>B.text"],
     )
-    project_id, version = await eh.publish(catalog, graph)
+    workflow_id, version = await eh.publish(catalog, graph)
 
     def broken_uow() -> SqlAlchemyUnitOfWork:
         uow = SqlAlchemyUnitOfWork(database)
@@ -475,57 +475,57 @@ async def test_event_store_failure_rolls_back_the_state_change(
 
     with pytest.raises(RuntimeError, match="event store unavailable"):
         await ExecutionService(broken_uow, eh.publisher).create_execution(
-            project_id, version
+            workflow_id, version
         )
 
     async with database.engine.connect() as conn:
         count = (await conn.execute(text("SELECT count(*) FROM executions"))).scalar()
     assert count == 0
     assert live.seen == []  # nothing published for a rolled-back change
-    assert [e.event_type for e in await eh.stored()] == [EventType.PROJECT_PUBLISHED]
+    assert [e.event_type for e in await eh.stored()] == [EventType.WORKFLOW_PUBLISHED]
 
 
-# -- project events ------------------------------------------------------------------
+# -- workflow events ------------------------------------------------------------------
 
 
-async def test_publish_records_project_published(eh: EventHarness) -> None:
+async def test_publish_records_workflow_published(eh: EventHarness) -> None:
     live = Recorder()
-    eh.publisher.subscribe(live, event_types=[EventType.PROJECT_PUBLISHED])
+    eh.publisher.subscribe(live, event_types=[EventType.WORKFLOW_PUBLISHED])
     catalog = base_catalog(Probe())
-    service = ProjectService(
+    service = WorkflowService(
         eh.uow, {t: c.definition for t, c in catalog.items()}, eh.publisher
     )
-    project = await service.create_project("p")
+    workflow = await service.create_workflow("p")
     graph: Graph = build(
         {"A": ("test.emit", {"value": "a"}), "B": ("test.append", {"suffix": "b"})},
         ["A.out>B.text"],
     )[0]
     await service.update_draft(
-        project.id,
-        expected_revision=project.revision,
+        workflow.id,
+        expected_revision=workflow.revision,
         name="p",
-        draft=ProjectDraft(graph=graph),
+        draft=WorkflowDraft(graph=graph),
     )
-    v1 = await service.publish_project(project.id)
+    v1 = await service.publish_workflow(workflow.id)
 
-    (event,) = await eh.stored(project_id=project.id)
-    assert event.event_type is EventType.PROJECT_PUBLISHED
-    assert (event.project_version, event.execution_id) == (1, None)
+    (event,) = await eh.stored(workflow_id=workflow.id)
+    assert event.event_type is EventType.WORKFLOW_PUBLISHED
+    assert (event.workflow_version, event.execution_id) == (1, None)
     assert event.occurred_at == v1.published_at
     assert [e.event_id for e in live.seen] == [event.event_id]
 
 
 async def test_failed_publish_records_no_event(eh: EventHarness) -> None:
     catalog = base_catalog(Probe())
-    service = ProjectService(eh.uow, {t: c.definition for t, c in catalog.items()})
-    project = await service.create_project("p")
+    service = WorkflowService(eh.uow, {t: c.definition for t, c in catalog.items()})
+    workflow = await service.create_workflow("p")
     graph = build({"B": ("test.append", {"suffix": "b"})}, [])[0]  # missing input
     await service.update_draft(
-        project.id,
-        expected_revision=project.revision,
+        workflow.id,
+        expected_revision=workflow.revision,
         name="p",
-        draft=ProjectDraft(graph=graph),
+        draft=WorkflowDraft(graph=graph),
     )
-    with pytest.raises(ProjectValidationFailedError):
-        await service.publish_project(project.id)
-    assert await eh.stored(project_id=project.id) == []
+    with pytest.raises(WorkflowValidationFailedError):
+        await service.publish_workflow(workflow.id)
+    assert await eh.stored(workflow_id=workflow.id) == []

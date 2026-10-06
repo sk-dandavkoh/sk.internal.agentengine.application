@@ -48,13 +48,13 @@ class Settings(BaseSettings):
     web_search_url: AnyHttpUrl | None = None
 
     # Agent tools (ADR 0005). File nodes and core.command work inside one
-    # directory per project below this existing directory; unset → they
+    # directory per workflow below this existing directory; unset → they
     # fail with WORKSPACE_NOT_CONFIGURED. Engine data never belongs here.
     workspace_dir: DirectoryPath | None = None
     workspace_max_file_bytes: int = Field(default=1024 * 1024, gt=0)
     # Programs core.command may run (JSON list of names on PATH or absolute
     # paths). Empty → the node is disabled. Not a sandbox: an allowed
-    # interpreter (python3, bash) lets projects run arbitrary code as the
+    # interpreter (python3, bash) lets workflows run arbitrary code as the
     # engine's OS user.
     command_allowed: list[str] = Field(default_factory=list)
     command_max_output_bytes: int = Field(default=256 * 1024, gt=0)
@@ -89,7 +89,7 @@ class Settings(BaseSettings):
     # events from the log and re-checks its session.
     live_poll_seconds: float = Field(default=0.5, gt=0)
     # Cap on every API request body, streamed or declared (Phase 25). Keep
-    # it above the 16 MiB project package limit, or imports fail first.
+    # it above the 16 MiB workflow package limit, or imports fail first.
     api_max_request_bytes: int = Field(default=20 * 1024 * 1024, gt=0)
     # Inbound webhook body cap; the payload becomes the execution input.
     webhook_max_payload_bytes: int = Field(default=1024 * 1024, gt=0)
@@ -138,7 +138,7 @@ class Settings(BaseSettings):
     # session tokens only, the same authorization as the REST API.
     # Startup-only: changing any of these needs a restart.
     mcp_enabled: bool = False
-    # Cap on one MCP request body (plugin sources and project packages
+    # Cap on one MCP request body (plugin sources and workflow packages
     # travel inline, base64 for binary).
     mcp_max_request_bytes: int = Field(default=4 * 1024 * 1024, gt=0)
     # Cap on one tool result (JSON bytes): agents have context limits, so
@@ -158,7 +158,7 @@ class Settings(BaseSettings):
     limit_node_attempts: int = Field(default=5, ge=1, le=100)
     limit_graph_nodes: int = Field(default=500, ge=1, le=100_000)
     limit_graph_depth: int = Field(default=100, ge=1, le=100_000)
-    limit_active_executions_per_project: int = Field(default=100, ge=1)
+    limit_active_executions_per_workflow: int = Field(default=100, ge=1)
     limit_node_output_bytes: int = Field(default=1024 * 1024, gt=0)
     limit_execution_output_bytes: int = Field(default=16 * 1024 * 1024, gt=0)
     # Nodes in flight per execution; executions per worker: worker_concurrency.
@@ -185,7 +185,7 @@ class Settings(BaseSettings):
             max_node_attempts=self.limit_node_attempts,
             max_graph_nodes=self.limit_graph_nodes,
             max_graph_depth=self.limit_graph_depth,
-            max_active_executions_per_project=self.limit_active_executions_per_project,
+            max_active_executions_per_workflow=self.limit_active_executions_per_workflow,
             max_node_output_bytes=self.limit_node_output_bytes,
             max_execution_output_bytes=self.limit_execution_output_bytes,
         )

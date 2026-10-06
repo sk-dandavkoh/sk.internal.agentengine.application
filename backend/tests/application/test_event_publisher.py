@@ -18,7 +18,7 @@ def evt(event_type: EventType = EventType.EXECUTION_STARTED) -> Event:
     return Event(
         event_type=event_type,
         occurred_at=datetime(2100, 1, 1, tzinfo=UTC),
-        project_id=new_id("proj"),
+        workflow_id=new_id("wf"),
         execution_id=EXEC,
         correlation_id="corr-7",
     )

@@ -4,7 +4,7 @@
 
 **Goal.** Roadmap §32, "Phase 26 — E2E Testing", asks for automated end-to-end coverage of the critical V1 user journeys against the real application boundaries. The required flows are:
 
-- Project flow: login → create → open → add node → configure → save → validate → publish.
+- Workflow flow: login → create → open → add node → configure → save → validate → publish.
 - Execution flow: open → run → open execution → live status → logs → result.
 - Import/export flow: export → import → open → validate → run.
 - Credential flow: create → a node references it → the secret stays hidden.
@@ -17,13 +17,13 @@
 | `tests/fullstack/credentials.spec.ts` (new) | The credential workflow end to end, including export and import; refusal of a corrupt package |
 | `tests/fullstack/session.ts` (new) | Shared helpers: admin API context, cookie sign-in, download capture, a minimal zip reader |
 
-The existing full-stack specs (`projects.spec.ts`, `a11y.spec.ts`) and the stubbed E2E suite (`tests/e2e`) still pass unchanged.
+The existing full-stack specs (`workflows.spec.ts`, `a11y.spec.ts`) and the stubbed E2E suite (`tests/e2e`) still pass unchanged.
 
 **Defects found by the new tests and fixed at their layer:**
 
 | # | Defect | Layer | Fix |
 |---|---|---|---|
-| D1 | Project import/export had no UI, although the backend endpoints existed | Frontend (product gap) | Export button, Import dialog, binary download in `ApiClient` |
+| D1 | Workflow import/export had no UI, although the backend endpoints existed | Frontend (product gap) | Export button, Import dialog, binary download in `ApiClient` |
 | D2 | Monitoring hid runs created in the current minute | Frontend (product) | The preset window ends at the end of the current minute |
 | D3 | A served backend with `AKASHA_ENVIRONMENT=test` never configured logging, so `AKASHA_LOG_LEVEL` was ignored and INFO node log lines were never stored | Backend (product) | Logging is configured by the serving process, in every environment |
 | D4 | The dedicated `akasha worker` logged like a one-off CLI command (WARNING unless `-v`, text on stderr), so production runs on the worker never stored INFO node log lines | Backend (product) | The worker configures logging like the API |
@@ -46,17 +46,17 @@ The phase brief adds these requirements:
 
 ### Frontend / UI
 
-- **Export:** on `/projects/:id`, downloads the draft's package (`<project id>-draft.akasha.zip`). A toast states that credential values are not included, only their references. A failure shows a toast with the backend's message.
-- **Import project:** on `/projects`, opens a dialog to pick a `.zip` (size-checked in the browser for UX only) and upload it. The dialog then shows the backend's answer:
-  - success: the new project's name, its validation result (valid, or the list of issues), the referenced credentials this installation lacks, and an "Open project" button;
-  - refusal: the backend's error message and, for `PROJECT_PACKAGE_INCOMPATIBLE`, the requirement issues.
+- **Export:** on `/workflows/:id`, downloads the draft's package (`<workflow id>-draft.akasha.zip`). A toast states that credential values are not included, only their references. A failure shows a toast with the backend's message.
+- **Import workflow:** on `/workflows`, opens a dialog to pick a `.zip` (size-checked in the browser for UX only) and upload it. The dialog then shows the backend's answer:
+  - success: the new workflow's name, its validation result (valid, or the list of issues), the referenced credentials this installation lacks, and an "Open workflow" button;
+  - refusal: the backend's error message and, for `WORKFLOW_PACKAGE_INCOMPATIBLE`, the requirement issues.
 
   Nothing is published or run by an import.
 
 ### Frontend / API layer
 
 - **`ApiClient.download`:** returns a `Blob`, byte for byte. It shares one request path (`exchange`) with `requestWithBody`, so headers, CSRF, timeout and cancellation behave the same, and failures are mapped to the same `ApiError`s.
-- **Service functions:** `exportProject`, `importProject`, `importResultSchema` and `MAX_PROJECT_PACKAGE_BYTES` in `api/projects.ts`; the `useImportProject` mutation invalidates the project lists.
+- **Service functions:** `exportWorkflow`, `importWorkflow`, `importResultSchema` and `MAX_WORKFLOW_PACKAGE_BYTES` in `api/workflows.ts`; the `useImportWorkflow` mutation invalidates the workflow lists.
 - **`lib/saveFile.ts`:** the blob-download helper, moved out of `ReportDetailPage` so both downloads share it.
 - **Monitoring:** `presetWindow` ends at the end of the current minute (D2).
 
@@ -78,18 +78,18 @@ The phase brief adds these requirements:
 | File | Change |
 |---|---|
 | `src/api/client.ts` | `exchange` (shared request path) and `download` |
-| `src/api/projects.ts` | Export/import service functions and schema |
-| `src/api/mutations.ts` | `useImportProject` |
+| `src/api/workflows.ts` | Export/import service functions and schema |
+| `src/api/mutations.ts` | `useImportWorkflow` |
 | `src/api/client.node.test.ts` | Binary download test |
 | `src/api/contract.node.test.ts` | Covers export (binary response) and import; parses `application/zip` content |
-| `src/features/projects/ImportProjectDialog.tsx` | New |
-| `src/features/projects/ProjectsPage.tsx` | Import project button |
-| `src/features/projects/ProjectDetailPage.tsx` | Export button |
+| `src/features/workflows/ImportWorkflowDialog.tsx` | New |
+| `src/features/workflows/WorkflowsPage.tsx` | Import workflow button |
+| `src/features/workflows/WorkflowDetailPage.tsx` | Export button |
 | `src/features/reports/ReportDetailPage.tsx` | Uses `lib/saveFile` |
 | `src/lib/saveFile.ts` | New (moved) |
 | `src/features/monitoring/model.ts`, `model.test.ts` | Window end and its regression test |
 | `tests/fullstack/journey.spec.ts`, `credentials.spec.ts`, `session.ts` | New |
-| `README.md` | Testing, projects, monitoring, API layer and security notes |
+| `README.md` | Testing, workflows, monitoring, API layer and security notes |
 
 **Backend:**
 
@@ -131,8 +131,8 @@ None.
 
 - **HTTP API:** no endpoint changed.
 - **Frontend contract coverage:**
-  - `GET /projects/{id}/export`: the success response must be exactly `application/zip`, with no body sent.
-  - `POST /projects/import`: the response is checked against `ImportProjectResponse`.
+  - `GET /workflows/{id}/export`: the success response must be exactly `application/zip`, with no body sent.
+  - `POST /workflows/import`: the response is checked against `ImportWorkflowResponse`.
 - **Backend Python API:**
   - `cli.main` gained a keyword-only `configure_logs` (default `True`, the old behavior for real processes);
   - `akasha.main.create_served_app` is the uvicorn factory.
@@ -151,7 +151,7 @@ None.
 | Run | Execution `completed`, trigger type `manual`, version 1 |
 | Export | The package contains the configured message |
 | Import | The imported draft equals the source draft; `current_version` is 0 |
-| Re-execution | Completed, belongs to the imported project |
+| Re-execution | Completed, belongs to the imported workflow |
 
 Steps checked through what the page received:
 
@@ -249,27 +249,27 @@ The full-stack suite was run twice:
 
 | # | Journey | Where |
 |---|---|---|
-| 1 | Login | journey (login form); `projects.spec.ts` (wrong password, reload, sign out, expired session) |
+| 1 | Login | journey (login form); `workflows.spec.ts` (wrong password, reload, sign out, expired session) |
 | 2 | Dashboard | journey |
-| 3 | Create Project | journey |
-| 4 | Open Project | journey |
+| 3 | Create Workflow | journey |
+| 4 | Open Workflow | journey |
 | 5 | Create/Edit Draft | journey |
 | 6 | Add Node | journey |
 | 7 | Configure Node | journey; credentials spec |
-| 8 | Connect Nodes | journey (connections panel); `projects.spec.ts` (drag) |
+| 8 | Connect Nodes | journey (connections panel); `workflows.spec.ts` (drag) |
 | 9 | Save Graph | journey |
-| 10 | Validate | journey; `projects.spec.ts` (invalid → fix) |
+| 10 | Validate | journey; `workflows.spec.ts` (invalid → fix) |
 | 11 | Publish | journey |
-| 12 | Configure Trigger | journey; `projects.spec.ts` (cron, webhook, event) |
+| 12 | Configure Trigger | journey; `workflows.spec.ts` (cron, webhook, event) |
 | 13 | Trigger Execution | journey (manual trigger row) |
-| 14 | Observe Live Execution | journey; `projects.spec.ts` (dropped connection) |
-| 15 | Open Execution Inspector | journey; `projects.spec.ts` (failed run) |
+| 14 | Observe Live Execution | journey; `workflows.spec.ts` (dropped connection) |
+| 15 | Open Execution Inspector | journey; `workflows.spec.ts` (failed run) |
 | 16 | Inspect Logs | journey |
 | 17 | View Metrics | journey |
 | 18 | View Report | journey (view and download) |
-| 19 | Export Project | journey; credentials spec |
-| 20 | Import Project | journey; credentials spec (missing credential, corrupt package) |
-| 21 | Re-execute Imported Project | journey |
+| 19 | Export Workflow | journey; credentials spec |
+| 20 | Import Workflow | journey; credentials spec (missing credential, corrupt package) |
+| 21 | Re-execute Imported Workflow | journey |
 | 22 | Credential workflow | credentials spec |
 
 ### Security tests
@@ -280,7 +280,7 @@ The full-stack suite was run twice:
 
 ### Accessibility tests
 
-The `a11y.spec.ts` sweep covers `/projects` and `/projects/:id` (new buttons) at four widths in both color schemes; it passed. The Import dialog uses the shared `Dialog` and a labelled file input. It is not part of the automated sweep, which visits screens, not dialogs.
+The `a11y.spec.ts` sweep covers `/workflows` and `/workflows/:id` (new buttons) at four widths in both color schemes; it passed. The Import dialog uses the shared `Dialog` and a labelled file input. It is not part of the automated sweep, which visits screens, not dialogs.
 
 ## 13. Quality Gates
 
@@ -310,13 +310,13 @@ The `a11y.spec.ts` sweep covers `/projects` and `/projects/:id` (new buttons) at
 ## 15. Security Considerations
 
 - **Export content:** the package contains credential references only (backend write gate). The E2E proves it on the actual bytes.
-- **Download file names:** derived from the project id, sanitized to `[\w-]`; user text never reaches a file name.
+- **Download file names:** derived from the workflow id, sanitized to `[\w-]`; user text never reaches a file name.
 - **Import:** the size check in the browser is UX only. Type, size, archive structure and requirements are validated by the backend, and its messages render as plain text.
 - **Logging scope:** served processes now honor `AKASHA_LOG_LEVEL` in every environment. Node log lines are still redacted and bounded before storage (unchanged).
 
 ## 16. Performance Considerations
 
-- **Bundle:** the Import dialog is part of the projects route chunk; no new dependency.
+- **Bundle:** the Import dialog is part of the workflows route chunk; no new dependency.
 - **Downloads:** go through a Blob, as the report export did.
 - **Suite duration:** the full-stack suite takes about 5 minutes; the journey test about 13 seconds.
 
@@ -324,7 +324,7 @@ The `a11y.spec.ts` sweep covers `/projects` and `/projects/:id` (new buttons) at
 
 - **`frontend/README.md`:**
   - what each full-stack spec covers and the shared helpers;
-  - import/export in the Projects section;
+  - import/export in the Workflows section;
   - binary responses in the API layer (the "not covered" note removed);
   - the monitoring window anchor;
   - downloads in Security.
@@ -344,7 +344,7 @@ The `a11y.spec.ts` sweep covers `/projects` and `/projects/:id` (new buttons) at
 
 - **One worker:** the full-stack suite uses fixed ports and a single Playwright worker; it cannot run in parallel with itself.
 - **Not separate journeys here:** plugin installation and settings are not E2E journeys in this phase; they are covered by the accessibility sweep and the stubbed suite.
-- **`akasha project run`:** an in-process run from the CLI stores node log lines at the CLI's level (WARNING, or INFO with `-v`), not `AKASHA_LOG_LEVEL`. This is documented.
+- **`akasha workflow run`:** an in-process run from the CLI stores node log lines at the CLI's level (WARNING, or INFO with `-v`), not `AKASHA_LOG_LEVEL`. This is documented.
 - **Chromium only:** the browser matrix is defined in Phase 27.
 
 ## 21. Open Issues
@@ -355,7 +355,7 @@ None blocking.
 
 - **Process-owned logging (§5.1)** rather than a new setting: it removes the overloaded meaning of `environment` without adding configuration.
 - **Minimum import/export UI:** added in this phase because the required journeys need it; scoped to the draft package and the backend's existing answer, with no dry-run or conflict editor.
-- **One stepwise journey test** rather than many independent tests: the steps share state by design (each consumes the previous result). Independent edge cases stay in `projects.spec.ts` and `credentials.spec.ts`.
+- **One stepwise journey test** rather than many independent tests: the steps share state by design (each consumes the previous result). Independent edge cases stay in `workflows.spec.ts` and `credentials.spec.ts`.
 
 ## 23. Repository / Git State
 

@@ -71,15 +71,15 @@ def observe_execution(
             "event": kind.value,
             "event_id": event.event_id,
             "execution_id": execution.id,
-            "project_id": execution.project_id,
-            "project_version": execution.project_version.version,
+            "workflow_id": execution.workflow_id,
+            "workflow_version": execution.workflow_version.version,
             "correlation_id": execution.metadata.correlation_id,
             **event.payload,
         }
         seconds: float | None = None
         if event.node_id is not None:
             ne = execution.node(event.node_id)
-            node_type = execution.project_version.graph.nodes[event.node_id].node_type
+            node_type = execution.workflow_version.graph.nodes[event.node_id].node_type
             fields |= {
                 "node_id": event.node_id,
                 "node_execution_id": ne.id,

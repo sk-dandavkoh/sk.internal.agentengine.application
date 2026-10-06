@@ -5,7 +5,7 @@ Revises: 0012_node_logs
 Create Date: 2026-10-04
 
 Frontend Phase 16: monitoring aggregates the executions created in a time
-window, a range scan on ``created_at``. The cross-project listing (newest
+window, a range scan on ``created_at``. The cross-workflow listing (newest
 first) sorts on the same column and uses the index too.
 """
 

@@ -1,4 +1,4 @@
-"""Project Graph validation (roadmap Phase 04).
+"""Workflow Graph validation (roadmap Phase 04).
 
 Covers the acceptance matrix: valid graphs (linear/branching/merge),
 missing/duplicate nodes and edges, unknown ports, incompatible ports,
@@ -32,7 +32,7 @@ from akasha.domain.node import (
     PortType,
 )
 from akasha.domain.primitives import new_id
-from akasha.domain.project import ProjectDraft
+from akasha.domain.workflow import WorkflowDraft
 from akasha.errors import DomainValidationError
 
 # ---------------------------------------------------------------------------
@@ -548,7 +548,7 @@ class TestDeterminism:
 
 class TestDraftIntegration:
     def test_draft_validate_delegates(self) -> None:
-        draft = ProjectDraft(graph=linear_graph())
+        draft = WorkflowDraft(graph=linear_graph())
         assert draft.validate(CATALOG).ok
         draft.graph.add_node(NodeInstance.create(node_type="test.sink"))
         result = draft.validate(CATALOG)

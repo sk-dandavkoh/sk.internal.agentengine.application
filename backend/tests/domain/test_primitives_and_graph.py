@@ -40,14 +40,14 @@ class TestSemver:
 
 class TestPrimitives:
     def test_new_id_shape(self) -> None:
-        validate_id(new_id("proj"))
+        validate_id(new_id("wf"))
 
     def test_new_id_rejects_bad_prefix(self) -> None:
         with pytest.raises(ValueError, match="prefix"):
             new_id("NotAPrefix!")
 
     def test_validate_id_rejects_garbage(self) -> None:
-        for bad in ["", "proj", "proj_xyz", "PROJ_" + "a" * 32]:
+        for bad in ["", "wf", "wf_xyz", "WF_" + "a" * 32]:
             with pytest.raises(ValueError, match="malformed"):
                 validate_id(bad)
 

@@ -11,7 +11,7 @@ Guards, applied router-wide in ``routes.create_api_v1_router`` so a new
 route is protected by default:
 
 - ``current_identity``: a valid session, else 401.
-- ``authorize_path``: a route whose path names a ``project_id`` or an
+- ``authorize_path``: a route whose path names a ``workflow_id`` or an
   ``execution_id`` needs access to that resource (else 404), at the level
   the route declares with ``requires`` (else 403). Undeclared: reads
   (GET) need view access, everything else edit access, so a new write
@@ -26,8 +26,8 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, Query, Request, Response, status
 from pydantic import BaseModel, Field, SecretStr
 
-from akasha.api.project_schemas import PageInfo
 from akasha.api.schemas import ErrorResponse
+from akasha.api.workflow_schemas import PageInfo
 from akasha.application.auth import (
     AuthenticationRequiredError,
     AuthenticationService,
@@ -37,7 +37,7 @@ from akasha.application.auth import (
 from akasha.application.auth import (
     require_admin as require_admin_identity,
 )
-from akasha.application.projects import MAX_PAGE_SIZE, Page
+from akasha.application.workflows import MAX_PAGE_SIZE, Page
 from akasha.domain.identity import (
     MAX_DISPLAY_NAME_LENGTH,
     MAX_PASSWORD_LENGTH,
@@ -124,12 +124,12 @@ CurrentIdentity = Annotated[Identity, Depends(current_identity)]
 Authorization = Annotated[AuthorizationService, Depends(_authorization)]
 
 
-# The project access a route needs, in its OpenAPI operation (documented).
+# The workflow access a route needs, in its OpenAPI operation (documented).
 ACCESS_EXTENSION = "x-akasha-access"
 
 
 def requires(access: Access) -> dict[str, Any]:
-    """Route options declaring the project access the route needs:
+    """Route options declaring the workflow access the route needs:
     ``@router.post(..., **requires(Access.VIEW))``."""
     return {"openapi_extra": {ACCESS_EXTENSION: access.name.lower()}}
 
@@ -144,9 +144,9 @@ def _needed(request: Request) -> Access:
 
 async def authorize_path(request: Request, identity: CurrentIdentity) -> None:
     params = request.path_params
-    if "project_id" in params:
-        await _authorization(request).require_project(
-            identity, params["project_id"], _needed(request)
+    if "workflow_id" in params:
+        await _authorization(request).require_workflow(
+            identity, params["workflow_id"], _needed(request)
         )
     if "execution_id" in params:
         await _authorization(request).require_execution(

@@ -3,7 +3,7 @@
 Each command runs the real entry point (``akasha.cli.main``) in a worker
 thread — it builds its own container and event loop from ``AKASHA_*`` like a
 real invocation — while arrangement and assertions use the application
-services on the test loop. Covers the project lifecycle, executions, the
+services on the test loop. Covers the workflow lifecycle, executions, the
 plugin-removal guard (§143) and backup → destroy → restore → run (§100).
 """
 
@@ -25,12 +25,12 @@ import pytest
 from akasha.application.auth import AuthenticationRequiredError
 from akasha.application.credentials import CredentialService
 from akasha.application.executions import ExecutionService
-from akasha.application.projects import ProjectService, UowFactory
+from akasha.application.workflows import UowFactory, WorkflowService
 from akasha.cli import EXIT_FAILED, EXIT_OK, main
 from akasha.domain.credentials import CredentialKind, Secret
 from akasha.domain.graph import Edge, Graph, NodeInstance
 from akasha.domain.node import NodeDefinition, NodeInput, NodeMetadata, PortType
-from akasha.domain.project import Dependency, ProjectDraft
+from akasha.domain.workflow import Dependency, WorkflowDraft
 from akasha.infrastructure.database import Database
 from akasha.infrastructure.redis_queue import RedisExecutionQueue
 from akasha.nodes.builtins import create_builtin_registry
@@ -68,8 +68,8 @@ def cli(capsys: pytest.CaptureFixture[str]) -> Cli:
 
 
 @pytest.fixture
-def projects(uow: UowFactory) -> ProjectService:
-    return ProjectService(uow, create_builtin_registry().definitions)
+def workflows(uow: UowFactory) -> WorkflowService:
+    return WorkflowService(uow, create_builtin_registry().definitions)
 
 
 def echo_graph() -> Graph:
@@ -84,19 +84,22 @@ def echo_graph() -> Graph:
 
 
 async def set_draft(
-    projects: ProjectService, project_id: str, draft: ProjectDraft
+    workflows: WorkflowService, workflow_id: str, draft: WorkflowDraft
 ) -> None:
-    project = await projects.get_project(project_id)
-    await projects.update_draft(
-        project_id, expected_revision=project.revision, name=project.name, draft=draft
+    workflow = await workflows.get_workflow(workflow_id)
+    await workflows.update_draft(
+        workflow_id,
+        expected_revision=workflow.revision,
+        name=workflow.name,
+        draft=draft,
     )
 
 
-async def published(projects: ProjectService, graph: Graph | None = None) -> str:
-    project = await projects.create_project("echo")
-    await set_draft(projects, project.id, ProjectDraft(graph=graph or echo_graph()))
-    await projects.publish_project(project.id)
-    return project.id
+async def published(workflows: WorkflowService, graph: Graph | None = None) -> str:
+    workflow = await workflows.create_workflow("echo")
+    await set_draft(workflows, workflow.id, WorkflowDraft(graph=graph or echo_graph()))
+    await workflows.publish_workflow(workflow.id)
+    return workflow.id
 
 
 def doc(result: Result) -> Any:
@@ -104,23 +107,25 @@ def doc(result: Result) -> Any:
     return json.loads(result.out)
 
 
-# -- projects --------------------------------------------------------------
+# -- workflows --------------------------------------------------------------
 
 
-async def test_project_lifecycle(
-    cli: Cli, projects: ProjectService, tmp_path: Path
+async def test_workflow_lifecycle(
+    cli: Cli, workflows: WorkflowService, tmp_path: Path
 ) -> None:
-    project_id = doc(await cli("project", "create", "echo", "--json"))["id"]
-    assert (await projects.get_project(project_id)).owner_id is None  # admin-only
-    await set_draft(projects, project_id, ProjectDraft(graph=echo_graph()))
+    workflow_id = doc(await cli("workflow", "create", "echo", "--json"))["id"]
+    assert (await workflows.get_workflow(workflow_id)).owner_id is None  # admin-only
+    await set_draft(workflows, workflow_id, WorkflowDraft(graph=echo_graph()))
 
-    validated = await cli("project", "validate", project_id)
+    validated = await cli("workflow", "validate", workflow_id)
     assert (validated.code, validated.out.strip()) == (EXIT_OK, "valid")
-    assert doc(await cli("project", "publish", project_id, "--json"))["version"] == 1
-    assert project_id in (await cli("project", "list")).out
+    assert doc(await cli("workflow", "publish", workflow_id, "--json"))["version"] == 1
+    assert workflow_id in (await cli("workflow", "list")).out
 
     run = doc(
-        await cli("project", "run", project_id, "--input", '{"title": "hi"}', "--json")
+        await cli(
+            "workflow", "run", workflow_id, "--input", '{"title": "hi"}', "--json"
+        )
     )
     assert (run["status"], run["version"]) == ("completed", 1)
     assert {n["label"]: n["status"] for n in run["nodes"]} == {
@@ -133,49 +138,49 @@ async def test_project_lifecycle(
 
     package = tmp_path / "echo.akasha.zip"
     exported = await cli(
-        "project", "export", project_id, "--version", "1", "-o", str(package)
+        "workflow", "export", workflow_id, "--version", "1", "-o", str(package)
     )
     assert exported.code == EXIT_OK
-    imported = doc(await cli("project", "import", str(package), "--json"))
-    assert imported["project"]["id"] != project_id
+    imported = doc(await cli("workflow", "import", str(package), "--json"))
+    assert imported["workflow"]["id"] != workflow_id
     assert imported["validation"] == {"valid": True, "issues": []}
 
 
 async def test_invalid_draft_fails_validate_and_publish(
-    cli: Cli, projects: ProjectService
+    cli: Cli, workflows: WorkflowService
 ) -> None:
-    project = await projects.create_project("broken")
+    workflow = await workflows.create_workflow("broken")
     graph = echo_graph()
     graph.edges.clear()  # output's required input is now unconnected
-    await set_draft(projects, project.id, ProjectDraft(graph=graph))
+    await set_draft(workflows, workflow.id, WorkflowDraft(graph=graph))
 
-    validated = await cli("project", "validate", project.id)
+    validated = await cli("workflow", "validate", workflow.id)
     assert validated.code == EXIT_FAILED
     assert validated.out.startswith("invalid\n")
-    published_ = await cli("project", "publish", project.id)
+    published_ = await cli("workflow", "publish", workflow.id)
     assert published_.code == EXIT_FAILED
-    assert "PROJECT_VALIDATION_FAILED" in published_.err
-    assert (await projects.get_project(project.id)).current_version == 0
+    assert "WORKFLOW_VALIDATION_FAILED" in published_.err
+    assert (await workflows.get_workflow(workflow.id)).current_version == 0
 
 
 async def test_publish_with_stale_revision_conflicts(
-    cli: Cli, projects: ProjectService
+    cli: Cli, workflows: WorkflowService
 ) -> None:
-    project = await projects.create_project("echo")
-    await set_draft(projects, project.id, ProjectDraft(graph=echo_graph()))
-    result = await cli("project", "publish", project.id, "--expected-revision", "1")
+    workflow = await workflows.create_workflow("echo")
+    await set_draft(workflows, workflow.id, WorkflowDraft(graph=echo_graph()))
+    result = await cli("workflow", "publish", workflow.id, "--expected-revision", "1")
     assert result.code == EXIT_FAILED
     assert "CONCURRENT_MODIFICATION" in result.err
 
 
-async def test_run_failures(cli: Cli, projects: ProjectService) -> None:
-    missing = await cli("project", "run", "proj_missing")
-    assert (missing.code, "PROJECT_NOT_FOUND" in missing.err) == (EXIT_FAILED, True)
+async def test_run_failures(cli: Cli, workflows: WorkflowService) -> None:
+    missing = await cli("workflow", "run", "wf_missing")
+    assert (missing.code, "WORKFLOW_NOT_FOUND" in missing.err) == (EXIT_FAILED, True)
 
-    draft_only = await projects.create_project("draft only")
-    unpublished = await cli("project", "run", draft_only.id)
+    draft_only = await workflows.create_workflow("draft only")
+    unpublished = await cli("workflow", "run", draft_only.id)
     assert unpublished.code == EXIT_FAILED
-    assert "PROJECT_VERSION_NOT_FOUND" in unpublished.err
+    assert "WORKFLOW_VERSION_NOT_FOUND" in unpublished.err
 
     # Loopback is blocked by the default network policy: the run fails.
     graph = Graph()
@@ -184,7 +189,7 @@ async def test_run_failures(cli: Cli, projects: ProjectService) -> None:
     graph.add_node(http)
     graph.add_node(out)
     graph.add_edge(Edge(http.id, "status", out.id, "value"))
-    failed = await cli("project", "run", await published(projects, graph), "--json")
+    failed = await cli("workflow", "run", await published(workflows, graph), "--json")
     assert failed.code == EXIT_FAILED
     assert json.loads(failed.out)["status"] == "failed"
 
@@ -193,10 +198,10 @@ async def test_run_failures(cli: Cli, projects: ProjectService) -> None:
 
 
 async def test_execution_cancel(
-    cli: Cli, projects: ProjectService, uow: UowFactory
+    cli: Cli, workflows: WorkflowService, uow: UowFactory
 ) -> None:
-    project_id = await published(projects)
-    queued = await ExecutionService(uow).create_execution(project_id, 1)
+    workflow_id = await published(workflows)
+    queued = await ExecutionService(uow).create_execution(workflow_id, 1)
 
     cancelled = doc(await cli("execution", "cancel", queued.id, "--json"))
     assert cancelled["status"] == "cancelled"
@@ -222,7 +227,7 @@ SLUGIFY = NodeDefinition(
 )
 
 
-async def test_plugin_remove_is_blocked_while_projects_need_it(
+async def test_plugin_remove_is_blocked_while_workflows_need_it(
     cli: Cli,
     uow: UowFactory,
     tmp_path: Path,
@@ -233,34 +238,34 @@ async def test_plugin_remove_is_blocked_while_projects_need_it(
     # Plugin code stays out of the test process: a definition stand-in is
     # enough to publish, and the usage check reads stored documents only.
     definitions = {**create_builtin_registry().definitions, SLUGIFY.node_id: SLUGIFY}
-    projects = ProjectService(uow, definitions, plugins={"text_tools": "1.0.0"})
+    workflows = WorkflowService(uow, definitions, plugins={"text_tools": "1.0.0"})
     graph = Graph()
     graph.add_node(NodeInstance.create("text_tools.slugify", config={}))
-    in_draft = await projects.create_project("draft user")
-    await set_draft(projects, in_draft.id, ProjectDraft(graph=graph))
+    in_draft = await workflows.create_workflow("draft user")
+    await set_draft(workflows, in_draft.id, WorkflowDraft(graph=graph))
     # Uses it only through a published version (the draft moved on) and a
     # declared plugin dependency.
-    in_history = await projects.create_project("history user")
+    in_history = await workflows.create_workflow("history user")
     dependency = Dependency("plugin", "text_tools", ">=1.0.0")
     await set_draft(
-        projects,
+        workflows,
         in_history.id,
-        ProjectDraft(graph=echo_graph(), dependencies=[dependency]),
+        WorkflowDraft(graph=echo_graph(), dependencies=[dependency]),
     )
-    await projects.publish_project(in_history.id)
-    await set_draft(projects, in_history.id, ProjectDraft(graph=echo_graph()))
-    unrelated = await projects.create_project("unrelated")
-    await set_draft(projects, unrelated.id, ProjectDraft(graph=echo_graph()))
+    await workflows.publish_workflow(in_history.id)
+    await set_draft(workflows, in_history.id, WorkflowDraft(graph=echo_graph()))
+    unrelated = await workflows.create_workflow("unrelated")
+    await set_draft(workflows, unrelated.id, WorkflowDraft(graph=echo_graph()))
 
     blocked = await cli("plugin", "remove", "text_tools", "--json")
     assert blocked.code == EXIT_FAILED
     error = json.loads(blocked.err)
     assert error["code"] == "PLUGIN_IN_USE"
-    assert error["details"]["projects"] == sorted([in_draft.id, in_history.id])
+    assert error["details"]["workflows"] == sorted([in_draft.id, in_history.id])
     assert (tmp_path / "text_tools").is_dir()
 
     forced = doc(await cli("plugin", "remove", "text_tools", "--force", "--json"))
-    assert sorted(forced["affected_projects"]) == sorted([in_draft.id, in_history.id])
+    assert sorted(forced["affected_workflows"]) == sorted([in_draft.id, in_history.id])
     assert not (tmp_path / "text_tools").exists()
     assert (await cli("plugin", "list")).out.strip() == "(none)"
 
@@ -279,16 +284,16 @@ async def test_unused_plugin_is_removed(
 # -- backup / restore ------------------------------------------------------
 
 
-async def snapshot(uow: UowFactory, project_id: str, execution_id: str) -> Any:
+async def snapshot(uow: UowFactory, workflow_id: str, execution_id: str) -> Any:
     async with uow() as u:
-        project = await u.projects.get(project_id)
-        version = await u.versions.get(project_id, 1)
+        workflow = await u.workflows.get(workflow_id)
+        version = await u.versions.get(workflow_id, 1)
         execution = await u.executions.get(execution_id)
-        events = await u.events.list(project_id=project_id)
+        events = await u.events.list(workflow_id=workflow_id)
         logs = await u.node_logs.list(execution_id)
-    assert project is not None and execution is not None
+    assert workflow is not None and execution is not None
     return (
-        (project.name, project.revision, project.current_version, project.draft),
+        (workflow.name, workflow.revision, workflow.current_version, workflow.draft),
         version,
         (execution.status, execution.input, execution.node_executions),
         [(e.event_id, e.event_type, e.occurred_at) for e in events],
@@ -313,28 +318,28 @@ def logged_graph() -> Graph:
 
 async def test_backup_destroy_restore_run(
     cli: Cli,
-    projects: ProjectService,
+    workflows: WorkflowService,
     uow: UowFactory,
     database: Database,
     auth_kit: AuthKit,
     tmp_path: Path,
 ) -> None:
-    # Arrange an installation: an admin, a credential, a project with a run.
+    # Arrange an installation: an admin, a credential, a workflow with a run.
     admin = await auth_kit.admin_headers()
     credentials = CredentialService(uow, SecretCipher.from_config(KEY))
     await credentials.create(
         "api", kind=CredentialKind.API_KEY, value=Secret("sk-backup-secret-value")
     )
-    project_id = await published(projects, logged_graph())
+    workflow_id = await published(workflows, logged_graph())
     run = doc(
-        await cli("project", "run", project_id, "--input", '{"title": "a"}', "--json")
+        await cli("workflow", "run", workflow_id, "--input", '{"title": "a"}', "--json")
     )
-    before = await snapshot(uow, project_id, run["id"])
+    before = await snapshot(uow, workflow_id, run["id"])
     assert [line.message for line in before[-1]] == ["got a title"]
 
     backup = tmp_path / "engine.backup"
     written = doc(await cli("backup", "-o", str(backup), "--json"))
-    assert written["rows"]["projects"] == 1
+    assert written["rows"]["workflows"] == 1
     assert "sessions" not in written["rows"]
     if os.name == "posix":  # Windows has no POSIX modes (ACLs instead)
         assert stat.S_IMODE(backup.stat().st_mode) == 0o600
@@ -350,7 +355,7 @@ async def test_backup_destroy_restore_run(
     restored = await cli("restore", str(backup))
     assert restored.code == EXIT_OK, restored.err
 
-    assert await snapshot(uow, project_id, run["id"]) == before
+    assert await snapshot(uow, workflow_id, run["id"]) == before
     assert (await credentials.resolve("credential:api")).reveal() == (
         "sk-backup-secret-value"
     )
@@ -358,9 +363,9 @@ async def test_backup_destroy_restore_run(
     with pytest.raises(AuthenticationRequiredError):  # ... its session did not
         await auth_kit.auth.authenticate(admin["Authorization"][7:])
 
-    # The restored project runs, and new events continue after the old ones.
+    # The restored workflow runs, and new events continue after the old ones.
     rerun = doc(
-        await cli("project", "run", project_id, "--input", '{"title": "b"}', "--json")
+        await cli("workflow", "run", workflow_id, "--input", '{"title": "b"}', "--json")
     )
     assert rerun["status"] == "completed"
     async with uow() as u:
@@ -373,7 +378,7 @@ async def test_backup_destroy_restore_run(
     # --replace overwrites a live installation atomically, to the same state.
     replaced = await cli("restore", str(backup), "--replace")
     assert replaced.code == EXIT_OK, replaced.err
-    assert await snapshot(uow, project_id, run["id"]) == before
+    assert await snapshot(uow, workflow_id, run["id"]) == before
     async with uow() as u:
         assert await u.executions.get(rerun["id"]) is None
 
@@ -386,7 +391,7 @@ async def test_migrate_is_idempotent(cli: Cli, database: Database) -> None:
 
 
 async def test_backup_and_restore_stream_through_stdio(
-    projects: ProjectService,
+    workflows: WorkflowService,
     uow: UowFactory,
     database: Database,
     capsysbinary: pytest.CaptureFixture[bytes],
@@ -394,13 +399,13 @@ async def test_backup_and_restore_stream_through_stdio(
 ) -> None:
     """``backup -o -`` / ``restore -``: how Compose operators move backups
     in and out of containers (docs/deployment.md)."""
-    project_id = await published(projects)
+    workflow_id = await published(workflows)
     code = await asyncio.to_thread(main, ["backup", "-o", "-"], configure_logs=False)
     captured = capsysbinary.readouterr()
     assert code == EXIT_OK, captured.err
     assert b"wrote -" in captured.err  # the summary stays off stdout
     document = json.loads(gzip.decompress(captured.out))
-    assert len(document["tables"]["projects"]) == 1
+    assert len(document["tables"]["workflows"]) == 1
 
     await truncate_all(database)
     stdin = io.TextIOWrapper(io.BytesIO(captured.out))
@@ -408,7 +413,7 @@ async def test_backup_and_restore_stream_through_stdio(
     code = await asyncio.to_thread(main, ["restore", "-"])
     assert code == EXIT_OK, capsysbinary.readouterr().err
     async with uow() as u:
-        assert await u.projects.get(project_id) is not None
+        assert await u.workflows.get(workflow_id) is not None
 
 
 def rewrite(path: Path, change: Callable[[dict[str, Any]], None]) -> Path:
@@ -424,7 +429,7 @@ def set_revision(d: dict[str, Any]) -> None:
 
 
 def add_column(d: dict[str, Any]) -> None:
-    d["tables"]["projects"][0]["extra"] = 1
+    d["tables"]["workflows"][0]["extra"] = 1
 
 
 def bad_status(d: dict[str, Any]) -> None:
@@ -447,24 +452,24 @@ def need_plugin(d: dict[str, Any]) -> None:
 )
 async def test_restore_rejects_incompatible_backups_without_changes(
     cli: Cli,
-    projects: ProjectService,
+    workflows: WorkflowService,
     uow: UowFactory,
     tmp_path: Path,
     change: Callable[[dict[str, Any]], None],
     code: str,
 ) -> None:
-    project_id = await published(projects)
+    workflow_id = await published(workflows)
     run = doc(
-        await cli("project", "run", project_id, "--input", '{"title": "a"}', "--json")
+        await cli("workflow", "run", workflow_id, "--input", '{"title": "a"}', "--json")
     )
     backup = tmp_path / "engine.backup"
     assert (await cli("backup", "-o", str(backup))).code == EXIT_OK
-    before = await snapshot(uow, project_id, run["id"])
+    before = await snapshot(uow, workflow_id, run["id"])
 
     result = await cli("restore", str(rewrite(backup, change)), "--replace")
     assert result.code == EXIT_FAILED
     assert code in result.err
-    assert await snapshot(uow, project_id, run["id"]) == before
+    assert await snapshot(uow, workflow_id, run["id"]) == before
 
 
 async def test_restore_checks_file_and_key(
@@ -496,7 +501,7 @@ async def test_restore_checks_file_and_key(
 
 @posix_only
 async def test_ctrl_c_cancels_the_run_cooperatively(
-    projects: ProjectService, uow: UowFactory
+    workflows: WorkflowService, uow: UowFactory
 ) -> None:
     """A real process: signal handlers only exist on the main thread."""
     graph = Graph()
@@ -505,15 +510,15 @@ async def test_ctrl_c_cancels_the_run_cooperatively(
     graph.add_node(wait)
     graph.add_node(out)
     graph.add_edge(Edge(wait.id, "value", out.id, "value"))
-    project_id = await published(projects, graph)
+    workflow_id = await published(workflows, graph)
 
     process = await asyncio.create_subprocess_exec(
         sys.executable,
         "-m",
         "akasha",
-        "project",
+        "workflow",
         "run",
-        project_id,
+        workflow_id,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         env=dict(os.environ),

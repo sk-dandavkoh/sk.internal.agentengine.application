@@ -32,7 +32,7 @@ from akasha.domain.node import (
     NodeResult,
 )
 from akasha.domain.primitives import new_id
-from akasha.domain.project import ProjectDraft
+from akasha.domain.workflow import WorkflowDraft
 from akasha.observability.logging import JsonFormatter
 
 RunNode = Callable[..., Coroutine[Any, Any, NodeResult]]
@@ -83,8 +83,8 @@ def make_context(
         execution_id=new_id("exec"),
         node_execution_id=new_id("nexec"),
         node_instance_id=new_id("node"),
-        project_id=new_id("proj"),
-        project_version="1",
+        workflow_id=new_id("wf"),
+        workflow_version="1",
         config=dict(config or {}),
         inputs=dict(inputs or {}),
         logger=logging.getLogger(f"akasha.nodes.{node.definition.node_id}"),
@@ -354,9 +354,9 @@ def run_mailpit(*, auth: bool = True) -> Iterator[Mailpit]:
         yield Mailpit(host, int(container.get_exposed_port(1025)), api_url)
 
 
-def project_semantics(name: str, draft: ProjectDraft) -> dict[str, Any]:
-    """Everything that makes a project *this* project, ids included; what
-    an installation assigns (project id, revision, timestamps) is not."""
+def workflow_semantics(name: str, draft: WorkflowDraft) -> dict[str, Any]:
+    """Everything that makes a workflow *this* workflow, ids included; what
+    an installation assigns (workflow id, revision, timestamps) is not."""
     return {
         "name": name,
         "description": draft.description,

@@ -70,7 +70,7 @@ def utcnow() -> datetime:
 
 
 def new_id(prefix: str) -> str:
-    """Generate a prefixed unique ID, e.g. ``proj_3f2a...``.
+    """Generate a prefixed unique ID, e.g. ``wf_3f2a...``.
 
     Prefixes keep logs and debugging readable; the UUID part guarantees
     uniqueness. ``validate_id`` protects constructors against garbage IDs.

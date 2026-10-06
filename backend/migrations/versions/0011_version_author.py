@@ -1,4 +1,4 @@
-"""Record who published a project version.
+"""Record who published a workflow version.
 
 Revision ID: 0011_version_author
 Revises: 0010_execution_heartbeat
@@ -22,11 +22,11 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     op.add_column(
-        "project_versions", sa.Column("published_by", sa.String(), nullable=True)
+        "workflow_versions", sa.Column("published_by", sa.String(), nullable=True)
     )
     op.create_foreign_key(
-        "fk_project_versions_published_by",
-        "project_versions",
+        "fk_workflow_versions_published_by",
+        "workflow_versions",
         "users",
         ["published_by"],
         ["id"],
@@ -36,6 +36,6 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_constraint(
-        "fk_project_versions_published_by", "project_versions", type_="foreignkey"
+        "fk_workflow_versions_published_by", "workflow_versions", type_="foreignkey"
     )
-    op.drop_column("project_versions", "published_by")
+    op.drop_column("workflow_versions", "published_by")

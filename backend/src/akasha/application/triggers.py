@@ -3,14 +3,14 @@
 Every trigger mechanism (manual run, API invoke, webhook URL, scheduler tick)
 normalizes into a ``TriggerContext`` and converges here; firing means exactly
 one thing: ``ExecutionService.create_execution`` on the resolved immutable
-ProjectVersion. No trigger type implements its own execution logic.
+WorkflowVersion. No trigger type implements its own execution logic.
 
 Resolution rule (architecture §125): a configured trigger lives on the
-LATEST published version of its project. Publishing retires the previous
+LATEST published version of its workflow. Publishing retires the previous
 version's triggers. Drafts never fire, so a trigger can never ambiguously
 execute "whatever happens to be the current draft". Trigger ids are unique
-only within a project (DUPLICATE_TRIGGER_ID blocks publish), so resolution
-is always scoped by project id.
+only within a workflow (DUPLICATE_TRIGGER_ID blocks publish), so resolution
+is always scoped by workflow id.
 """
 
 import hashlib
@@ -22,7 +22,7 @@ from typing import Any
 
 from akasha.application.credentials import CredentialNotFoundError, CredentialService
 from akasha.application.executions import ExecutionService
-from akasha.application.projects import UowFactory
+from akasha.application.workflows import UowFactory
 from akasha.domain.credentials import is_credential_reference
 from akasha.domain.execution import Execution, ExecutionMetadata
 from akasha.domain.primitives import new_id
@@ -109,9 +109,9 @@ def _signature_error(trigger: Trigger, reason: str) -> WebhookSignatureError:
 
 @dataclass(frozen=True)
 class ResolvedTrigger:
-    """A configured trigger pinned to its immutable project version."""
+    """A configured trigger pinned to its immutable workflow version."""
 
-    project_id: str
+    workflow_id: str
     version: int
     trigger: Trigger
 
@@ -124,16 +124,16 @@ class TriggerRegistry:
 
     async def resolve(
         self,
-        project_id: str,
+        workflow_id: str,
         trigger_id: str,
         *,
         trigger_type: TriggerType | None = None,
     ) -> ResolvedTrigger | None:
         """Find ``trigger_id`` on the latest published version of
-        ``project_id``. Loads that one version only; other projects' data can
+        ``workflow_id``. Loads that one version only; other workflows' data can
         neither affect nor leak into the result."""
         async with self._uow() as uow:
-            for pid, version in await uow.versions.list_latest(project_id=project_id):
+            for pid, version in await uow.versions.list_latest(workflow_id=workflow_id):
                 for trigger in version.triggers:
                     if trigger.id == trigger_id and (
                         trigger_type is None or trigger.trigger_type is trigger_type
@@ -144,7 +144,7 @@ class TriggerRegistry:
     async def list_scheduled(self) -> list[ResolvedTrigger]:
         """All enabled CRON/INTERVAL triggers on latest published versions,
         in a deterministic order (AGENTS §72). The same trigger id may appear
-        in several projects."""
+        in several workflows."""
         return await self._list_enabled(SCHEDULED_TYPES)
 
     async def list_event_triggers(self) -> list[ResolvedTrigger]:
@@ -158,12 +158,12 @@ class TriggerRegistry:
         async with self._uow() as uow:
             latest = await uow.versions.list_latest()
         found = [
-            ResolvedTrigger(project_id, version.version, trigger)
-            for project_id, version in latest
+            ResolvedTrigger(workflow_id, version.version, trigger)
+            for workflow_id, version in latest
             for trigger in version.triggers
             if trigger.enabled and trigger.trigger_type in types
         ]
-        return sorted(found, key=lambda r: (r.trigger.id, r.project_id))
+        return sorted(found, key=lambda r: (r.trigger.id, r.workflow_id))
 
 
 class TriggerService:
@@ -193,12 +193,12 @@ class TriggerService:
                 },
             )
         return await self._create(
-            resolved.project_id, resolved.version, context, trigger_id=trigger.id
+            resolved.workflow_id, resolved.version, context, trigger_id=trigger.id
         )
 
     async def fire_manual(
         self,
-        project_id: str,
+        workflow_id: str,
         version: int,
         *,
         input: Mapping[str, Any] | None = None,
@@ -214,12 +214,12 @@ class TriggerService:
             metadata={"correlation_id": correlation_id} if correlation_id else {},
         )
         return await self._create(
-            project_id, version, context, trigger_id=None, dispatch=dispatch
+            workflow_id, version, context, trigger_id=None, dispatch=dispatch
         )
 
     async def _create(
         self,
-        project_id: str,
+        workflow_id: str,
         version: int,
         context: TriggerContext,
         *,
@@ -227,7 +227,7 @@ class TriggerService:
         dispatch: bool = True,
     ) -> Execution:
         execution = await self._executions.create_execution(
-            project_id,
+            workflow_id,
             version,
             input=context.payload,
             metadata=ExecutionMetadata(
@@ -245,8 +245,8 @@ class TriggerService:
             extra={
                 "event": "trigger_fired",
                 "execution_id": execution.id,
-                "project_id": project_id,
-                "project_version": version,
+                "workflow_id": workflow_id,
+                "workflow_version": version,
                 "trigger_id": trigger_id,
                 "trigger_type": context.trigger_type.value,
                 "trigger_source": context.source,

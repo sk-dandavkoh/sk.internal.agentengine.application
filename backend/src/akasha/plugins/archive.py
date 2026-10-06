@@ -64,7 +64,7 @@ def unpack_package(data: bytes, target: Path) -> Path:
             written = 0
             for info in infos:
                 written += _extract(archive, info, target, MAX_UNPACKED_BYTES - written)
-    # Same family as project packages: corrupt, truncated or unsupported ZIPs.
+    # Same family as workflow packages: corrupt, truncated or unsupported ZIPs.
     except (
         zipfile.BadZipFile,
         zipfile.LargeZipFile,

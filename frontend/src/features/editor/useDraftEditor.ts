@@ -1,7 +1,7 @@
 import { useEffect, useEffectEvent, useReducer, useRef, useState } from 'react'
 import { useBlocker } from 'react-router'
-import { useUpdateProject } from '../../api/mutations'
-import type { Project } from '../../api/projects'
+import { useUpdateWorkflow } from '../../api/mutations'
+import type { Workflow } from '../../api/workflows'
 import {
     editorReducer,
     initEditor,
@@ -13,7 +13,7 @@ import {
 export const AUTOSAVE_DELAY_MS = 1500
 
 /**
- * Editor state of `project`'s draft plus its persistence: explicit save,
+ * Editor state of `workflow`'s draft plus its persistence: explicit save,
  * debounced autosave and the unsaved-changes guard.
  *
  * Saves are single-flight and pinned to the draft revision the editor last
@@ -24,11 +24,11 @@ export const AUTOSAVE_DELAY_MS = 1500
  * A failed save stops autosave until the user saves explicitly; a broken
  * backend must not get a request every few seconds (frontend/AGENTS §31).
  */
-export function useDraftEditor(project: Project) {
-    const [state, dispatch] = useReducer(editorReducer, project, (p) =>
+export function useDraftEditor(workflow: Workflow) {
+    const [state, dispatch] = useReducer(editorReducer, workflow, (p) =>
         initEditor(p.draft.graph, p.revision),
     )
-    const update = useUpdateProject()
+    const update = useUpdateWorkflow()
     const inFlight = useRef(false)
     const [saveError, setSaveError] = useState<unknown>(null)
     const dirty = isDirty(state)
@@ -41,14 +41,14 @@ export function useDraftEditor(project: Project) {
         setSaveError(null)
         update.mutate(
             {
-                projectId: project.id,
+                workflowId: workflow.id,
                 input: {
                     // Only the graph is edited here; the rest of the draft
                     // goes back as loaded (the revision guards against it
                     // having changed meanwhile).
-                    name: project.name,
-                    description: project.description,
-                    draft: { ...project.draft, graph },
+                    name: workflow.name,
+                    description: workflow.description,
+                    draft: { ...workflow.draft, graph },
                     expected_revision: state.revision,
                 },
             },

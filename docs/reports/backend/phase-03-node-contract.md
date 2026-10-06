@@ -43,7 +43,7 @@ The phase was explicitly NOT responsible for:
 - `NodeDefinition` (frozen dataclass): `metadata, inputs, outputs, config_schema, capabilities`. Validates itself fully in `__post_init__`: port name syntax, unique port names per direction, scalar ports must not declare value schemas, defaults only on non-required inputs, defaults must match their port type. Convenience: `node_id`, `version` properties; `input(name)`/`output(name)` lookup; `validate_config()`, `validate_inputs()`, `validate_outputs()`.
 - `validate_port_value(port, value)`: standalone runtime value validation used by both definition-time default checking and runtime input/output validation.
 - `CredentialResolver` (Protocol): `resolve(reference: str) -> str` — the only credential-facing surface of the contract; keeps the contract free of credential-store dependencies (store is Phase 13).
-- `NodeExecutionContext` (frozen dataclass): `execution_id, node_execution_id, node_instance_id, project_id, project_version, config, inputs, logger, credentials (optional), is_cancelled (callable, default `lambda: False`), runtime_metadata`.
+- `NodeExecutionContext` (frozen dataclass): `execution_id, node_execution_id, node_instance_id, workflow_id, workflow_version, config, inputs, logger, credentials (optional), is_cancelled (callable, default `lambda: False`), runtime_metadata`.
 - `NodeResult` (frozen dataclass): `outputs` mapping only. No failure field — failures cross the contract as `NodeError` exceptions.
 - `NodeErrorKind` (StrEnum): `validation, configuration, transient, permanent, timeout, cancellation`.
 - `NodeError` (subclass of `AkashaError`): carries `kind`; `retryable` is derived (`transient`/`timeout` → retryable), not settable ad hoc.
@@ -136,7 +136,7 @@ Error codes are stable machine-readable strings (`NODE_CONTRACT_ERROR`, `NODE_CO
 
 Matters-for-maintenance items only:
 
-- **Config validation is a deliberate JSON-Schema subset.** `NodeConfigSchema.validate_config` enforces `type`, `required`, `properties` (recursively into objects and `array.items`), and `additionalProperties: false`. Anything else in the schema (formats, enums, `oneOf`, ...) is silently *not* validated at definition time — unknown `type` values inside properties do raise `NodeContractError` when validating a config. A `ponytail:` comment in the code names the ceiling and the upgrade path (`jsonschema` package) per project convention.
+- **Config validation is a deliberate JSON-Schema subset.** `NodeConfigSchema.validate_config` enforces `type`, `required`, `properties` (recursively into objects and `array.items`), and `additionalProperties: false`. Anything else in the schema (formats, enums, `oneOf`, ...) is silently *not* validated at definition time — unknown `type` values inside properties do raise `NodeContractError` when validating a config. A `ponytail:` comment in the code names the ceiling and the upgrade path (`jsonschema` package) per workflow convention.
 - **Port value typing:** `bool` is explicitly rejected where `number` is expected (Python's `bool` is an `int` subclass); `number` accepts `int | float`. `json` = round-trippable via `json.dumps`. `file`/`artifact`/`secret_reference` values are validated as non-empty opaque reference *strings*; resolution is delegated to the artifact/credential services (later phases). Plaintext secrets or raw path payloads never appear at the contract boundary.
 - **Immutability:** all contract types are frozen dataclasses; `NodeDefinition` can be shared by reference across graph validation, registry, and execution without defensive copies.
 - **`default` sentinel:** `dataclasses.MISSING` cannot be used as a field default (dataclass interprets it as "no default provided"), so the module defines its own `_NoDefault` sentinel exported as `NO_DEFAULT`. This was a real implementation bug caught by the first test run; see §11.
@@ -374,7 +374,7 @@ None.
 
 ---
 
-## 25. Handoff to Next Phase (Phase 04 — Project Graph + Validation)
+## 25. Handoff to Next Phase (Phase 04 — Workflow Graph + Validation)
 
 - **Available now:** `NodeDefinition` (self-validating), `PortType`, `validate_port_value`, `NodeConfigSchema.validate_config`, `NodeValidationError`/`NodeContractError`/`NodeConfigurationError` with stable codes. Graph-side `NodeInstance` stores `node_type` (== `NodeDefinition.metadata.node_id`) and `config`.
 - **Phase 04 validation must** resolve node types to definitions (temporarily via a small lookup; the real registry is Phase 09 — use an injectable mapping keyed by `node_id`), then apply: port existence via `definition.input/output(name)`, required-input presence via `validate_inputs`-style rules adapted to graph edges, config validity via `validate_config`, plus structural rules (cycles, connectivity, duplicates) in `domain/graph.py`.

@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from akasha.domain.graph_validation import ValidationCode, ValidationIssue
 from akasha.domain.node import NodeDefinition
 from akasha.domain.primitives import SEMVER_RE, version_satisfies
-from akasha.domain.project import Dependency, validate_dependencies
+from akasha.domain.workflow import Dependency, validate_dependencies
 from akasha.errors import DomainValidationError
 
 _PLUGIN_ID_RE = re.compile(r"^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$")
@@ -114,7 +114,7 @@ def compatibility_issues(
     """Why ``metadata`` cannot be activated here; empty when it can.
 
     ``definitions`` are the available node types, ``plugins`` the enabled
-    plugins (id → version). Dependencies use the project dependency rules.
+    plugins (id → version). Dependencies use the workflow dependency rules.
     """
     issues = [
         ValidationIssue(

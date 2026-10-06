@@ -13,7 +13,7 @@ The metrics must cover execution count, success and failure, duration, node dura
 
 **What was implemented.**
 - **Redaction module (`akasha.security.redaction`).** It is applied at three choke points: every log formatter, every API error body, and node errors before they are persisted.
-- **Log context (`log_context`).** A `ContextVar` that propagates `request_id`, `execution_id`, `node_execution_id`, `node_id`, `node_type`, `project_id` and `correlation_id` into every log line. This includes lines emitted by node code and libraries, because asyncio tasks copy the context they are created in.
+- **Log context (`log_context`).** A `ContextVar` that propagates `request_id`, `execution_id`, `node_execution_id`, `node_id`, `node_type`, `workflow_id` and `correlation_id` into every log line. This includes lines emitted by node code and libraries, because asyncio tasks copy the context they are created in.
 - **HTTP middleware.** Assigns one validated request id per request, echoes it in `X-Request-ID`, and writes an `http_request` access line with its duration.
 - **Execution observer (`observe_execution`).** After each committed execution save, it turns every persisted lifecycle event into one structured log line with timings and error classification, and into Prometheus metrics.
 - **`EngineMetrics`.** 9 instruments, served at `GET /metrics`.
@@ -55,7 +55,7 @@ In addition, the runtime's metrics are not yet visible on the container's `/metr
 **Architecture references**
 - §50 Observability: logs, metrics, traces, events, execution history; example log line.
 - §51 Logging rules: structured, correlation ids, no secrets, no raw payloads.
-- §52 Correlation IDs: `request_id`, `execution_id`, `node_execution_id`, `project_id`, `project_version_id`; `trace_id`/`span_id` where appropriate.
+- §52 Correlation IDs: `request_id`, `execution_id`, `node_execution_id`, `workflow_id`, `workflow_version_id`; `trace_id`/`span_id` where appropriate.
 - §109 Secrets redaction at multiple levels.
 - §113 Recommended metrics.
 
@@ -95,7 +95,7 @@ In addition, the runtime's metrics are not yet visible on the container's `/metr
   - `StateManager.save` pulls events after commit, calls `observe_execution`, then publishes.
   - `ExecutionRuntime.__init__(..., metrics=None)`.
   - `run()` increments and decrements `active_executions` in `try/finally` and binds `log_context(execution_id=...)`.
-  - `_launch` creates each node task inside `log_context(execution_id, project_id, correlation_id, node_id, node_execution_id, node_type)`.
+  - `_launch` creates each node task inside `log_context(execution_id, workflow_id, correlation_id, node_id, node_execution_id, node_type)`.
   - Removed: the module-level `logger`, the `_log()` function, the `_finish()` method, all 9 `_log(...)` calls (8 direct, 1 inside `_finish`) and the 4 `_finish(...)` calls, which now call `self._state.save(...)` directly.
 - **`backend/src/akasha/runtime/executor.py`:**
   - `execute_node` now wraps a renamed `_execute` and returns `ExecutionError`s with `message` passed through `redact_text` and `details` through `redact_mapping`.
@@ -350,7 +350,7 @@ The whole dict is passed through `redact` and then `json.dumps` (no `default=str
 
 ### 8.3 Execution observer (`observe_execution`)
 
-**Common fields on every event:** `event`, `event_id`, `execution_id`, `project_id`, `project_version`, `correlation_id`, plus the event payload (`trigger_type`, `trigger_id`, `attempt`, `error_code`, `error_kind`, `error_node_id`, as defined per type).
+**Common fields on every event:** `event`, `event_id`, `execution_id`, `workflow_id`, `workflow_version`, `correlation_id`, plus the event payload (`trigger_type`, `trigger_id`, `attempt`, `error_code`, `error_kind`, `error_node_id`, as defined per type).
 
 **Per event type:**
 
@@ -362,7 +362,7 @@ The whole dict is passed through `redact` and then `json.dumps` (no `default=str
 | `node.started` | `node_id`, `node_execution_id`, `node_type` | — |
 | `node.completed` / `failed` / `skipped` / `cancelled` | node ids; `duration_ms` if the node started; for `failed`, error fields from the last failure | `node_executions_finished{node_type,status}`; `node_execution_duration_seconds{node_type,status}` if started; for `failed`, `node_execution_errors{node_type,error_kind}` |
 
-- `node_type` is looked up in `execution.project_version.graph.nodes[node_id].node_type`.
+- `node_type` is looked up in `execution.workflow_version.graph.nodes[node_id].node_type`.
 - The `status` label is the event-type suffix, a closed set.
 - Level is WARNING for `execution.failed`, `execution.timed_out` and `node.failed`; INFO otherwise.
 
@@ -506,7 +506,7 @@ No pre-existing product bugs were found beyond B1 and B2.
 - `AkashaError` message and details are redacted in the body.
 - `/metrics` returns 200, `text/plain`, and all six asserted metric families.
 
-**Existing API tests** (`test_projects_api.py`, `test_triggers_api.py`, `test_errors.py`, `test_health.py`) pass. Two assertions were adapted (§7, B7).
+**Existing API tests** (`test_workflows_api.py`, `test_triggers_api.py`, `test_errors.py`, `test_health.py`) pass. Two assertions were adapted (§7, B7).
 
 ### Integration Tests
 **`tests/integration/test_observability.py` (3 tests, all pass on PostgreSQL 17.2 via Testcontainers):**
@@ -641,7 +641,7 @@ All gates were executed in `backend/` on the final working tree.
 - **Limit of pattern redaction:** secrets without a recognisable shape (a bare password in free text, an unlabelled opaque token) are not detected. Known-value masking requires the credential store (Phase 13).
 - **Logging of new data:** `error_message` is now logged on failure lines. It is node-authored text, redacted twice (executor and formatter). Node inputs, outputs and config values are still never logged by the engine. `core.log` with `include_value=true` logs a user-selected value; it passes through key- and text-redaction but can still contain business data (pre-existing, opt-in).
 - **Input validation:** `X-Request-ID` is limited to 1–128 printable characters, which prevents log-line and header injection through CR/LF. The same rule as `ExecutionMetadata.correlation_id`.
-- **Access log:** path only, no query string (tokens in query strings are not logged). Webhook paths contain project and trigger ids. Those are client-chosen, guessable identifiers, not capability secrets. Webhook authentication is planned as signatures or secrets (Phase 10 report, OI11).
+- **Access log:** path only, no query string (tokens in query strings are not logged). Webhook paths contain workflow and trigger ids. Those are client-chosen, guessable identifiers, not capability secrets. Webhook authentication is planned as signatures or secrets (Phase 10 report, OI11).
 - **API exposure:** `GET /metrics` is unauthenticated, like `/health` and `/ready`, until Phase 20. It exposes counts, timings, node type names and trigger types; no ids, codes, messages or payloads. Deployments exposing the API publicly should restrict `/metrics` at the proxy until authentication exists.
 - **Error disclosure:** unchanged policy (no traceback to clients); now also redacted server-side.
 - **Metric cardinality (a DoS-adjacent concern):** labels are bounded (§8.3). `node_type` becomes author-extensible with plugins (Phase 17; §21).
@@ -664,14 +664,14 @@ All gates were executed in `backend/` on the final working tree.
 
 | File | Reason | Content |
 |---|---|---|
-| `docs/architecture.md` §52 | Record the implemented correlation and logging design | Log schema and field precedence; `log_context` propagation; HTTP request-id rules; trigger → correlation id; runtime context fields; the observer and its fields; `project_version_id` and `trace_id`/`span_id` not implemented, and why |
+| `docs/architecture.md` §52 | Record the implemented correlation and logging design | Log schema and field precedence; `log_context` propagation; HTTP request-id rules; trigger → correlation id; runtime context fields; the observer and its fields; `workflow_version_id` and `trace_id`/`span_id` not implemented, and why |
 | `docs/architecture.md` §109 | Record the redaction design | Key and text rules; the three choke points; events and labels secret-free by construction; the known-value limitation (Phase 13) |
 | `docs/architecture.md` §113 | Record the metrics | Metric table with types and labels; bounded labels; per-instance registry and wiring note; per-process counters; not-yet-emitted metrics |
 | Module docstrings | Maintainer knowledge | `security/redaction.py`, `observability/{__init__,logging,metrics,execution}.py`, `runtime/runtime.py` (concurrency notes), `runtime/executor.py` (redaction rule) |
 | `docs/reports/backend/phase-12-observability.md` | Phase report | This document |
 
 **Should be updated in a future phase:**
-- Architecture §18 still names `project_version_id`. §52 now documents the deviation, but §18 itself is unchanged (carried over from Phase 11).
+- Architecture §18 still names `workflow_version_id`. §52 now documents the deviation, but §18 itself is unchanged (carried over from Phase 11).
 - The §112 operational architecture: `/metrics` once authentication (Phase 20) and workers (Phase 22) exist.
 - `backend/README.md`: no operator-facing section on log fields or `/metrics` exists yet (Phase 26, operations).
 
@@ -726,7 +726,7 @@ All gates were executed in `backend/` on the final working tree.
 | `/metrics` unauthenticated | Operational data exposed to anyone who can reach the API | LOW–MEDIUM | API / security | Protect it with operator auth, or bind it to an internal listener | 20 / 26 |
 | `node_type` label cardinality with plugins | Author-defined node types could grow series | LOW | Metrics | Revisit the label when plugins land (cap, or plugin-namespace only) | 17 |
 | Docker probe flake (F6, carried from Phase 11) | Integration tests silently skipped in a slow environment | LOW | Test infrastructure | Longer ping timeout, or fail instead of skip when `CI` expects Docker | CI hardening |
-| Architecture §18 `project_version_id` naming (carried from Phase 11) | Documentation inconsistency | LOW | Docs | Update §18 | Frontend live phase |
+| Architecture §18 `workflow_version_id` naming (carried from Phase 11) | Documentation inconsistency | LOW | Docs | Update §18 | Frontend live phase |
 | No trigger-endpoint regression test for an oversized `X-Request-ID` (B2) | Fix covered only at the HTTP-middleware level | LOW | Tests | Add a webhook call with a 200-character header asserting 202 | Any |
 
 ---

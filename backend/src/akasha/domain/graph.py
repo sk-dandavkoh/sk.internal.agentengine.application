@@ -27,7 +27,7 @@ class Position:
 
 @dataclass(eq=False)
 class NodeInstance(Entity):
-    """One configured occurrence of a node type inside a project graph.
+    """One configured occurrence of a node type inside a workflow graph.
 
     ``node_type`` references a Node Definition in the registry (Phase 03+),
     e.g. ``core.llm``. ``config`` holds node-defined settings and must never
@@ -72,8 +72,8 @@ class Edge:
 class Graph:
     """Nodes plus edges. Mutable: drafts evolve until published.
 
-    Snapshot isolation for publishing is done by ProjectDraft.publish(), which
-    deep-copies this graph into the immutable ProjectVersion.
+    Snapshot isolation for publishing is done by WorkflowDraft.publish(), which
+    deep-copies this graph into the immutable WorkflowVersion.
     """
 
     nodes: dict[str, NodeInstance] = field(default_factory=dict)

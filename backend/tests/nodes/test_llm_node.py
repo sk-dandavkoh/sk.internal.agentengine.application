@@ -494,7 +494,7 @@ async def test_a_reference_in_variables_is_neither_resolved_nor_authorized() -> 
     assert exc.value.code == "CREDENTIAL_NOT_REFERENCED"
 
 
-def test_plaintext_keys_in_prompts_are_caught_by_project_validation() -> None:
+def test_plaintext_keys_in_prompts_are_caught_by_workflow_validation() -> None:
     config = {**BASE, "system_prompt": "use sk-live-abcdefghijklmnopqrstuvwxyz"}
     assert plaintext_secret_paths(config) == [".system_prompt"]
     assert plaintext_secret_paths({**BASE, "credential": REF}) == []

@@ -2,7 +2,7 @@ import { render } from '@testing-library/react'
 import { ReactFlowProvider } from '@xyflow/react'
 import { describe, expect, it, vi } from 'vitest'
 import type { NodeDefinition, NodePort } from '../../api/nodes'
-import type { Edge, Graph } from '../../api/projects'
+import type { Edge, Graph } from '../../api/workflows'
 import type { ConnectionRules } from './connections'
 import { GraphCanvas } from './GraphCanvas'
 

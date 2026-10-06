@@ -1,11 +1,11 @@
-"""Backend V1 end to end: the official example projects (vision §58,
+"""Backend V1 end to end: the official example workflows (vision §58,
 architecture §88) through the production composition root (Phase 27).
 
 Nothing between the HTTP client and the infrastructure is replaced:
 ``create_container`` wires the engine from ``Settings`` exactly as
 ``akasha serve`` does, and the app's own lifespan starts and stops it.
 
-    HTTP API → ProjectService → PostgreSQL
+    HTTP API → WorkflowService → PostgreSQL
              → TriggerService → ExecutionService → Redis queue
              → in-process Worker → ExecutionRuntime → built-in nodes
                  → core.llm → AIService → LiteLLM → loopback OpenAI-compatible server
@@ -18,7 +18,7 @@ engine, a mail server): local, deterministic, no public internet (§124).
 Waiting is event-driven: the test subscribes to the engine's own event
 publisher, never sleeps.
 
-Per example, the journey is: create project → configure nodes for this
+Per example, the journey is: create workflow → configure nodes for this
 installation (provider endpoint, SMTP host) → validate → publish → the
 version is immutable → trigger (manual invoke, or the cron scheduler on an
 injected clock) → worker runs it → inspect state, events, logs, metrics,
@@ -63,7 +63,7 @@ from tests.support import (
 
 pytestmark = pytest.mark.usefixtures("clean_db")
 
-EXAMPLES = Path(__file__).parents[2] / "examples" / "projects"
+EXAMPLES = Path(__file__).parents[2] / "examples" / "workflows"
 KEY = base64.urlsafe_b64encode(os.urandom(32)).decode()
 # Secrets that must never leave the credential store in plaintext.
 LLM_KEY = "sk-e2e-llm-0123456789abcdefghijklmnop"
@@ -215,12 +215,12 @@ async def login(engine: Engine) -> None:
 
 
 async def create_and_publish(engine: Engine, name: str) -> tuple[str, dict[str, Any]]:
-    """Create → configure → validate → publish; returns (project id, the
+    """Create → configure → validate → publish; returns (workflow id, the
     draft as published)."""
     c, spec = engine.client, example(name)
-    project = ok(
+    workflow = ok(
         await c.post(
-            "/api/v1/projects",
+            "/api/v1/workflows",
             json={"name": spec["name"], "description": spec["description"]},
         ),
         201,
@@ -232,54 +232,54 @@ async def create_and_publish(engine: Engine, name: str) -> tuple[str, dict[str, 
     }
     updated = ok(
         await c.put(
-            f"/api/v1/projects/{project['id']}",
+            f"/api/v1/workflows/{workflow['id']}",
             json={
-                "expected_revision": project["revision"],
+                "expected_revision": workflow["revision"],
                 "name": spec["name"],
                 "description": spec["description"],
                 "draft": draft,
             },
         )
     )
-    validation = ok(await c.post(f"/api/v1/projects/{project['id']}/validate"))
+    validation = ok(await c.post(f"/api/v1/workflows/{workflow['id']}/validate"))
     assert validation == {"valid": True, "issues": []}, validation
     published = ok(
         await c.post(
-            f"/api/v1/projects/{project['id']}/publish",
+            f"/api/v1/workflows/{workflow['id']}/publish",
             json={"expected_revision": updated["revision"]},
         ),
         201,
     )
     assert published["version"] == 1
-    return project["id"], draft
+    return workflow["id"], draft
 
 
-async def assert_version_is_immutable(engine: Engine, project_id: str) -> None:
+async def assert_version_is_immutable(engine: Engine, workflow_id: str) -> None:
     """Editing the draft after publishing never changes version 1."""
     c = engine.client
-    before = ok(await c.get(f"/api/v1/projects/{project_id}/versions/1"))
-    project = ok(await c.get(f"/api/v1/projects/{project_id}"))
+    before = ok(await c.get(f"/api/v1/workflows/{workflow_id}/versions/1"))
+    workflow = ok(await c.get(f"/api/v1/workflows/{workflow_id}"))
     ok(
         await c.put(
-            f"/api/v1/projects/{project_id}",
+            f"/api/v1/workflows/{workflow_id}",
             json={
-                "expected_revision": project["revision"],
-                "name": project["name"] + " (edited)",
+                "expected_revision": workflow["revision"],
+                "name": workflow["name"] + " (edited)",
                 "description": "",
                 "draft": {"graph": {"nodes": [], "edges": []}},
             },
         )
     )
-    after = ok(await c.get(f"/api/v1/projects/{project_id}/versions/1"))
+    after = ok(await c.get(f"/api/v1/workflows/{workflow_id}/versions/1"))
     assert after == before
 
 
 async def invoke(
-    engine: Engine, project_id: str, trigger_id: str, payload: dict[str, Any]
+    engine: Engine, workflow_id: str, trigger_id: str, payload: dict[str, Any]
 ) -> str:
     created = ok(
         await engine.client.post(
-            f"/api/v1/projects/{project_id}/triggers/{trigger_id}/invoke",
+            f"/api/v1/workflows/{workflow_id}/triggers/{trigger_id}/invoke",
             json=payload,
         ),
         201,
@@ -306,7 +306,7 @@ def outputs_by_label(doc: dict[str, Any]) -> dict[str, Any]:
 
 
 async def inspect_completed(
-    engine: Engine, project_id: str, execution_id: str
+    engine: Engine, workflow_id: str, execution_id: str
 ) -> dict[str, Any]:
     """Execution state, listing, event history and report of a finished run."""
     c = engine.client
@@ -314,7 +314,7 @@ async def inspect_completed(
     detail = ok(await c.get(f"/api/v1/executions/{execution_id}"))
     assert detail["status"] == "completed"
     assert detail["finished_at"] is not None
-    listed = ok(await c.get(f"/api/v1/projects/{project_id}/executions"))
+    listed = ok(await c.get(f"/api/v1/workflows/{workflow_id}/executions"))
     assert execution_id in [e["id"] for e in listed["items"]]
     events = ok(await c.get(f"/api/v1/executions/{execution_id}/events"))
     types = [e["event_type"] for e in events["items"]]
@@ -328,13 +328,13 @@ async def inspect_completed(
 
 
 async def export_import_and_rerun(
-    engine: Engine, project_id: str, run_input: dict[str, Any]
+    engine: Engine, workflow_id: str, run_input: dict[str, Any]
 ) -> dict[str, Any]:
     """Export version 1 → import → validate → publish → execute the copy;
     returns the copy's report."""
     c = engine.client
     exported = await c.get(
-        f"/api/v1/projects/{project_id}/export", params={"version": 1}
+        f"/api/v1/workflows/{workflow_id}/export", params={"version": 1}
     )
     assert exported.status_code == 200, exported.text
     package = exported.content
@@ -342,11 +342,11 @@ async def export_import_and_rerun(
         assert secret.encode() not in package
     with zipfile.ZipFile(io.BytesIO(package)) as archive:
         manifest = json.loads(archive.read("manifest.json"))
-    assert manifest["source_project_version"] == 1
+    assert manifest["source_workflow_version"] == 1
 
     imported = ok(
         await c.post(
-            "/api/v1/projects/import",
+            "/api/v1/workflows/import",
             content=package,
             headers={"content-type": "application/zip"},
         ),
@@ -354,18 +354,18 @@ async def export_import_and_rerun(
     )
     assert imported["validation"] == {"valid": True, "issues": []}
     assert imported["missing_credentials"] == []
-    copy = imported["project"]
-    assert copy["id"] != project_id
+    copy = imported["workflow"]
+    assert copy["id"] != workflow_id
     ok(
         await c.post(
-            f"/api/v1/projects/{copy['id']}/publish",
+            f"/api/v1/workflows/{copy['id']}/publish",
             json={"expected_revision": copy["revision"]},
         ),
         201,
     )
     created = ok(
         await c.post(
-            f"/api/v1/projects/{copy['id']}/versions/1/execute", json=run_input
+            f"/api/v1/workflows/{copy['id']}/versions/1/execute", json=run_input
         ),
         201,
     )
@@ -386,14 +386,14 @@ def assert_no_secret_escaped(engine: Engine, *texts: str) -> None:
 
 async def test_hello_world(engine: Engine) -> None:
     await login(engine)
-    project_id, draft = await create_and_publish(engine, "hello-world")
-    await assert_version_is_immutable(engine, project_id)
+    workflow_id, draft = await create_and_publish(engine, "hello-world")
+    await assert_version_is_immutable(engine, workflow_id)
 
     execution_id = await invoke(
-        engine, project_id, draft["triggers"][0]["id"], {"name": "World"}
+        engine, workflow_id, draft["triggers"][0]["id"], {"name": "World"}
     )
 
-    doc = await inspect_completed(engine, project_id, execution_id)
+    doc = await inspect_completed(engine, workflow_id, execution_id)
     expected = {"value": {"greeting": "Hello", "name": "World"}}
     assert outputs_by_label(doc)["result"] == expected
     assert doc["execution"]["node_versions"]["core.set"] == "1.0.0"
@@ -409,7 +409,7 @@ async def test_hello_world(engine: Engine) -> None:
     assert metrics.status_code == 200
     assert "akasha_executions_finished" in metrics.text
 
-    copy = await export_import_and_rerun(engine, project_id, {"name": "Copy"})
+    copy = await export_import_and_rerun(engine, workflow_id, {"name": "Copy"})
     assert outputs_by_label(copy)["result"] == {
         "value": {"greeting": "Hello", "name": "Copy"}
     }
@@ -419,16 +419,16 @@ async def test_hello_world(engine: Engine) -> None:
 async def test_llm(engine: Engine) -> None:
     await login(engine)
     engine.server.state.llm_body = answer("Paris.")
-    project_id, draft = await create_and_publish(engine, "llm")
+    workflow_id, draft = await create_and_publish(engine, "llm")
 
     execution_id = await invoke(
         engine,
-        project_id,
+        workflow_id,
         draft["triggers"][0]["id"],
         {"question": "What is the capital of France?"},
     )
 
-    doc = await inspect_completed(engine, project_id, execution_id)
+    doc = await inspect_completed(engine, workflow_id, execution_id)
     assert outputs_by_label(doc)["result"] == {"value": "Paris."}
     llm = next(n for n in doc["nodes"] if n["node_type"] == "core.llm")
     assert llm["usage"] == {"input_tokens": 12, "output_tokens": 3, "total_tokens": 15}
@@ -446,7 +446,7 @@ async def test_llm(engine: Engine) -> None:
     )
     assert request.headers["authorization"] == f"Bearer {LLM_KEY}"
 
-    await export_import_and_rerun(engine, project_id, {"question": "Again?"})
+    await export_import_and_rerun(engine, workflow_id, {"question": "Again?"})
     assert_no_secret_escaped(engine, json.dumps(doc))
 
 
@@ -455,13 +455,13 @@ async def test_web_research(engine: Engine) -> None:
     engine.server.state.llm_body = answer(
         "- Acme is hiring (https://acme.example/jobs)"
     )
-    project_id, draft = await create_and_publish(engine, "web-research")
+    workflow_id, draft = await create_and_publish(engine, "web-research")
 
     execution_id = await invoke(
-        engine, project_id, draft["triggers"][0]["id"], {"topic": "workflow engines"}
+        engine, workflow_id, draft["triggers"][0]["id"], {"topic": "workflow engines"}
     )
 
-    doc = await inspect_completed(engine, project_id, execution_id)
+    doc = await inspect_completed(engine, workflow_id, execution_id)
     outputs = outputs_by_label(doc)
     assert outputs["brief"] == {"value": "- Acme is hiring (https://acme.example/jobs)"}
     assert outputs["search"]["results"] == [
@@ -477,7 +477,7 @@ async def test_web_research(engine: Engine) -> None:
     prompt = json.loads(llm_request.body)["messages"][-1]["content"]
     assert "https://acme.example/jobs" in prompt
 
-    await export_import_and_rerun(engine, project_id, {"topic": "again"})
+    await export_import_and_rerun(engine, workflow_id, {"topic": "again"})
     assert_no_secret_escaped(engine, json.dumps(doc))
 
 
@@ -519,13 +519,13 @@ async def test_research_agent(engine: Engine) -> None:
         ),
         answer(f"Agents run tools in a loop ({page})."),
     ]
-    project_id, draft = await create_and_publish(engine, "research-agent")
+    workflow_id, draft = await create_and_publish(engine, "research-agent")
 
     execution_id = await invoke(
-        engine, project_id, draft["triggers"][0]["id"], {"topic": "agent engines"}
+        engine, workflow_id, draft["triggers"][0]["id"], {"topic": "agent engines"}
     )
 
-    doc = await inspect_completed(engine, project_id, execution_id)
+    doc = await inspect_completed(engine, workflow_id, execution_id)
     outputs = outputs_by_label(doc)
     assert outputs["summary"] == {"value": f"Agents run tools in a loop ({page})."}
     steps = outputs["researcher"]["steps"]
@@ -536,7 +536,7 @@ async def test_research_agent(engine: Engine) -> None:
     ]
     workspace = engine.container.settings.workspace_dir
     assert workspace is not None
-    brief = workspace / project_id / "research" / "brief.md"
+    brief = workspace / workflow_id / "research" / "brief.md"
     assert brief.read_text() == f"# Agents\n\nSource: {page}"
 
     # Search, page fetch and four model calls really went over HTTP.
@@ -549,13 +549,13 @@ async def test_research_agent(engine: Engine) -> None:
     for request in llm_requests:
         assert request.headers["authorization"] == f"Bearer {LLM_KEY}"
 
-    await export_import_and_rerun(engine, project_id, {"topic": "again"})
+    await export_import_and_rerun(engine, workflow_id, {"topic": "again"})
     assert_no_secret_escaped(engine, json.dumps(doc))
 
 
 async def test_lead_generation(engine: Engine) -> None:
     await login(engine)
-    project_id, draft = await create_and_publish(engine, "lead-generation")
+    workflow_id, draft = await create_and_publish(engine, "lead-generation")
     container = engine.container
     assert container.trigger_registry is not None and container.triggers is not None
     # Monday 2026-10-05 07:59 UTC, one minute before the cron boundary.
@@ -571,14 +571,14 @@ async def test_lead_generation(engine: Engine) -> None:
     )
     now += timedelta(minutes=1)
     assert await scheduler.tick() == 1
-    listed = ok(await engine.client.get(f"/api/v1/projects/{project_id}/executions"))
+    listed = ok(await engine.client.get(f"/api/v1/workflows/{workflow_id}/executions"))
     (scheduled,) = listed["items"]
     assert (scheduled["trigger_type"], scheduled["trigger_id"]) == (
         "cron",
         draft["triggers"][0]["id"],
     )
     engine.watch(scheduled["id"])
-    doc = await inspect_completed(engine, project_id, scheduled["id"])
+    doc = await inspect_completed(engine, workflow_id, scheduled["id"])
     status = {n["label"]: n["status"] for n in doc["nodes"]}
     assert status["e-mail"] == "completed"
     assert status["below threshold"] == "skipped"  # the untaken branch
@@ -594,10 +594,10 @@ async def test_lead_generation(engine: Engine) -> None:
     )
     now += timedelta(days=7)
     assert await scheduler.tick() == 1
-    listed = ok(await engine.client.get(f"/api/v1/projects/{project_id}/executions"))
+    listed = ok(await engine.client.get(f"/api/v1/workflows/{workflow_id}/executions"))
     weak = listed["items"][0]["id"]  # newest first
     engine.watch(weak)
-    doc = await inspect_completed(engine, project_id, weak)
+    doc = await inspect_completed(engine, workflow_id, weak)
     status = {n["label"]: n["status"] for n in doc["nodes"]}
     assert (status["e-mail"], status["below threshold"]) == ("skipped", "completed")
     assert engine.mailpit.messages() == []
@@ -605,7 +605,7 @@ async def test_lead_generation(engine: Engine) -> None:
     engine.server.state.llm_body = answer(
         json.dumps({"score": 9, "subject": "imported", "summary": "copy works"})
     )
-    await export_import_and_rerun(engine, project_id, {})
+    await export_import_and_rerun(engine, workflow_id, {})
     (mail,) = engine.mailpit.messages()
     assert mail["Subject"] == "imported"
     assert_no_secret_escaped(engine, json.dumps(doc))

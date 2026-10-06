@@ -28,7 +28,7 @@ Acceptance: "A developer can implement a custom Node without importing internal 
 **Resulting system state.**
 - A node that imports only `akasha.sdk` can be:
   - registered in the `NodeRegistry`;
-  - saved and published in a Project;
+  - saved and published in a Workflow;
   - executed by the unchanged scheduling logic of `ExecutionRuntime`, with its secret coming from the encrypted Credential Store.
 
   Its emitted events are persisted in the event store and its counters are exported to Prometheus. The integration test proves this against PostgreSQL 17 (Testcontainers).
@@ -296,7 +296,7 @@ A `NodeContractError` raised inside `execute` is not a `NodeError`, so the execu
   5. `execute`;
   6. a `NodeResult`/`Mapping` check, then `definition.validate_outputs`, which raise `NodeValidationError`.
 
-  Credentials use `NodeCredentials(_Secrets(mapping), config)` from the runtime, so the "only references in own config" rule and `register_secret` behave identically. The context uses fresh ids, `project_version="1"`, `runtime_metadata={"attempt": 1}` and the logger `akasha.nodes.<node_id>`.
+  Credentials use `NodeCredentials(_Secrets(mapping), config)` from the runtime, so the "only references in own config" rule and `register_secret` behave identically. The context uses fresh ids, `workflow_version="1"`, `runtime_metadata={"attempt": 1}` and the logger `akasha.nodes.<node_id>`.
 - **Example node behaviour.**
   - Canonical JSON: `sort_keys=True`, `separators=(",", ":")`, `ensure_ascii=False`.
   - The size check comes before credential resolution, so an oversized payload never unlocks the secret.
@@ -315,7 +315,7 @@ A `NodeContractError` raised inside `execute` is not a `NodeError`, so the execu
 - **Notes:** the observer infers "terminal" from "not started". Any future non-terminal node event needs the same exclusion.
 
 ### F2 — A plaintext secret in config is rejected at draft save, not first at publish
-- **Finding:** my working assumption was rejection at publish (`ProjectValidationFailedError`). `ProjectService.update_draft` already raises `PlaintextSecretError` (`domain/project.py`).
+- **Finding:** my working assumption was rejection at publish (`WorkflowValidationFailedError`). `WorkflowService.update_draft` already raises `PlaintextSecretError` (`domain/workflow.py`).
 - **Impact:** LOW. The behaviour is stricter than assumed and correct.
 - **Resolution:** FIXED (in the test). The integration test expects `PlaintextSecretError` and is named `..._rejected_at_draft_save`. `docs/sdk.md` §2 states "Draft save / publish".
 

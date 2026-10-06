@@ -1,7 +1,7 @@
-"""core.llm placed into a Project and executed by the normal runtime
+"""core.llm placed into a Workflow and executed by the normal runtime
 (roadmap Phase 15 acceptance):
 
-    ProjectService (publish) → ExecutionService → ExecutionRuntime → core.llm
+    WorkflowService (publish) → ExecutionService → ExecutionRuntime → core.llm
     → AIService → LiteLLM adapter → local OpenAI-compatible server,
     with the provider key from the encrypted Credential Store (PostgreSQL).
 
@@ -17,12 +17,12 @@ import pytest
 from akasha.application.ai import AIService, LLMProvider
 from akasha.application.credentials import CredentialService
 from akasha.application.executions import ExecutionService
-from akasha.application.projects import ProjectService, ProjectValidationFailedError
+from akasha.application.workflows import WorkflowService, WorkflowValidationFailedError
 from akasha.domain.credentials import CredentialKind, Secret
 from akasha.domain.execution import Execution, ExecutionStatus, NodeExecutionStatus
 from akasha.domain.graph import Edge, Graph, NodeInstance
 from akasha.domain.node import NodeErrorKind
-from akasha.domain.project import ProjectDraft
+from akasha.domain.workflow import WorkflowDraft
 from akasha.infrastructure.database import Database
 from akasha.infrastructure.persistence import SqlAlchemyUnitOfWork
 from akasha.nodes.builtins import create_builtin_registry
@@ -79,18 +79,18 @@ async def run(
     adapter = LiteLLMAdapter("openai", api_base=f"{server.base_url}/v1")
     registry = create_builtin_registry(llm=AIService([LLMProvider("local", adapter)]))
 
-    projects = ProjectService(uow, registry.definitions)
-    project = await projects.create_project("llm")
+    workflows = WorkflowService(uow, registry.definitions)
+    workflow = await workflows.create_workflow("llm")
     g, ids = graph(config)
-    await projects.update_draft(
-        project.id,
-        expected_revision=project.revision,
+    await workflows.update_draft(
+        workflow.id,
+        expected_revision=workflow.revision,
         name="llm",
-        draft=ProjectDraft(graph=g),
+        draft=WorkflowDraft(graph=g),
     )
-    version = await projects.publish_project(project.id)
+    version = await workflows.publish_workflow(workflow.id)
     executions = ExecutionService(uow)
-    queued = await executions.create_execution(project.id, version.version, input=LEAD)
+    queued = await executions.create_execution(workflow.id, version.version, input=LEAD)
     await ExecutionRuntime(uow, registry.catalog, credentials=store).run(queued.id)
     return await executions.get_execution(queued.id), ids
 
@@ -178,6 +178,6 @@ async def test_malformed_template_is_rejected_at_publish(
     database: Database, http_server: LocalHttpServer
 ) -> None:
     config = LLM_CONFIG | {"user_prompt": "{{ __import__('os').getcwd() }}"}
-    with pytest.raises(ProjectValidationFailedError):
+    with pytest.raises(WorkflowValidationFailedError):
         await run(database, http_server, config)
     assert http_server.state.requests == []

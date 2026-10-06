@@ -21,7 +21,7 @@ admin-only routers now exist (`require_admin`).
    - `DELETE /api/v1/plugins/{id}?force=`
 
    They call the same `PluginRegistry` and `application.plugins.remove_plugin`
-   code as the CLI. Removal is blocked with `PLUGIN_IN_USE` while projects
+   code as the CLI. Removal is blocked with `PLUGIN_IN_USE` while workflows
    need the plugin; `force` is the explicit confirmation (§143). These calls
    only run code that an operator already installed, so they need no opt-in.
 2. **Upload install is opt-in.** `POST /api/v1/plugins` takes an
@@ -39,7 +39,7 @@ admin-only routers now exist (`require_admin`).
    (manifest, compatibility, all-or-nothing copy and load).
 4. **The backend decides.** Compatibility and validity come only from the
    backend. The UI shows its error codes and details (`issues`, `fields`,
-   `dependents`, `projects`) and treats plugin metadata as untrusted text.
+   `dependents`, `workflows`) and treats plugin metadata as untrusted text.
 
 ## Alternatives
 

@@ -29,9 +29,9 @@ Installed layout under the configured directory::
     <plugins_dir>/state.json          {"disabled": [plugin ids]}
 
 Single-process: another process (future workers) sees changes after a
-restart. Removal is not blocked by Projects using the plugin's nodes:
+restart. Removal is not blocked by Workflows using the plugin's nodes:
 their validate/publish/run fail with structured MISSING_* issues until it is
-reinstalled (project data is untouched).
+reinstalled (workflow data is untouched).
 """
 
 import importlib
@@ -128,7 +128,7 @@ class PluginRegistry:
         self._enabled: dict[str, PluginMetadata] = {}
         self._versions: dict[str, str] = {}
         self._node_plugins: dict[str, str] = {}
-        # Enabled plugin id → version; ``ProjectService`` checks project
+        # Enabled plugin id → version; ``WorkflowService`` checks workflow
         # plugin dependencies against this live view, the runtime the
         # plugin versions a published version is pinned to.
         self.versions = MappingProxyType(self._versions)
@@ -245,8 +245,8 @@ class PluginRegistry:
 
         Atomic like ``install``: when the new package cannot be validated,
         copied or activated, the old package is restored (and re-enabled)
-        and the error is raised. Published project versions pinned to the
-        old version stop running (``ProjectVersion.plugin_versions``) until
+        and the error is raised. Published workflow versions pinned to the
+        old version stop running (``WorkflowVersion.plugin_versions``) until
         it is reinstalled: an update never silently changes them.
 
         ponytail: libraries are installed on the calling thread (``prepare``

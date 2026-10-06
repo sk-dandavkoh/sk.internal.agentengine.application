@@ -20,7 +20,7 @@ import { z } from 'zod'
 import { fetchSession, login, logout } from './auth'
 import { ApiClient } from './client'
 import { ApiError } from './errors'
-import { exportProject, getProject, publishProject } from './projects'
+import { exportWorkflow, getWorkflow, publishWorkflow } from './workflows'
 
 type Handler = (req: IncomingMessage, body: string, res: ServerResponse) => void
 
@@ -117,7 +117,7 @@ describe('successful requests', () => {
 
         const result = await client().request(
             'POST',
-            '/projects',
+            '/workflows',
             z.object({ id: z.string() }),
             {
                 body: { name: 'x' },
@@ -133,7 +133,7 @@ describe('successful requests', () => {
         expect(result).toEqual({ id: 'p1' })
         expect(seen?.req.method).toBe('POST')
         expect(seen?.req.url).toBe(
-            '/api/v1/projects?limit=10&archived=false&status=failed&status=timeout',
+            '/api/v1/workflows?limit=10&archived=false&status=failed&status=timeout',
         )
         expect(seen?.body).toBe('{"name":"x"}')
         expect(seen?.req.headers['content-type']).toBe('application/json')
@@ -215,19 +215,19 @@ describe('downloads', () => {
             res.writeHead(200, { 'Content-Type': 'application/zip' })
             res.end(zip)
         }
-        const blob = await exportProject(client(), 'p 1', 2)
-        expect(seen).toBe('/api/v1/projects/p%201/export?version=2')
+        const blob = await exportWorkflow(client(), 'p 1', 2)
+        expect(seen).toBe('/api/v1/workflows/p%201/export?version=2')
         expect(Buffer.from(await blob.arrayBuffer())).toEqual(zip)
 
         handler = (_req, _body, res) => {
             json(res, 404, {
-                code: 'PROJECT_NOT_FOUND',
-                message: 'Project not found.',
+                code: 'WORKFLOW_NOT_FOUND',
+                message: 'Workflow not found.',
                 details: {},
                 request_id: 'r',
             })
         }
-        const error = await failure(exportProject(client(), 'p'))
+        const error = await failure(exportWorkflow(client(), 'p'))
         expect(error).toMatchObject({ kind: 'not_found', status: 404 })
     })
 })
@@ -395,7 +395,7 @@ describe('transport failures', () => {
 describe('path segments from untrusted input', () => {
     // Ids come from route params a crafted link controls. encodeURIComponent
     // leaves '.' alone, and URL parsing collapses dot segments, so "..",
-    // unchecked, would turn POST /projects/../publish into POST /publish.
+    // unchecked, would turn POST /workflows/../publish into POST /publish.
     it.each(['.', '..'])('never sends a request whose id is %j', async (id) => {
         let hits = 0
         handler = (_req, _body, res) => {
@@ -403,7 +403,7 @@ describe('path segments from untrusted input', () => {
             json(res, 200, {})
         }
 
-        const error = await failure(publishProject(client(), id))
+        const error = await failure(publishWorkflow(client(), id))
 
         expect(error.kind).toBe('not_found')
         expect(hits).toBe(0)
@@ -415,7 +415,7 @@ describe('path segments from untrusted input', () => {
             url = req.url ?? ''
             json(res, 404, {})
         }
-        await failure(getProject(client(), '../a.b'))
-        expect(url).toBe('/api/v1/projects/..%2Fa.b')
+        await failure(getWorkflow(client(), '../a.b'))
+        expect(url).toBe('/api/v1/workflows/..%2Fa.b')
     })
 })

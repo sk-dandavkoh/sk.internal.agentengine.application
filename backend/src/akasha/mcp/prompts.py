@@ -25,19 +25,19 @@ def register(server: MCPServer) -> None:
     def build_workflow(
         goal: Annotated[str, Field(description="What the workflow should do.")],
     ) -> str:
-        """Plan, build, validate and publish a project for a goal."""
+        """Plan, build, validate and publish a workflow for a goal."""
         return (
-            f"Build an Akasha project that does the following:\n\n{goal}\n\n"
+            f"Build an Akasha workflow that does the following:\n\n{goal}\n\n"
             "1. system_info, then node_types_list (query by keywords) and"
             " node_type_get for every candidate: note port names, port types"
             " and config_schema.\n"
             "2. If no node type fits and you are admin, say so and consider a"
             " plugin (plugin_sdk_get); otherwise stop and explain.\n"
-            "3. project_create, then graph_node_add per node and graph_edge_add"
+            "3. workflow_create, then graph_node_add per node and graph_edge_add"
             " per connection, passing the latest revision each time. Check"
             " configs with node_config_validate.\n"
-            "4. project_validate; fix every issue; repeat until valid.\n"
-            "5. project_publish with the validated revision; report the"
+            "4. workflow_validate; fix every issue; repeat until valid.\n"
+            "5. workflow_publish with the validated revision; report the"
             " version number. Run it only if asked (execution_start).\n"
             f"{_DATA_RULE}"
         )
@@ -53,7 +53,7 @@ def register(server: MCPServer) -> None:
             "2. execution_node_get for each failed node: error code, failures"
             " per attempt, outputs of its inputs' source nodes.\n"
             "3. execution_logs_get filtered by node_id and level=warning.\n"
-            "4. project_version_get for the executed version and node_type_get"
+            "4. workflow_version_get for the executed version and node_type_get"
             " for the failing node types: compare config and ports.\n"
             "5. Explain the root cause and propose the smallest draft change"
             " (graph_node_update etc.); do not apply it unless asked.\n"

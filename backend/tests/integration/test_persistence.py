@@ -21,8 +21,8 @@ from sqlalchemy.exc import IntegrityError
 from akasha.application.persistence import ConcurrentModificationError
 from akasha.domain.graph import Edge, Graph, NodeInstance, Position
 from akasha.domain.primitives import new_id, utcnow
-from akasha.domain.project import Dependency, Project, ProjectStatus, ProjectVersion
 from akasha.domain.trigger import Trigger, TriggerType
+from akasha.domain.workflow import Dependency, Workflow, WorkflowStatus, WorkflowVersion
 from akasha.infrastructure.database import (
     Database,
     normalize_async_url,
@@ -35,7 +35,7 @@ UowFactory = Callable[[], AbstractAsyncContextManager[SqlAlchemyUnitOfWork]]
 pytestmark = pytest.mark.usefixtures("clean_db")
 
 _BACKENDS_DIR = Path(__file__).resolve().parents[2]
-_HEAD = "0017_project_members"
+_HEAD = "0017_workflow_members"
 
 
 def _alembic_command(verb: str, db_url: str, target: str) -> None:
@@ -69,115 +69,119 @@ def sample_graph() -> Graph:
     return graph
 
 
-async def new_project(uow: UowFactory, name: str = "demo") -> Project:
-    project = Project.create(name)
+async def new_workflow(uow: UowFactory, name: str = "demo") -> Workflow:
+    workflow = Workflow.create(name)
     async with uow() as ctx:
-        await ctx.projects.save(project)
+        await ctx.workflows.save(workflow)
         await ctx.commit()
-    return project
+    return workflow
 
 
-async def test_project_roundtrip_preserves_full_draft(uow: UowFactory) -> None:
-    project = Project.create("demo")
-    project.draft.graph = sample_graph()
-    project.draft.triggers = [Trigger.create(TriggerType.WEBHOOK, {"path": "/hook"})]
-    project.draft.dependencies = [
+async def test_workflow_roundtrip_preserves_full_draft(uow: UowFactory) -> None:
+    workflow = Workflow.create("demo")
+    workflow.draft.graph = sample_graph()
+    workflow.draft.triggers = [Trigger.create(TriggerType.WEBHOOK, {"path": "/hook"})]
+    workflow.draft.dependencies = [
         Dependency(kind="node", name="core.llm", version_constraint=">=1.0.0")
     ]
-    project.draft.description = "first project, ünïcødé"
+    workflow.draft.description = "first workflow, ünïcødé"
     async with uow() as ctx:
-        await ctx.projects.save(project)
+        await ctx.workflows.save(workflow)
         await ctx.commit()
 
     # Read through a *new* session: proves actual database round-trip, not
     # an identity-map cache hit.
     async with uow() as ctx:
-        loaded = await ctx.projects.get(project.id)
+        loaded = await ctx.workflows.get(workflow.id)
 
     assert loaded is not None
-    assert loaded.id == project.id
+    assert loaded.id == workflow.id
     assert loaded.name == "demo"
-    assert loaded.status is ProjectStatus.DRAFT
-    assert loaded.draft.description == "first project, ünïcødé"
-    assert set(loaded.draft.graph.nodes) == set(project.draft.graph.nodes)
-    node = loaded.draft.graph.node(next(iter(project.draft.graph.nodes)))
-    assert node.config == project.draft.graph.nodes[node.id].config
-    assert loaded.draft.graph.edges == project.draft.graph.edges
+    assert loaded.status is WorkflowStatus.DRAFT
+    assert loaded.draft.description == "first workflow, ünïcødé"
+    assert set(loaded.draft.graph.nodes) == set(workflow.draft.graph.nodes)
+    node = loaded.draft.graph.node(next(iter(workflow.draft.graph.nodes)))
+    assert node.config == workflow.draft.graph.nodes[node.id].config
+    assert loaded.draft.graph.edges == workflow.draft.graph.edges
     assert {n.id: n.position for n in loaded.draft.graph.nodes.values()} == {
-        n.id: n.position for n in project.draft.graph.nodes.values()
+        n.id: n.position for n in workflow.draft.graph.nodes.values()
     }
     assert loaded.draft.triggers[0].trigger_type is TriggerType.WEBHOOK
     assert loaded.draft.triggers[0].config == {"path": "/hook"}
     assert loaded.draft.dependencies[0].version_constraint == ">=1.0.0"
-    assert loaded.timestamps.created_at == project.timestamps.created_at
+    assert loaded.timestamps.created_at == workflow.timestamps.created_at
 
 
-async def test_get_unknown_project_returns_none(uow: UowFactory) -> None:
+async def test_get_unknown_workflow_returns_none(uow: UowFactory) -> None:
     async with uow() as ctx:
-        assert await ctx.projects.get("proj_" + "0" * 32) is None
+        assert await ctx.workflows.get("wf_" + "0" * 32) is None
 
 
 async def test_save_updates_existing_draft_in_place(uow: UowFactory) -> None:
-    project = await new_project(uow)
-    project.name = "renamed"
-    project.draft.graph = sample_graph()
+    workflow = await new_workflow(uow)
+    workflow.name = "renamed"
+    workflow.draft.graph = sample_graph()
     async with uow() as ctx:
-        await ctx.projects.save(project)
+        await ctx.workflows.save(workflow)
         await ctx.commit()
 
     async with uow() as ctx:
-        loaded = await ctx.projects.get(project.id)
+        loaded = await ctx.workflows.get(workflow.id)
     assert loaded is not None
     assert loaded.name == "renamed"
     assert len(loaded.draft.graph.nodes) == 2
 
 
-async def test_delete_project(uow: UowFactory) -> None:
-    project = await new_project(uow)
+async def test_delete_workflow(uow: UowFactory) -> None:
+    workflow = await new_workflow(uow)
     async with uow() as ctx:
-        assert await ctx.projects.delete(project.id, revision=project.revision) is True
+        assert (
+            await ctx.workflows.delete(workflow.id, revision=workflow.revision) is True
+        )
         await ctx.commit()
     async with uow() as ctx:
-        assert await ctx.projects.get(project.id) is None
+        assert await ctx.workflows.get(workflow.id) is None
     async with uow() as ctx:
-        assert await ctx.projects.delete(project.id, revision=project.revision) is False
+        assert (
+            await ctx.workflows.delete(workflow.id, revision=workflow.revision) is False
+        )
         await ctx.commit()
 
 
 async def test_delete_with_stale_revision_is_refused(uow: UowFactory) -> None:
-    project = await new_project(uow)
+    workflow = await new_workflow(uow)
     async with uow() as ctx:
-        assert await ctx.projects.delete(project.id, revision=99) is False
+        assert await ctx.workflows.delete(workflow.id, revision=99) is False
         await ctx.commit()
     async with uow() as ctx:
-        assert await ctx.projects.get(project.id) is not None
+        assert await ctx.workflows.get(workflow.id) is not None
 
 
 async def test_save_is_compare_and_swap_on_revision(uow: UowFactory) -> None:
     """Two writers holding the same revision: exactly one wins (no lost
     update); the loser's changes never reach the database."""
-    project = await new_project(uow)
-    assert project.revision == 1
+    workflow = await new_workflow(uow)
+    assert workflow.revision == 1
     async with uow() as ctx:
-        first = await ctx.projects.get(project.id)
+        first = await ctx.workflows.get(workflow.id)
     async with uow() as ctx:
-        second = await ctx.projects.get(project.id)
+        second = await ctx.workflows.get(workflow.id)
     assert first is not None and second is not None
 
     first.name = "first"
     async with uow() as ctx:
-        await ctx.projects.save(first)
+        await ctx.workflows.save(first)
         await ctx.commit()
     assert first.revision == 2
 
     second.name = "second"
     async with uow() as ctx:
         with pytest.raises(ConcurrentModificationError):
-            await ctx.projects.save(second)
+            await ctx.workflows.save(second)
     assert second.revision == 1
 
     async with uow() as ctx:
-        loaded = await ctx.projects.get(project.id)
+        loaded = await ctx.workflows.get(workflow.id)
     assert loaded is not None
     assert (loaded.name, loaded.revision) == ("first", 2)
 
@@ -188,14 +192,14 @@ async def test_cas_rechecks_revision_after_waiting_for_row_lock(
     """Deterministic lost-update race: writer B blocks on A's row lock while
     holding the same revision. After A commits, PostgreSQL re-evaluates B's
     WHERE clause and B must lose — not overwrite A."""
-    project = await new_project(uow)
+    workflow = await new_workflow(uow)
     async with uow() as a, uow() as b:
-        pa = await a.projects.get(project.id)
-        pb = await b.projects.get(project.id)
+        pa = await a.workflows.get(workflow.id)
+        pb = await b.workflows.get(workflow.id)
         assert pa is not None and pb is not None
         pa.name, pb.name = "a", "b"
-        await a.projects.save(pa)  # row now locked by A's open transaction
-        blocked = asyncio.create_task(b.projects.save(pb))
+        await a.workflows.save(pa)  # row now locked by A's open transaction
+        blocked = asyncio.create_task(b.workflows.save(pb))
 
         async def lock_waiters() -> int:
             async with database.engine.connect() as conn:
@@ -223,43 +227,43 @@ async def test_cas_rechecks_revision_after_waiting_for_row_lock(
             await blocked
 
     async with uow() as ctx:
-        loaded = await ctx.projects.get(project.id)
+        loaded = await ctx.workflows.get(workflow.id)
     assert loaded is not None and (loaded.name, loaded.revision) == ("a", 2)
 
 
 async def test_insert_of_existing_id_is_a_conflict_not_an_overwrite(
     uow: UowFactory,
 ) -> None:
-    project = await new_project(uow, "original")
-    duplicate = Project(id=project.id, name="impostor")  # revision 0 = new
+    workflow = await new_workflow(uow, "original")
+    duplicate = Workflow(id=workflow.id, name="impostor")  # revision 0 = new
     async with uow() as ctx:
         with pytest.raises(ConcurrentModificationError):
-            await ctx.projects.save(duplicate)
+            await ctx.workflows.save(duplicate)
     async with uow() as ctx:
-        loaded = await ctx.projects.get(project.id)
+        loaded = await ctx.workflows.get(workflow.id)
     assert loaded is not None and loaded.name == "original"
 
 
 async def test_version_counter_round_trips(uow: UowFactory) -> None:
-    project = await new_project(uow)
-    snapshot = project.publish_draft()
+    workflow = await new_workflow(uow)
+    snapshot = workflow.publish_draft()
     async with uow() as ctx:
-        await ctx.projects.save(project)
-        await ctx.versions.save(project.id, snapshot)
+        await ctx.workflows.save(workflow)
+        await ctx.versions.save(workflow.id, snapshot)
         await ctx.commit()
     async with uow() as ctx:
-        loaded = await ctx.projects.get(project.id)
+        loaded = await ctx.workflows.get(workflow.id)
     assert loaded is not None
     assert loaded.current_version == 1
-    assert loaded.status is ProjectStatus.PUBLISHED
+    assert loaded.status is WorkflowStatus.PUBLISHED
 
 
-async def test_list_projects_is_paginated_and_ordered(uow: UowFactory) -> None:
-    projects = [await new_project(uow, f"p{i}") for i in range(3)]
+async def test_list_workflows_is_paginated_and_ordered(uow: UowFactory) -> None:
+    workflows = [await new_workflow(uow, f"p{i}") for i in range(3)]
     async with uow() as ctx:
-        first = await ctx.projects.list(offset=0, limit=2)
-        second = await ctx.projects.list(offset=2, limit=2)
-    assert [p.id for p in first] + [p.id for p in second] == [p.id for p in projects]
+        first = await ctx.workflows.list(offset=0, limit=2)
+        second = await ctx.workflows.list(offset=2, limit=2)
+    assert [p.id for p in first] + [p.id for p in second] == [p.id for p in workflows]
 
 
 async def test_publish_snapshot_is_isolated_from_later_draft_edits(
@@ -267,24 +271,24 @@ async def test_publish_snapshot_is_isolated_from_later_draft_edits(
 ) -> None:
     """Draft edits after publish must never retro-change a stored version
     (architecture §3.7)."""
-    project = Project.create("demo")
-    project.draft.graph = sample_graph()
-    snapshot = project.publish_draft()
+    workflow = Workflow.create("demo")
+    workflow.draft.graph = sample_graph()
+    snapshot = workflow.publish_draft()
 
     async with uow() as ctx:
-        await ctx.projects.save(project)
-        await ctx.versions.save(project.id, snapshot)
+        await ctx.workflows.save(workflow)
+        await ctx.versions.save(workflow.id, snapshot)
         await ctx.commit()
 
     # Mutate the draft *after* publishing; a snapshot stays a snapshot.
-    project.draft.description = "edited after publish"
-    project.draft.graph = Graph()
+    workflow.draft.description = "edited after publish"
+    workflow.draft.graph = Graph()
     async with uow() as ctx:
-        await ctx.projects.save(project)
+        await ctx.workflows.save(workflow)
         await ctx.commit()
 
     async with uow() as ctx:
-        loaded_version = await ctx.versions.get(project.id, 1)
+        loaded_version = await ctx.versions.get(workflow.id, 1)
     assert loaded_version is not None
     assert loaded_version.version == 1
     assert loaded_version.schema_version == 1
@@ -295,36 +299,36 @@ async def test_publish_snapshot_is_isolated_from_later_draft_edits(
 
 
 async def test_version_listing_and_lookup(uow: UowFactory) -> None:
-    project = await new_project(uow)
-    first = project.publish_draft()
-    second = project.publish_draft()
+    workflow = await new_workflow(uow)
+    first = workflow.publish_draft()
+    second = workflow.publish_draft()
     async with uow() as ctx:
-        await ctx.projects.save(project)
-        await ctx.versions.save(project.id, first)
-        await ctx.versions.save(project.id, second)
+        await ctx.workflows.save(workflow)
+        await ctx.versions.save(workflow.id, first)
+        await ctx.versions.save(workflow.id, second)
         await ctx.commit()
 
     async with uow() as ctx:
-        versions = await ctx.versions.list(project.id)
+        versions = await ctx.versions.list(workflow.id)
     assert [v.version for v in versions] == [1, 2]
     async with uow() as ctx:
-        assert await ctx.versions.get(project.id, 99) is None
+        assert await ctx.versions.get(workflow.id, 99) is None
 
 
 async def test_duplicate_version_number_rejected_by_unique_constraint(
     uow: UowFactory,
 ) -> None:
     """The database is the last line of defence for version immutability:
-    a second version row with the same (project_id, version) — regardless of
+    a second version row with the same (workflow_id, version) — regardless of
     primary key — violates the unique constraint."""
-    project = await new_project(uow)
-    one = project.publish_draft()
+    workflow = await new_workflow(uow)
+    one = workflow.publish_draft()
     async with uow() as ctx:
-        await ctx.versions.save(project.id, one)
+        await ctx.versions.save(workflow.id, one)
         await ctx.commit()
 
-    conflicting = ProjectVersion(
-        id=new_id("pver"),  # different primary key, same logical version
+    conflicting = WorkflowVersion(
+        id=new_id("wfver"),  # different primary key, same logical version
         version=1,
         schema_version=one.schema_version,
         graph=Graph(),
@@ -332,45 +336,45 @@ async def test_duplicate_version_number_rejected_by_unique_constraint(
     )
     async with uow() as ctx:
         with pytest.raises(IntegrityError):  # asyncpg raises at INSERT
-            await ctx.versions.save(project.id, conflicting)
+            await ctx.versions.save(workflow.id, conflicting)
 
 
-async def test_version_without_project_violates_foreign_key(
+async def test_version_without_workflow_violates_foreign_key(
     uow: UowFactory,
 ) -> None:
-    project = Project.create("orphan")
-    snapshot = project.publish_draft()
+    workflow = Workflow.create("orphan")
+    snapshot = workflow.publish_draft()
     async with uow() as ctx:
         with pytest.raises(IntegrityError):
-            await ctx.versions.save(project.id, snapshot)  # project never saved
+            await ctx.versions.save(workflow.id, snapshot)  # workflow never saved
 
 
-async def test_project_delete_blocked_while_versions_exist(uow: UowFactory) -> None:
+async def test_workflow_delete_blocked_while_versions_exist(uow: UowFactory) -> None:
     """ondelete=RESTRICT: version history cannot be silently destroyed."""
-    project = Project.create("demo")
-    snapshot = project.publish_draft()
+    workflow = Workflow.create("demo")
+    snapshot = workflow.publish_draft()
     async with uow() as ctx:
-        await ctx.projects.save(project)
-        await ctx.versions.save(project.id, snapshot)
+        await ctx.workflows.save(workflow)
+        await ctx.versions.save(workflow.id, snapshot)
         await ctx.commit()
 
     async with uow() as ctx:
         with pytest.raises(IntegrityError):
-            await ctx.projects.delete(project.id, revision=project.revision)
+            await ctx.workflows.delete(workflow.id, revision=workflow.revision)
 
     async with uow() as ctx:
-        assert await ctx.projects.get(project.id) is not None
+        assert await ctx.workflows.get(workflow.id) is not None
 
 
 async def test_uncommitted_work_is_rolled_back(uow: UowFactory) -> None:
     """Leaving the unit of work with an exception discards everything (§16)."""
-    project = Project.create("demo")
+    workflow = Workflow.create("demo")
     with pytest.raises(RuntimeError):
         async with uow() as ctx:
-            await ctx.projects.save(project)
+            await ctx.workflows.save(workflow)
             raise RuntimeError("boom")
     async with uow() as ctx:
-        assert await ctx.projects.get(project.id) is None
+        assert await ctx.workflows.get(workflow.id) is None
 
 
 async def test_readiness_check_against_real_database(database: Database) -> None:
@@ -453,15 +457,15 @@ async def test_migrations_upgrade_downgrade_upgrade_on_empty_database(
                     await conn.execute(text("SELECT version_num FROM alembic_version"))
                 ).scalar_one()
             assert {
-                "projects",
-                "project_versions",
+                "workflows",
+                "workflow_versions",
                 "executions",
                 "node_executions",
                 "events",
                 "credentials",
                 "users",
                 "sessions",
-                "project_members",
+                "workflow_members",
             } <= tables
             assert rev == _HEAD
 
@@ -476,15 +480,15 @@ async def test_migrations_upgrade_downgrade_upgrade_on_empty_database(
                         )
                     )
                 }
-            assert "projects" not in tables
-            assert "project_versions" not in tables
+            assert "workflows" not in tables
+            assert "workflow_versions" not in tables
             assert "executions" not in tables
             assert "node_executions" not in tables
             assert "events" not in tables
             assert "credentials" not in tables
             assert "users" not in tables
             assert "sessions" not in tables
-            assert "project_members" not in tables
+            assert "workflow_members" not in tables
 
             await asyncio.to_thread(_alembic_command, "upgrade", scratch_url, "head")
             async with verify.engine.connect() as conn:
@@ -501,7 +505,7 @@ async def test_migrations_upgrade_downgrade_upgrade_on_empty_database(
         await admin.dispose()
 
 
-async def test_0002_upgrade_backfills_existing_projects(db_url: str) -> None:
+async def test_0002_upgrade_backfills_existing_workflows(db_url: str) -> None:
     """Previous supported schema + real rows → new migration → application
     works (AGENTS §18): counters are backfilled from existing versions and
     the repository can CAS-update the upgraded row."""
@@ -517,14 +521,14 @@ async def test_0002_upgrade_backfills_existing_projects(db_url: str) -> None:
             _alembic_command, "upgrade", scratch_url, "0001_initial"
         )
 
-        published, unpublished = new_id("proj"), new_id("proj")
+        published, unpublished = new_id("wf"), new_id("wf")
         db = Database(normalize_async_url(scratch_url))
         try:
             async with db.engine.begin() as conn:
                 for pid in (published, unpublished):
                     await conn.execute(
                         text(
-                            "INSERT INTO projects (id, name, status, draft_graph,"
+                            "INSERT INTO workflows (id, name, status, draft_graph,"
                             " draft_triggers, draft_dependencies, created_at,"
                             " updated_at) VALUES (:id, 'p', 'draft',"
                             " '{\"nodes\": [], \"edges\": []}', '[]', '[]',"
@@ -535,25 +539,25 @@ async def test_0002_upgrade_backfills_existing_projects(db_url: str) -> None:
                 for number in (1, 2):
                     await conn.execute(
                         text(
-                            "INSERT INTO project_versions (id, project_id, version,"
+                            "INSERT INTO workflow_versions (id, workflow_id, version,"
                             " schema_version, graph, triggers, dependencies,"
                             " published_at) VALUES (:id, :pid, :v, 1,"
                             " '{\"nodes\": [], \"edges\": []}', '[]', '[]', now())"
                         ),
-                        {"id": new_id("pver"), "pid": published, "v": number},
+                        {"id": new_id("wfver"), "pid": published, "v": number},
                     )
             await asyncio.to_thread(_alembic_command, "upgrade", scratch_url, "head")
 
             async with SqlAlchemyUnitOfWork(db) as ctx:
-                old = await ctx.projects.get(published)
-                fresh = await ctx.projects.get(unpublished)
+                old = await ctx.workflows.get(published)
+                fresh = await ctx.workflows.get(unpublished)
             assert old is not None and fresh is not None
             assert (old.current_version, old.revision) == (2, 1)
             assert (fresh.current_version, fresh.revision) == (0, 1)
 
             old.name = "renamed after upgrade"
             async with SqlAlchemyUnitOfWork(db) as ctx:
-                await ctx.projects.save(old)
+                await ctx.workflows.save(old)
                 await ctx.commit()
             assert old.revision == 2
         finally:
@@ -565,7 +569,7 @@ async def test_0002_upgrade_backfills_existing_projects(db_url: str) -> None:
         await admin.dispose()
 
 
-async def test_0007_upgrade_gives_existing_projects_and_versions_no_files(
+async def test_0007_upgrade_gives_existing_workflows_and_versions_no_files(
     db_url: str,
 ) -> None:
     """Rows written under 0006 load after 0007 with empty files, and the
@@ -581,13 +585,13 @@ async def test_0007_upgrade_gives_existing_projects_and_versions_no_files(
         await asyncio.to_thread(
             _alembic_command, "upgrade", scratch_url, "0006_credentials"
         )
-        pid = new_id("proj")
+        pid = new_id("wf")
         db = Database(normalize_async_url(scratch_url))
         try:
             async with db.engine.begin() as conn:
                 await conn.execute(
                     text(
-                        "INSERT INTO projects (id, name, status, draft_graph,"
+                        "INSERT INTO workflows (id, name, status, draft_graph,"
                         " draft_triggers, draft_dependencies, current_version,"
                         " created_at, updated_at) VALUES (:id, 'p', 'published',"
                         " '{\"nodes\": [], \"edges\": []}', '[]', '[]', 1,"
@@ -597,28 +601,28 @@ async def test_0007_upgrade_gives_existing_projects_and_versions_no_files(
                 )
                 await conn.execute(
                     text(
-                        "INSERT INTO project_versions (id, project_id, version,"
+                        "INSERT INTO workflow_versions (id, workflow_id, version,"
                         " schema_version, graph, triggers, dependencies,"
                         " published_at) VALUES (:id, :pid, 1, 1,"
                         " '{\"nodes\": [], \"edges\": []}', '[]', '[]', now())"
                     ),
-                    {"id": new_id("pver"), "pid": pid},
+                    {"id": new_id("wfver"), "pid": pid},
                 )
             await asyncio.to_thread(_alembic_command, "upgrade", scratch_url, "head")
 
             async with SqlAlchemyUnitOfWork(db) as ctx:
-                project = await ctx.projects.get(pid)
+                workflow = await ctx.workflows.get(pid)
                 old_version = await ctx.versions.get(pid, 1)
-            assert project is not None and old_version is not None
-            assert project.draft.files == {} and old_version.files == {}
+            assert workflow is not None and old_version is not None
+            assert workflow.draft.files == {} and old_version.files == {}
 
-            project.replace_draft(
-                replace(project.draft, files={"docs/a.md": b"after upgrade"}),
+            workflow.replace_draft(
+                replace(workflow.draft, files={"docs/a.md": b"after upgrade"}),
                 name="p",
             )
-            snapshot = project.publish_draft()
+            snapshot = workflow.publish_draft()
             async with SqlAlchemyUnitOfWork(db) as ctx:
-                await ctx.projects.save(project)
+                await ctx.workflows.save(workflow)
                 await ctx.versions.save(pid, snapshot)
                 await ctx.commit()
             async with SqlAlchemyUnitOfWork(db) as ctx:
@@ -634,8 +638,8 @@ async def test_0007_upgrade_gives_existing_projects_and_versions_no_files(
         await admin.dispose()
 
 
-async def test_0008_upgrade_leaves_existing_projects_ownerless(db_url: str) -> None:
-    """Projects written under 0007 load after 0008 with no owner (admin-only,
+async def test_0008_upgrade_leaves_existing_workflows_ownerless(db_url: str) -> None:
+    """Workflows written under 0007 load after 0008 with no owner (admin-only,
     so upgrading never widens access); owners must be real users."""
     admin = Database(normalize_async_url(db_url))
     scratch = "akasha_migration_0008"
@@ -646,15 +650,15 @@ async def test_0008_upgrade_leaves_existing_projects_ownerless(db_url: str) -> N
             await conn.execute(text(f"CREATE DATABASE {scratch}"))
         scratch_url = f"{db_url.rpartition('/')[0]}/{scratch}"
         await asyncio.to_thread(
-            _alembic_command, "upgrade", scratch_url, "0007_project_files"
+            _alembic_command, "upgrade", scratch_url, "0007_workflow_files"
         )
-        pid = new_id("proj")
+        pid = new_id("wf")
         db = Database(normalize_async_url(scratch_url))
         try:
             async with db.engine.begin() as conn:
                 await conn.execute(
                     text(
-                        "INSERT INTO projects (id, name, status, draft_graph,"
+                        "INSERT INTO workflows (id, name, status, draft_graph,"
                         " draft_triggers, draft_dependencies, created_at,"
                         " updated_at) VALUES (:id, 'p', 'draft',"
                         " '{\"nodes\": [], \"edges\": []}', '[]', '[]',"
@@ -665,13 +669,13 @@ async def test_0008_upgrade_leaves_existing_projects_ownerless(db_url: str) -> N
             await asyncio.to_thread(_alembic_command, "upgrade", scratch_url, "head")
 
             async with SqlAlchemyUnitOfWork(db) as ctx:
-                project = await ctx.projects.get(pid)
-            assert project is not None and project.owner_id is None
+                workflow = await ctx.workflows.get(pid)
+            assert workflow is not None and workflow.owner_id is None
 
-            orphan = Project.create("orphan", owner_id=new_id("user"))
+            orphan = Workflow.create("orphan", owner_id=new_id("user"))
             with pytest.raises(IntegrityError):
                 async with SqlAlchemyUnitOfWork(db) as ctx:
-                    await ctx.projects.save(orphan)
+                    await ctx.workflows.save(orphan)
                     await ctx.commit()
         finally:
             await db.dispose()
@@ -698,13 +702,13 @@ async def test_0011_upgrade_leaves_existing_versions_without_author(
         await asyncio.to_thread(
             _alembic_command, "upgrade", scratch_url, "0010_execution_heartbeat"
         )
-        pid = new_id("proj")
+        pid = new_id("wf")
         db = Database(normalize_async_url(scratch_url))
         try:
             async with db.engine.begin() as conn:
                 await conn.execute(
                     text(
-                        "INSERT INTO projects (id, name, status, draft_graph,"
+                        "INSERT INTO workflows (id, name, status, draft_graph,"
                         " draft_triggers, draft_dependencies, current_version,"
                         " created_at, updated_at) VALUES (:id, 'p', 'published',"
                         " '{\"nodes\": [], \"edges\": []}', '[]', '[]', 1,"
@@ -714,25 +718,25 @@ async def test_0011_upgrade_leaves_existing_versions_without_author(
                 )
                 await conn.execute(
                     text(
-                        "INSERT INTO project_versions (id, project_id, version,"
+                        "INSERT INTO workflow_versions (id, workflow_id, version,"
                         " schema_version, graph, triggers, dependencies,"
                         " published_at) VALUES (:id, :pid, 1, 1,"
                         " '{\"nodes\": [], \"edges\": []}', '[]', '[]', now())"
                     ),
-                    {"id": new_id("pver"), "pid": pid},
+                    {"id": new_id("wfver"), "pid": pid},
                 )
             await asyncio.to_thread(_alembic_command, "upgrade", scratch_url, "head")
 
             async with SqlAlchemyUnitOfWork(db) as ctx:
-                project = await ctx.projects.get(pid)
+                workflow = await ctx.workflows.get(pid)
                 old_version = await ctx.versions.get(pid, 1)
-            assert project is not None and old_version is not None
+            assert workflow is not None and old_version is not None
             assert old_version.published_by is None
 
-            snapshot = project.publish_draft(published_by=new_id("user"))
+            snapshot = workflow.publish_draft(published_by=new_id("user"))
             with pytest.raises(IntegrityError):
                 async with SqlAlchemyUnitOfWork(db) as ctx:
-                    await ctx.projects.save(project)
+                    await ctx.workflows.save(workflow)
                     await ctx.versions.save(pid, snapshot)
                     await ctx.commit()
         finally:

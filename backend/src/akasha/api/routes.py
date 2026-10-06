@@ -10,9 +10,9 @@ Access policy (architecture §149), in one place:
 - /metrics: the configured scrape token, else an admin session
 - every other /api/v1 route: a session (``current_identity``: bearer
   token, or the session cookie plus the X-Akasha-CSRF header) with access to
-  the project/execution in its path (``authorize_path``); credentials,
+  the workflow/execution in its path (``authorize_path``); credentials,
   users and plugins additionally need an admin (``require_admin``); the node catalog
-  (/api/v1/nodes), /api/v1/system/status and the cross-project execution
+  (/api/v1/nodes), /api/v1/system/status and the cross-workflow execution
   listings (/api/v1/executions, owner-filtered) need only a session
 """
 
@@ -39,10 +39,10 @@ from akasha.api.live import create_live_router
 from akasha.api.monitoring import create_monitoring_router
 from akasha.api.nodes import create_nodes_router
 from akasha.api.plugins import create_plugins_router
-from akasha.api.projects import create_projects_router
 from akasha.api.reports import create_reports_router
 from akasha.api.sharing import create_sharing_router
 from akasha.api.triggers import create_triggers_router, create_webhooks_router
+from akasha.api.workflows import create_workflows_router
 from akasha.application.auth import AuthenticationRequiredError
 from akasha.application.auth import require_admin as require_admin_identity
 from akasha.observability.metrics import CONTENT_TYPE
@@ -132,7 +132,7 @@ def create_api_v1_router() -> APIRouter:
     protected = APIRouter(
         dependencies=[Depends(current_identity), Depends(authorize_path)]
     )
-    protected.include_router(create_projects_router())
+    protected.include_router(create_workflows_router())
     protected.include_router(create_sharing_router())
     protected.include_router(create_triggers_router())
     protected.include_router(create_executions_router())

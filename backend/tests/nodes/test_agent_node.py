@@ -516,7 +516,7 @@ async def test_the_node_timeout_stops_a_running_tool() -> None:
 # -- real tools ---------------------------------------------------------------------
 
 
-async def test_file_tools_write_and_read_in_the_project_workspace(
+async def test_file_tools_write_and_read_in_the_workflow_workspace(
     tmp_path: Path,
 ) -> None:
     llm = ScriptedLLM(
@@ -538,7 +538,7 @@ async def test_file_tools_write_and_read_in_the_project_workspace(
     context = make_context(node, config=config, inputs={"variables": {"task": "x"}})
     result = await node.execute(context)
     assert result.outputs["text"] == "saved and verified"
-    assert (tmp_path / context.project_id / "notes" / "a.md").read_text() == "# Notes"
+    assert (tmp_path / context.workflow_id / "notes" / "a.md").read_text() == "# Notes"
     assert llm.requests[2].messages[-1].content == '{"content": "# Notes", "size": 7}'
 
 

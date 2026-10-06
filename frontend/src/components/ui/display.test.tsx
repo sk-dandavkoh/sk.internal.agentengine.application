@@ -63,16 +63,16 @@ describe('states', () => {
     it('EmptyState offers a heading and next step', () => {
         render(
             <EmptyState
-                title="No projects yet"
-                action={<button>Create project</button>}
+                title="No workflows yet"
+                action={<button>Create workflow</button>}
             />,
         )
 
         expect(
-            screen.getByRole('heading', { level: 2, name: 'No projects yet' }),
+            screen.getByRole('heading', { level: 2, name: 'No workflows yet' }),
         ).toBeInTheDocument()
         expect(
-            screen.getByRole('button', { name: 'Create project' }),
+            screen.getByRole('button', { name: 'Create workflow' }),
         ).toBeInTheDocument()
     })
 
@@ -111,7 +111,7 @@ describe('Table', () => {
     it('is a captioned table with column headers and rows', () => {
         render(
             <Table
-                caption="Projects"
+                caption="Workflows"
                 hideCaption
                 columns={columns}
                 rows={[
@@ -121,7 +121,7 @@ describe('Table', () => {
                 rowKey={(row) => row.id}
             />,
         )
-        const table = screen.getByRole('table', { name: 'Projects' })
+        const table = screen.getByRole('table', { name: 'Workflows' })
 
         expect(
             within(table).getByRole('columnheader', { name: 'Name' }),
@@ -132,23 +132,23 @@ describe('Table', () => {
         ).toBeInTheDocument()
         // Its scroll container is reachable by keyboard on narrow screens.
         expect(
-            screen.getByRole('region', { name: 'Projects' }),
+            screen.getByRole('region', { name: 'Workflows' }),
         ).toHaveAttribute('tabindex', '0')
     })
 
     it('renders the empty message spanning all columns', () => {
         render(
             <Table
-                caption="Projects"
+                caption="Workflows"
                 columns={columns}
                 rows={[]}
                 rowKey={(row) => row.id}
-                empty="No projects match."
+                empty="No workflows match."
             />,
         )
 
         expect(
-            screen.getByRole('cell', { name: 'No projects match.' }),
+            screen.getByRole('cell', { name: 'No workflows match.' }),
         ).toHaveAttribute('colspan', '1')
     })
 })

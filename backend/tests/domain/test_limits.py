@@ -24,7 +24,7 @@ LIMITS = ResourceLimits(
     max_node_attempts=3,
     max_graph_nodes=4,
     max_graph_depth=3,
-    max_active_executions_per_project=2,
+    max_active_executions_per_workflow=2,
     max_node_output_bytes=100,
     max_execution_output_bytes=250,
 )
@@ -63,7 +63,7 @@ def parallel(n: int) -> Graph:
         {"max_node_attempts": 0},
         {"max_graph_nodes": 0},
         {"max_graph_depth": 0},
-        {"max_active_executions_per_project": 0},
+        {"max_active_executions_per_workflow": 0},
         {"max_node_output_bytes": 0},
         {"max_node_output_bytes": 2, "max_execution_output_bytes": 1},
     ],

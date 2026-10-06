@@ -29,17 +29,17 @@ def test_container_is_wired_into_app_state() -> None:
     container = create_container(settings)
     app = create_app(settings=settings, container=container)
     assert app.state.container is container
-    assert container.projects is None  # no database configured
+    assert container.workflows is None  # no database configured
 
 
-async def test_container_wires_project_service_with_database() -> None:
+async def test_container_wires_workflow_service_with_database() -> None:
     # Engine creation is lazy: no connection is attempted here.
     settings = Settings(
         environment="test", database_url="postgresql://u:p@127.0.0.1:1/akasha"
     )
     container = create_container(settings)
     try:
-        assert container.projects is not None
+        assert container.workflows is not None
         assert container.triggers is not None
         assert container.trigger_registry is not None
         assert container.scheduler is not None
@@ -48,7 +48,7 @@ async def test_container_wires_project_service_with_database() -> None:
         # every producer.
         assert container.executions is not None
         assert container.executions._events is container.events
-        assert container.projects._events is container.events
+        assert container.workflows._events is container.events
     finally:
         await container.shutdown()
 

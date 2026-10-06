@@ -35,7 +35,7 @@ Built-in node settings:
 | `AKASHA_NETWORK_ALLOWED_HOSTS` | `[]` | JSON list of hosts allowed despite resolving privately |
 | `AKASHA_HTTP_MAX_RESPONSE_BYTES` | `5242880` | response cap for core.http/core.web_search |
 | `AKASHA_WEB_SEARCH_URL` | unset | SearXNG base URL for core.web_search |
-| `AKASHA_WORKSPACE_DIR` | unset (image: `/var/lib/akasha/workspace`) | existing directory; the file nodes and core.command work in one subdirectory per project |
+| `AKASHA_WORKSPACE_DIR` | unset (image: `/var/lib/akasha/workspace`) | existing directory; the file nodes and core.command work in one subdirectory per workflow |
 | `AKASHA_WORKSPACE_MAX_FILE_BYTES` | `1048576` | size cap for core.file_read/core.file_write |
 | `AKASHA_COMMAND_ALLOWED` | `[]` | JSON list of programs core.command may run; empty disables it. Not a sandbox (ADR 0005) |
 | `AKASHA_COMMAND_MAX_OUTPUT_BYTES` | `262144` | stdout/stderr cap per stream for core.command |
@@ -82,7 +82,7 @@ maximum a request may ask for:
 | `AKASHA_LIMIT_NODE_ATTEMPTS` | `5` | attempts per node, first one included |
 | `AKASHA_LIMIT_GRAPH_NODES` | `500` | nodes per executed graph |
 | `AKASHA_LIMIT_GRAPH_DEPTH` | `100` | nodes on the longest dependency chain |
-| `AKASHA_LIMIT_ACTIVE_EXECUTIONS_PER_PROJECT` | `100` | unfinished executions per project (more → HTTP 429) |
+| `AKASHA_LIMIT_ACTIVE_EXECUTIONS_PER_WORKFLOW` | `100` | unfinished executions per workflow (more → HTTP 429) |
 | `AKASHA_LIMIT_EXECUTION_CONCURRENCY` | `8` | nodes running at once per execution |
 | `AKASHA_LIMIT_NODE_OUTPUT_BYTES` | `1048576` | one node's outputs, as UTF-8 JSON |
 | `AKASHA_LIMIT_EXECUTION_OUTPUT_BYTES` | `16777216` | all outputs of one execution (≥ node limit) |
@@ -138,13 +138,13 @@ for machine-readable output.
 
 | Command | Does |
 |---|---|
-| `project create NAME` / `project list` | create an empty project / list projects |
-| `project validate ID` | validate the draft (exit 1 if invalid) |
-| `project publish ID [--expected-revision N]` | publish the draft as the next version |
-| `project run ID [--version N] [--input JSON\|@file]` | run a published version in this process (not dispatched to workers); Ctrl-C cancels |
-| `project import FILE` / `project export ID [--version N] -o FILE` | project packages |
+| `workflow create NAME` / `workflow list` | create an empty workflow / list workflows |
+| `workflow validate ID` | validate the draft (exit 1 if invalid) |
+| `workflow publish ID [--expected-revision N]` | publish the draft as the next version |
+| `workflow run ID [--version N] [--input JSON\|@file]` | run a published version in this process (not dispatched to workers); Ctrl-C cancels |
+| `workflow import FILE` / `workflow export ID [--version N] -o FILE` | workflow packages |
 | `node list` / `node validate T` / `node test T [--config] [--inputs] [--execution-input]` | `T` = node type id or `file.py:Class` / `module:Class` |
-| `plugin list` / `plugin install PATH` / `plugin remove ID [--force]` | needs `AKASHA_PLUGINS_DIR`; remove is blocked while projects use the plugin |
+| `plugin list` / `plugin install PATH` / `plugin remove ID [--force]` | needs `AKASHA_PLUGINS_DIR`; remove is blocked while workflows use the plugin |
 | `execution get ID` / `execution cancel ID [--reason]` | inspect / cancel |
 | `worker` | take queued executions until SIGTERM/SIGINT, then stop gracefully; needs `AKASHA_REDIS_URL` |
 | `migrate` | upgrade the schema to head (no-op when already there); `/ready` fails until it has run |
@@ -157,23 +157,23 @@ database dump. It does **not** contain `AKASHA_CREDENTIAL_ENCRYPTION_KEY`
 plugin code (install the plugins before restoring). Restore migrates the
 target database and requires the backup's schema revision to match.
 
-Exit codes: `0` success, `1` failure (engine error, invalid project, run not
+Exit codes: `0` success, `1` failure (engine error, invalid workflow, run not
 completed), `2` usage error, `70` unexpected internal error.
 
-## Project API (`/api/v1/projects`)
+## Workflow API (`/api/v1/workflows`)
 
 | Method | Path | Use case |
 |---|---|---|
-| POST | `/api/v1/projects` | CreateProject → 201 |
-| GET | `/api/v1/projects?offset=&limit=&q=&status=&sort=` | ListProjects (summaries, `limit` ≤ 100); `q`: name contains (any case, literal); `status` repeatable; `sort`: `created_at` (default), `updated_at`, `name`, `-` prefix descending |
-| GET | `/api/v1/projects/{id}` | GetProject (incl. draft) |
-| PUT | `/api/v1/projects/{id}` | UpdateProjectDraft — full replace, requires `expected_revision` |
-| DELETE | `/api/v1/projects/{id}` | DeleteProject → 204; 409 once versions exist |
-| POST | `/api/v1/projects/{id}/duplicate` | DuplicateProject `{name}` → 201: new draft-only project owned by the caller, copy of the draft (incl. files); versions are not copied |
-| POST | `/api/v1/projects/{id}/validate` | ValidateProject → `{valid, issues}` |
-| POST | `/api/v1/projects/{id}/publish` | PublishProject → 201 immutable version; 422 if invalid |
-| GET | `/api/v1/projects/{id}/versions` | ListProjectVersions (summaries) |
-| GET | `/api/v1/projects/{id}/versions/{n}` | GetProjectVersion (read-only; no write methods exist) |
+| POST | `/api/v1/workflows` | CreateWorkflow → 201 |
+| GET | `/api/v1/workflows?offset=&limit=&q=&status=&sort=` | ListWorkflows (summaries, `limit` ≤ 100); `q`: name contains (any case, literal); `status` repeatable; `sort`: `created_at` (default), `updated_at`, `name`, `-` prefix descending |
+| GET | `/api/v1/workflows/{id}` | GetWorkflow (incl. draft) |
+| PUT | `/api/v1/workflows/{id}` | UpdateWorkflowDraft — full replace, requires `expected_revision` |
+| DELETE | `/api/v1/workflows/{id}` | DeleteWorkflow → 204; 409 once versions exist |
+| POST | `/api/v1/workflows/{id}/duplicate` | DuplicateWorkflow `{name}` → 201: new draft-only workflow owned by the caller, copy of the draft (incl. files); versions are not copied |
+| POST | `/api/v1/workflows/{id}/validate` | ValidateWorkflow → `{valid, issues}` |
+| POST | `/api/v1/workflows/{id}/publish` | PublishWorkflow → 201 immutable version; 422 if invalid |
+| GET | `/api/v1/workflows/{id}/versions` | ListWorkflowVersions (summaries) |
+| GET | `/api/v1/workflows/{id}/versions/{n}` | GetWorkflowVersion (read-only; no write methods exist) |
 
 Every write is optimistic-concurrency controlled: a stale `expected_revision`
 (or a concurrent writer) yields `409 CONCURRENT_MODIFICATION`. Errors are
@@ -183,11 +183,11 @@ Every write is optimistic-concurrency controlled: a stale `expected_revision`
 
 | Method | Path | Use case |
 |---|---|---|
-| POST | `/api/v1/projects/{id}/versions/{n}/execute` | manual run → 201, `queued` |
-| POST | `/api/v1/projects/{id}/triggers/{tid}/invoke` | fire a manual/API trigger |
-| GET | `/api/v1/executions?status=&offset=&limit=` | executions across the caller's projects (all for an admin), newest first; `status` repeatable |
+| POST | `/api/v1/workflows/{id}/versions/{n}/execute` | manual run → 201, `queued` |
+| POST | `/api/v1/workflows/{id}/triggers/{tid}/invoke` | fire a manual/API trigger |
+| GET | `/api/v1/executions?status=&offset=&limit=` | executions across the caller's workflows (all for an admin), newest first; `status` repeatable |
 | GET | `/api/v1/executions/status-counts` | `{counts: {status: n}}` over the same executions, every status present |
-| GET | `/api/v1/projects/{id}/executions?offset=&limit=` | the project's executions, newest first |
+| GET | `/api/v1/workflows/{id}/executions?offset=&limit=` | the workflow's executions, newest first |
 | GET | `/api/v1/executions/{id}` | one execution's state |
 | GET | `/api/v1/executions/{id}/events?after=&limit=` | event history; pass `next_after` back as `after` to page or to poll |
 | POST | `/api/v1/executions/{id}/cancel` | `{"reason"?}` → 202; the owner stops cooperatively; finished → 409 |
@@ -196,16 +196,16 @@ Every write is optimistic-concurrency controlled: a stale `expected_revision`
 | GET | `/api/v1/plugins` | installed plugins: state, failure code, manifest metadata (admin, read-only) |
 | GET | `/api/v1/users?q=&role=&status=&offset=&limit=` | accounts by username (admin); `q` matches username or display name, `status` is `active`/`disabled` |
 | POST / GET / PATCH | `/api/v1/users`, `/api/v1/users/{id}` | create, read, edit (`display_name`, `role`, `disabled`, `password` reset) (admin); own account: no disable/demote/reset (409 `OWN_ACCOUNT`); last active admin: 409 `LAST_ADMIN` |
-| GET / PUT / DELETE | `/api/v1/projects/{id}/members`, `/api/v1/projects/{id}/members/{username}` | project sharing (ADR 0008): read owner, members and your `access`; share as `viewer`/`editor` or stop (owner or admin) |
-| PUT / DELETE | `/api/v1/projects/{id}/owner`, `/api/v1/projects/{id}/membership` | transfer ownership to `{username}` (owner or admin; the previous owner stays an editor); leave a project shared with you |
+| GET / PUT / DELETE | `/api/v1/workflows/{id}/members`, `/api/v1/workflows/{id}/members/{username}` | workflow sharing (ADR 0008): read owner, members and your `access`; share as `viewer`/`editor` or stop (owner or admin) |
+| PUT / DELETE | `/api/v1/workflows/{id}/owner`, `/api/v1/workflows/{id}/membership` | transfer ownership to `{username}` (owner or admin; the previous owner stays an editor); leave a workflow shared with you |
 | GET | `/api/v1/system/status` | `{version, ready, failures}`: `/health` + `/ready` for API clients (any session; always 200) |
 
-## Example projects
+## Example workflows
 
-`examples/projects/` holds the official examples (Hello World, LLM, Web
-Research, Lead Generation) as `project.json` documents: send their
+`examples/workflows/` holds the official examples (Hello World, LLM, Web
+Research, Lead Generation) as `workflow.json` documents: send their
 `graph`, `triggers` and `dependencies` as the `draft` of
-`PUT /api/v1/projects/{id}`, adjust the provider/model and SMTP settings
+`PUT /api/v1/workflows/{id}`, adjust the provider/model and SMTP settings
 to your installation, then validate and publish. They are regression
 tests: `tests/integration/test_e2e_examples.py`.
 
@@ -217,7 +217,7 @@ src/akasha/
 ├── bootstrap.py        composition root (Container, create_container)
 ├── errors.py           AkashaError base with stable codes / HTTP status
 ├── api/                FastAPI app factory, routers (/health, /ready, /api/v1), error handlers
-├── application/        use-case services (projects: Phase 06)
+├── application/        use-case services (workflows: Phase 06)
 ├── domain/             domain model (Phase 02+) — no FastAPI/SQLAlchemy/infra imports
 ├── infrastructure/     PostgreSQL/Redis/storage adapters (Phase 05+)
 ├── runtime/            execution runtime (Phase 08)

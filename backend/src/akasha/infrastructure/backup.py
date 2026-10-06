@@ -2,7 +2,7 @@
 
 A backup is one gzip-compressed JSON document: a manifest plus every row of
 every engine table, read in one REPEATABLE READ transaction so it is a
-consistent snapshot. It covers projects, versions, executions, events, node logs,
+consistent snapshot. It covers workflows, versions, executions, events, node logs,
 users and credentials (still encrypted). It deliberately omits:
 
 - login sessions: restored installations start logged out;

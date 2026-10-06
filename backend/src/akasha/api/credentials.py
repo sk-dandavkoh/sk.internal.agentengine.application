@@ -4,7 +4,7 @@ Write-only secrets: requests may carry a value (``SecretStr``, masked in
 reprs), responses never do — there is no endpoint that returns plaintext.
 Values are resolved only by the runtime, at execution time.
 
-Authorization boundary: like projects, one router-level dependency secures
+Authorization boundary: like workflows, one router-level dependency secures
 all of these in Phase 20.
 """
 
@@ -14,10 +14,10 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, Query, Request, Response, status
 from pydantic import BaseModel, Field, SecretStr
 
-from akasha.api.project_schemas import PageInfo
 from akasha.api.schemas import ErrorResponse
+from akasha.api.workflow_schemas import PageInfo
 from akasha.application.credentials import CredentialService
-from akasha.application.projects import MAX_PAGE_SIZE, Page
+from akasha.application.workflows import MAX_PAGE_SIZE, Page
 from akasha.domain.credentials import (
     MAX_SECRET_LENGTH,
     Credential,

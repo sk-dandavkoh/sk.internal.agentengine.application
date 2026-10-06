@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import type { ApiClient } from './client'
 import { executionStatusSchema } from './executions'
-import { triggerTypeSchema } from './projects'
+import { triggerTypeSchema } from './workflows'
 import { jsonObject, timestamp } from './schemas'
 
 // Contract of backend application/reports.py (GET /reports/executions/{id}):
@@ -80,7 +80,7 @@ export type ExecutionMetrics = z.infer<typeof executionMetricsSchema>
 export const executionReportSchema = z.object({
     schema_version: z.number().int(),
     execution_id: z.string(),
-    project: z.object({
+    workflow: z.object({
         id: z.string(),
         name: z.string().nullable(),
         version: z.number().int(),

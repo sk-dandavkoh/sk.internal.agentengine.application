@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import type { ApiClient } from './client'
-import { triggerTypeSchema } from './projects'
+import { triggerTypeSchema } from './workflows'
 import {
     jsonObject,
     pageSchema,
@@ -29,8 +29,8 @@ export type ExecutionStatus = z.infer<typeof executionStatusSchema>
 
 export const executionSchema = z.object({
     id: z.string(),
-    project_id: z.string(),
-    /** The published project version this execution runs. */
+    workflow_id: z.string(),
+    /** The published workflow version this execution runs. */
     version: z.number().int(),
     status: executionStatusSchema,
     trigger_type: triggerTypeSchema,
@@ -44,9 +44,9 @@ export const executionSchema = z.object({
 })
 export type Execution = z.infer<typeof executionSchema>
 
-/** A listed execution: listings also name the project (its current name). */
+/** A listed execution: listings also name the workflow (its current name). */
 export const executionListItemSchema = executionSchema.extend({
-    project_name: z.string(),
+    workflow_name: z.string(),
 })
 export type ExecutionListItem = z.infer<typeof executionListItemSchema>
 
@@ -61,8 +61,8 @@ export const executionEventSchema = z.object({
     /** Monotonic per execution: pass the last seen one as `after`. */
     position: z.number().int(),
     occurred_at: timestamp,
-    project_id: z.string(),
-    project_version: z.number().int().nullable(),
+    workflow_id: z.string(),
+    workflow_version: z.number().int().nullable(),
     execution_id: z.string().nullable(),
     node_id: z.string().nullable(),
     correlation_id: z.string().nullable(),
@@ -131,7 +131,7 @@ export interface ExecutionListParams extends PageParams {
 const path = (executionId: string) =>
     `/executions/${encodeURIComponent(executionId)}`
 
-/** Executions across the caller's projects (all for an admin), newest first. */
+/** Executions across the caller's workflows (all for an admin), newest first. */
 export function listExecutions(
     client: ApiClient,
     params: ExecutionListParams = {},
@@ -155,20 +155,20 @@ export function getExecutionStatusCounts(
     )
 }
 
-export interface ProjectExecutionListParams extends PageParams {
+export interface WorkflowExecutionListParams extends PageParams {
     /** Only runs of this published version; all when omitted. */
     version?: number
 }
 
-export function listProjectExecutions(
+export function listWorkflowExecutions(
     client: ApiClient,
-    projectId: string,
-    params: ProjectExecutionListParams = {},
+    workflowId: string,
+    params: WorkflowExecutionListParams = {},
     signal?: AbortSignal,
 ) {
     return client.request(
         'GET',
-        `/projects/${encodeURIComponent(projectId)}/executions`,
+        `/workflows/${encodeURIComponent(workflowId)}/executions`,
         executionPageSchema,
         { query: { ...params }, signal },
     )
@@ -225,30 +225,30 @@ export function cancelExecution(
 }
 
 /** Starts a manual run of a published version with `input`. */
-export function executeProjectVersion(
+export function executeWorkflowVersion(
     client: ApiClient,
-    projectId: string,
+    workflowId: string,
     version: number,
     input: JsonObject = {},
 ) {
     return client.request(
         'POST',
-        `/projects/${encodeURIComponent(projectId)}/versions/${String(version)}/execute`,
+        `/workflows/${encodeURIComponent(workflowId)}/versions/${String(version)}/execute`,
         executionSchema,
         { body: input },
     )
 }
 
-/** Fires a manual or API trigger of the project's current version. */
+/** Fires a manual or API trigger of the workflow's current version. */
 export function invokeTrigger(
     client: ApiClient,
-    projectId: string,
+    workflowId: string,
     triggerId: string,
     input: JsonObject = {},
 ) {
     return client.request(
         'POST',
-        `/projects/${encodeURIComponent(projectId)}/triggers/${encodeURIComponent(triggerId)}/invoke`,
+        `/workflows/${encodeURIComponent(workflowId)}/triggers/${encodeURIComponent(triggerId)}/invoke`,
         executionSchema,
         { body: input },
     )

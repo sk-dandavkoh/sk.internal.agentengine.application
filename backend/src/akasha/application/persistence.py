@@ -31,13 +31,13 @@ from akasha.domain.execution import (
 )
 from akasha.domain.identity import (
     AccessToken,
-    ProjectMember,
-    ProjectRole,
     Role,
     User,
     UserSession,
+    WorkflowMember,
+    WorkflowRole,
 )
-from akasha.domain.project import Project, ProjectStatus, ProjectVersion
+from akasha.domain.workflow import Workflow, WorkflowStatus, WorkflowVersion
 from akasha.errors import AkashaError
 
 
@@ -48,8 +48,8 @@ class ConcurrentModificationError(AkashaError):
     http_status = 409
 
 
-class ProjectSort(StrEnum):
-    """Project list orders; a leading ``-`` means descending. Every order
+class WorkflowSort(StrEnum):
+    """Workflow list orders; a leading ``-`` means descending. Every order
     breaks ties by id, so pages are stable."""
 
     CREATED = "created_at"
@@ -60,24 +60,24 @@ class ProjectSort(StrEnum):
     NAME_DESC = "-name"
 
 
-class ProjectRepository(Protocol):
-    """CRUD for the long-lived Project identity plus its mutable draft."""
+class WorkflowRepository(Protocol):
+    """CRUD for the long-lived Workflow identity plus its mutable draft."""
 
-    async def get(self, project_id: str) -> Project | None: ...
+    async def get(self, workflow_id: str) -> Workflow | None: ...
 
-    async def save(self, project: Project) -> None:
-        """Compare-and-swap on ``project.revision``.
+    async def save(self, workflow: Workflow) -> None:
+        """Compare-and-swap on ``workflow.revision``.
 
         Revision 0 inserts; any other revision updates only if the stored
-        revision still equals it. On success ``project.revision`` advances.
+        revision still equals it. On success ``workflow.revision`` advances.
         Raises ``ConcurrentModificationError`` when the stored row moved on,
         was deleted, or (on insert) already exists.
         """
         ...
 
-    async def delete(self, project_id: str, *, revision: int) -> bool:
+    async def delete(self, workflow_id: str, *, revision: int) -> bool:
         """Delete only if the stored revision still equals ``revision``;
-        False when the project is missing or has moved on."""
+        False when the workflow is missing or has moved on."""
         ...
 
     async def list(
@@ -87,34 +87,34 @@ class ProjectRepository(Protocol):
         limit: int = 100,
         visible_to: str | None = None,
         search: str | None = None,
-        statuses: Collection[ProjectStatus] = (),
-        sort: ProjectSort = ProjectSort.CREATED,
-    ) -> Sequence[Project]:
-        """All projects, or only those ``visible_to`` that user (owned or
+        statuses: Collection[WorkflowStatus] = (),
+        sort: WorkflowSort = WorkflowSort.CREATED,
+    ) -> Sequence[Workflow]:
+        """All workflows, or only those ``visible_to`` that user (owned or
         shared with them); optionally
         only names containing ``search`` (case-insensitive, literal) and
         only ``statuses``."""
         ...
 
-    async def lock_owner(self, project_id: str) -> str | None:
-        """The owner of an existing project, with its row locked until the
+    async def lock_owner(self, workflow_id: str) -> str | None:
+        """The owner of an existing workflow, with its row locked until the
         transaction ends."""
         ...
 
-    async def set_owner(self, project_id: str, owner_id: str) -> None:
+    async def set_owner(self, workflow_id: str, owner_id: str) -> None:
         """Change the owner; not a draft change, so the revision stays."""
         ...
 
     async def using_plugin(
         self, plugin_id: str, node_types: Sequence[str]
     ) -> Sequence[str]:
-        """Ids (sorted) of projects whose draft or any published version uses
+        """Ids (sorted) of workflows whose draft or any published version uses
         one of ``node_types`` or declares a dependency on plugin
         ``plugin_id``."""
         ...
 
 
-class ProjectVersionRepository(Protocol):
+class WorkflowVersionRepository(Protocol):
     """Append-only access to immutable published versions.
 
     There is deliberately no ``update`` and no ``delete``: a published
@@ -122,22 +122,22 @@ class ProjectVersionRepository(Protocol):
     history and reproducibility.
     """
 
-    async def get(self, project_id: str, version: int) -> ProjectVersion | None: ...
-    async def save(self, project_id: str, version: ProjectVersion) -> None: ...
+    async def get(self, workflow_id: str, version: int) -> WorkflowVersion | None: ...
+    async def save(self, workflow_id: str, version: WorkflowVersion) -> None: ...
     async def list(
-        self, project_id: str, *, offset: int = 0, limit: int = 100
-    ) -> Sequence[ProjectVersion]: ...
+        self, workflow_id: str, *, offset: int = 0, limit: int = 100
+    ) -> Sequence[WorkflowVersion]: ...
 
     async def list_latest(
-        self, *, project_id: str | None = None
-    ) -> Sequence[tuple[str, ProjectVersion]]:
-        """The highest published version of every project, or of one.
+        self, *, workflow_id: str | None = None
+    ) -> Sequence[tuple[str, WorkflowVersion]]:
+        """The highest published version of every workflow, or of one.
 
         Triggers always resolve against the latest published version
         (architecture §125): publishing retires the previous version's
-        triggers. Returns (project_id, version) pairs ordered by project_id,
+        triggers. Returns (workflow_id, version) pairs ordered by workflow_id,
         so the result is deterministic. The pairs are needed because the
-        domain object itself carries no project_id.
+        domain object itself carries no workflow_id.
         """
         ...
 
@@ -148,11 +148,11 @@ class ExecutionSummary:
     executions or version snapshot, so a page costs one query."""
 
     id: str
-    project_id: str
-    # Joined from the project row so a listing names its projects without
-    # a request per project.
-    project_name: str
-    project_version: int
+    workflow_id: str
+    # Joined from the workflow row so a listing names its workflows without
+    # a request per workflow.
+    workflow_name: str
+    workflow_version: int
     status: ExecutionStatus
     metadata: ExecutionMetadata
     created_at: datetime
@@ -188,7 +188,7 @@ class ExecutionRepository(Protocol):
     """Execution aggregate (execution row + its node executions).
 
     ``save`` is compare-and-swap on ``execution.revision`` exactly like
-    ``ProjectRepository.save``: the runtime owning an execution is its only
+    ``WorkflowRepository.save``: the runtime owning an execution is its only
     writer, and any other writer (a second runtime, an out-of-process cancel)
     makes the loser fail with ``ConcurrentModificationError`` instead of
     silently interleaving state.
@@ -199,27 +199,27 @@ class ExecutionRepository(Protocol):
     async def list_summaries(
         self,
         *,
-        project_id: str | None = None,
-        project_version: int | None = None,
+        workflow_id: str | None = None,
+        workflow_version: int | None = None,
         visible_to: str | None = None,
         statuses: Collection[ExecutionStatus] = (),
         offset: int = 0,
         limit: int = 100,
     ) -> Sequence[ExecutionSummary]:
-        """Executions newest first: of one project or all, limited to the
-        projects ``visible_to`` that user, to one ``project_version`` (meaningful
-        with ``project_id``) and to ``statuses`` when given."""
+        """Executions newest first: of one workflow or all, limited to the
+        workflows ``visible_to`` that user, to one ``workflow_version`` (meaningful
+        with ``workflow_id``) and to ``statuses`` when given."""
         ...
 
     async def count_by_status(
         self, *, visible_to: str | None = None
     ) -> Mapping[ExecutionStatus, int]:
         """Executions per status (absent statuses: none), limited to the
-        projects ``visible_to`` that user when given."""
+        workflows ``visible_to`` that user when given."""
         ...
 
     # Monitoring read models (Phase 16): executions created in
-    # [since, until), limited to the projects ``visible_to`` that user.
+    # [since, until), limited to the workflows ``visible_to`` that user.
     async def sample_executions(
         self, *, since: datetime, until: datetime, visible_to: str | None = None
     ) -> Sequence[ExecutionSample]: ...
@@ -238,9 +238,9 @@ class ExecutionRepository(Protocol):
         oldest first."""
         ...
 
-    async def count_unfinished(self, project_id: str) -> int:
-        """Non-terminal executions of the project. Locks the project row
-        for the transaction, so concurrent admissions to one project
+    async def count_unfinished(self, workflow_id: str) -> int:
+        """Non-terminal executions of the workflow. Locks the workflow row
+        for the transaction, so concurrent admissions to one workflow
         serialize and cannot both pass a capacity check (Phase 24)."""
         ...
 
@@ -279,7 +279,7 @@ class EventRepository(Protocol):
         self,
         *,
         execution_id: str | None = None,
-        project_id: str | None = None,
+        workflow_id: str | None = None,
         after: int = 0,
         limit: int = 100,
         positions: Collection[int] | None = None,
@@ -287,7 +287,7 @@ class EventRepository(Protocol):
         """Stored events with ``position > after`` (and among ``positions``
         when given), ascending by position.
 
-        Ordering is guaranteed per execution and per project (each has a
+        Ordering is guaranteed per execution and per workflow (each has a
         single CAS-guarded writer). Across unrelated streams positions only
         approximate commit order, so a global "after" cursor may skip a
         concurrently committed event; ``positions`` lets such a reader
@@ -440,24 +440,24 @@ class AccessTokenRepository(Protocol):
         ...
 
 
-class ProjectMemberRepository(Protocol):
-    """Who a project is shared with (the owner is not a member row)."""
+class WorkflowMemberRepository(Protocol):
+    """Who a workflow is shared with (the owner is not a member row)."""
 
-    async def role(self, project_id: str, user_id: str) -> ProjectRole | None: ...
+    async def role(self, workflow_id: str, user_id: str) -> WorkflowRole | None: ...
 
-    async def list(self, project_id: str) -> Sequence[ProjectMember]:
+    async def list(self, workflow_id: str) -> Sequence[WorkflowMember]:
         """By username."""
         ...
 
-    async def count(self, project_id: str) -> int: ...
+    async def count(self, workflow_id: str) -> int: ...
 
     async def put(
-        self, project_id: str, user_id: str, role: ProjectRole, at: datetime
+        self, workflow_id: str, user_id: str, role: WorkflowRole, at: datetime
     ) -> None:
         """Add the member, or change their role (keeping ``created_at``)."""
         ...
 
-    async def delete(self, project_id: str, user_id: str) -> bool:
+    async def delete(self, workflow_id: str, user_id: str) -> bool:
         """False when the user was not a member."""
         ...
 
@@ -469,8 +469,8 @@ class UnitOfWork(Protocol):
     the only success path; leaving the context without commit rolls back.
     """
 
-    projects: ProjectRepository
-    versions: ProjectVersionRepository
+    workflows: WorkflowRepository
+    versions: WorkflowVersionRepository
     executions: ExecutionRepository
     events: EventRepository
     node_logs: NodeLogRepository
@@ -478,7 +478,7 @@ class UnitOfWork(Protocol):
     users: UserRepository
     sessions: SessionRepository
     access_tokens: AccessTokenRepository
-    members: ProjectMemberRepository
+    members: WorkflowMemberRepository
 
     async def __aenter__(self) -> "UnitOfWork": ...
     async def __aexit__(

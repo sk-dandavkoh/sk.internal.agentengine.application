@@ -3,22 +3,22 @@
 ## 1. Executive Summary
 
 **Goal.** Roadmap §31: validate the complete backend as one coherent system,
-using the official example projects, and fix what integration exposes.
+using the official example workflows, and fix what integration exposes.
 
 **Method.** Run every suite → classify each failure → trace it to its root
 cause → fix it at the owning layer → add a regression test → rerun the
 targeted suite, then the full suite.
 
 **Result.** The complete journey works end to end for all four official
-example projects, through the production composition root. It covers
+example workflows, through the production composition root. It covers
 create, configure, validate, publish, trigger, queue, worker, runtime,
 events/logs/metrics, inspection, report, export, import and re-execution.
 
 | # | Finding | Class | Severity | Resolution |
 |---|---|---|---|---|
 | D1 | Runtime race: a retry backoff that ends between two clock reads ends the scheduler loop with a READY node, so `complete()` raises `INVALID_STATE_TRANSITION` and the run is lost | runtime defect | HIGH | Fixed in `ExecutionRuntime._schedule`; deterministic regression test |
-| D2 | The vision §58 example projects could not be built: no transform/constant node, `core.web_search` (LIST) cannot feed `core.llm.variables` (OBJECT), and `core.if` tests only the whole value | V1 capability gap | HIGH (acceptance) | `core.set`, `core.pick`, `core.if.field` (1.1.0) — decision approved by the project owner |
-| D3 | Architecture §22 API surface missing: no node catalog, execution list, event history or cancel over HTTP (cancel was CLI-only) | API gap | MEDIUM (frontend blocker) | Thin endpoints over existing services — decision approved by the project owner |
+| D2 | The vision §58 example workflows could not be built: no transform/constant node, `core.web_search` (LIST) cannot feed `core.llm.variables` (OBJECT), and `core.if` tests only the whole value | V1 capability gap | HIGH (acceptance) | `core.set`, `core.pick`, `core.if.field` (1.1.0) — decision approved by the workflow owner |
+| D3 | Architecture §22 API surface missing: no node catalog, execution list, event history or cancel over HTTP (cancel was CLI-only) | API gap | MEDIUM (frontend blocker) | Thin endpoints over existing services — decision approved by the workflow owner |
 | D4 | Event-history pagination: the router requested `limit + 1` rows, which the service's page check rejects at `limit=100` | defect (found by the new tests) | LOW | The service returns a `Page` like every other listing |
 | T1 | A parametrized test id (a 200 KB nesting bomb) exceeds the Windows env-var limit via `PYTEST_CURRENT_TEST` (2 errors) | test infrastructure | — | Explicit `ids=` (2 sites) |
 | T2 | POSIX-only assertions (0600 mode, SIGINT/SIGTERM, unprivileged symlinks) fail on a Windows host (5 failures) | test infrastructure | — | `posix_only` marker; the mode assertion inside the backup/restore test is guarded, not the whole test |
@@ -33,15 +33,15 @@ events/logs/metrics, inspection, report, export, import and re-execution.
 |---|---|---|
 | Startup, configuration, health/readiness | fail-fast settings; `/health` vs `/ready` (DB, schema head, Redis) | `test_lifecycle.py`, `test_health.py`, deployment test |
 | Migrations | Alembic; empty → head; upgrade path | `test_persistence.py`, deployment test |
-| Authentication / authorization | local accounts, scrypt, opaque sessions, owner-scoped projects, default-deny router | `test_auth_api.py` (incl. OpenAPI walk + cross-tenant 404s, now covering the new routes) |
-| Projects, drafts, validation, publish, immutable versions | optimistic concurrency; versions read-only | `test_projects_api.py`, E2E `assert_version_is_immutable` |
+| Authentication / authorization | local accounts, scrypt, opaque sessions, owner-scoped workflows, default-deny router | `test_auth_api.py` (incl. OpenAPI walk + cross-tenant 404s, now covering the new routes) |
+| Workflows, drafts, validation, publish, immutable versions | optimistic concurrency; versions read-only | `test_workflows_api.py`, E2E `assert_version_is_immutable` |
 | Node contracts, registry, built-in nodes, SDK, plugins | 13 built-ins; SDK contract tests; plugin lifecycle | `tests/nodes`, `test_sdk.py`, `test_plugins.py`, `test_plugin_runtime.py` |
 | Runtime: branching, parallel, merge, control flow, retry, timeout, cancellation, recovery | | `test_runtime.py`, `test_reliability.py`, `test_workers.py` |
 | Triggers | manual, API, webhook (HMAC), cron, interval | `test_triggers_api.py`, E2E cron via the scheduler on an injected clock |
 | Events, structured logs, metrics | persisted events; JSON logs with ids; Prometheus | `test_events.py`, `test_observability.py`, E2E |
 | Credentials, redaction | AES-256-GCM, references only, redaction at every output channel | `test_credentials.py`, `test_redaction.py`, E2E secret canaries |
 | LLM abstraction, LLM node, tokens, cost | AIService → LiteLLM; usage and cost in the report | `test_ai_service.py`, `test_llm_node_runtime.py`, E2E |
-| Reports, import/export | deterministic packages, no secrets | `test_reports.py`, `test_project_packages*.py`, E2E round trip |
+| Reports, import/export | deterministic packages, no secrets | `test_reports.py`, `test_workflow_packages*.py`, E2E round trip |
 | CLI, workers, queue | operator CLI; Redis queue; worker heartbeat/recovery | `test_cli.py`, `test_workers.py` |
 | Resource limits, security hardening | Phase 24/25 | `test_resource_limits.py`, Phase 25 suites |
 | Docker deployment, backup/restore | Compose with pinned images | `tests/deployment/test_compose_lifecycle.py` |
@@ -90,20 +90,20 @@ of 1.0.0 packages are accepted (same major, newer minor).
 | Route | Notes |
 |---|---|
 | `GET /api/v1/nodes` | catalog from the registry: ports (type, required, nullable, multiple, schema), config JSON Schema, capabilities. Any session |
-| `GET /api/v1/projects/{id}/executions` | newest first, `{items, page}` like other listings. Uses the `ExecutionSummary` read model: one query per page, no node rows or snapshots |
+| `GET /api/v1/workflows/{id}/executions` | newest first, `{items, page}` like other listings. Uses the `ExecutionSummary` read model: one query per page, no node rows or snapshots |
 | `GET /api/v1/executions/{id}/events?after=&limit=` | ascending by position; `next_after` + `has_more`; payloads pass through `redact` |
 | `POST /api/v1/executions/{id}/cancel` | `ExecutionRuntime.cancel` (the CLI's path): an owning worker elsewhere sees it on its next heartbeat. 202, finished → 409 |
 
 `GET /executions/{id}` moved from `api/triggers.py` to `api/executions.py`.
 It now also returns `started_at` and `finished_at`. That is additive: no
-field was removed or renamed. Every new route carries a project or
+field was removed or renamed. Every new route carries a workflow or
 execution id in its path, so `authorize_path` scopes it with no new
 authorization code. The cross-tenant test (`scoped_requests`) and the
 OpenAPI default-deny walk both cover them.
 
-### 3.4 Example projects (architecture §88)
+### 3.4 Example workflows (architecture §88)
 
-`backend/examples/projects/{hello-world,llm,web-research,lead-generation}.json`
+`backend/examples/workflows/{hello-world,llm,web-research,lead-generation}.json`
 and a README. Deviation from vision §58: Hello World's "Transform" is
 `core.set`. Web Research's "Report" is the execution report
 (`/reports/executions/{id}`), not a node. Lead Generation's "Scoring" is
@@ -194,7 +194,7 @@ running API. Passed.
 1. **Data shaping is declarative.** `core.set` and `core.pick` extend the
    no-expressions rule of `core.if`/`core.switch` and the LLM templates.
    An expression engine stays out of V1 (architecture §30/§31).
-2. **Examples are `project.json`, not ZIPs.** They are diffable and
+2. **Examples are `workflow.json`, not ZIPs.** They are diffable and
    reviewable, and they map 1:1 onto both the draft API and the package
    format. The E2E test produces and imports the real packages.
 3. **The event history is a cursor over `position`.** It is also the
@@ -209,8 +209,8 @@ running API. Passed.
 
 - `docs/architecture.md`: §22 implemented V1 surface and what is not over HTTP; §37 built-in list and data shaping; §88 location and test of the examples
 - `README.md`: built-in node list (`core.set`, `core.pick`, `core.llm`; `ai.llm` was wrong)
-- `backend/README.md`: execution/node API table, example projects
-- `backend/examples/projects/README.md`
+- `backend/README.md`: execution/node API table, example workflows
+- `backend/examples/workflows/README.md`
 
 ---
 
@@ -244,7 +244,7 @@ running API. Passed.
 ## 12. Recommended Next Step
 
 Start the frontend roadmap at its first phase. The backend contract it
-needs now exists: node catalog, projects/drafts/versions, execution
+needs now exists: node catalog, workflows/drafts/versions, execution
 listing, event history, cancel and reports. Generate the frontend API types
 from `/openapi.json` (AGENTS §21) and add an OpenAPI snapshot check to CI,
 so frontend and backend contracts cannot diverge silently.

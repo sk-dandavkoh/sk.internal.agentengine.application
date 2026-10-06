@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { Edge, Graph, NodeInstance } from '../../api/projects'
+import type { Edge, Graph, NodeInstance } from '../../api/workflows'
 import { Button, Select } from '../../components/ui'
 import {
     connectionProblem,

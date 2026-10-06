@@ -1,6 +1,6 @@
 """/api/v1/plugins through the real HTTP stack: listing, upload install,
 enable/disable and removal, admin only (architecture §22, §36, ADR 0001).
-Real packages in a temporary plugin directory; sessions and projects in
+Real packages in a temporary plugin directory; sessions and workflows in
 PostgreSQL."""
 
 import io
@@ -14,10 +14,10 @@ import httpx
 import pytest
 
 from akasha.api.app import create_app
-from akasha.application.projects import ProjectService
+from akasha.application.workflows import WorkflowService
 from akasha.bootstrap import Container
 from akasha.config import Settings
-from akasha.domain.project import Dependency, ProjectDraft
+from akasha.domain.workflow import Dependency, WorkflowDraft
 from akasha.infrastructure.database import Database
 from akasha.infrastructure.persistence import SqlAlchemyUnitOfWork
 from akasha.nodes.builtins import create_builtin_registry
@@ -60,7 +60,7 @@ async def _client(
         nodes=NodeRegistry(),
         database=database,
         plugins=plugins,
-        projects=ProjectService(
+        workflows=WorkflowService(
             lambda: SqlAlchemyUnitOfWork(database),
             create_builtin_registry().definitions,
         ),
@@ -337,20 +337,20 @@ async def test_disable_is_blocked_while_enabled_plugins_depend_on_it(
     assert registry.get("base").state == "enabled"
 
 
-async def test_remove_is_blocked_while_projects_use_it_unless_forced(
+async def test_remove_is_blocked_while_workflows_use_it_unless_forced(
     database: Database, tmp_path: Path
 ) -> None:
     installed = _installed(tmp_path)
     registry = _registry(installed)
     registry.install(write_plugin(tmp_path, "acme"))
-    projects = ProjectService(
+    workflows = WorkflowService(
         lambda: SqlAlchemyUnitOfWork(database), create_builtin_registry().definitions
     )
-    user = await projects.create_project("uses acme")
+    user = await workflows.create_workflow("uses acme")
     await set_draft(
-        projects,
+        workflows,
         user.id,
-        ProjectDraft(
+        WorkflowDraft(
             graph=echo_graph(), dependencies=[Dependency("plugin", "acme", "*")]
         ),
     )
@@ -363,9 +363,9 @@ async def test_remove_is_blocked_while_projects_use_it_unless_forced(
         gone = await client.delete("/api/v1/plugins/acme", headers=admin)
 
     assert_error(blocked, 409, "PLUGIN_IN_USE")
-    assert blocked.json()["details"]["projects"] == [user.id]
+    assert blocked.json()["details"]["workflows"] == [user.id]
     assert forced.status_code == 200, forced.text
-    assert forced.json() == {"plugin_id": "acme", "affected_projects": [user.id]}
+    assert forced.json() == {"plugin_id": "acme", "affected_workflows": [user.id]}
     assert not (installed / "acme").exists()
     assert_error(gone, 404, "PLUGIN_NOT_FOUND")
 
@@ -379,7 +379,7 @@ async def test_removes_an_unused_plugin(database: Database, tmp_path: Path) -> N
         response = await client.delete("/api/v1/plugins/acme", headers=admin)
         listed = await client.get("/api/v1/plugins", headers=admin)
 
-    assert response.json() == {"plugin_id": "acme", "affected_projects": []}
+    assert response.json() == {"plugin_id": "acme", "affected_workflows": []}
     assert listed.json()["items"] == []
 
 

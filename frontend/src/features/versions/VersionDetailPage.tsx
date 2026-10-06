@@ -8,20 +8,20 @@ import { useNavigate, useParams } from 'react-router'
 import { useApiClient } from '../../api/context'
 import { ApiError, errorMessage } from '../../api/errors'
 import {
-    useDuplicateProject,
-    useRestoreProjectVersion,
+    useDuplicateWorkflow,
+    useRestoreWorkflowVersion,
 } from '../../api/mutations'
 import type { Execution } from '../../api/executions'
 import type {
     Dependency,
     Edge,
     NodeInstance,
-    Project,
-    ProjectFile,
-    ProjectVersion,
+    Workflow,
+    WorkflowFile,
+    WorkflowVersion,
     Trigger,
-} from '../../api/projects'
-import { projectQueries, queryKeys } from '../../api/queries'
+} from '../../api/workflows'
+import { workflowQueries, queryKeys } from '../../api/queries'
 import { QuerySection } from '../../components/QuerySection'
 import {
     Alert,
@@ -41,12 +41,12 @@ import {
 import { cx } from '../../lib/cx'
 import { RunVersion } from '../executions/RunVersion'
 import { ExecutionLink, StatusBadge } from '../executions/shared'
-import { ProjectFormDialog } from '../projects/ProjectFormDialog'
+import { WorkflowFormDialog } from '../workflows/WorkflowFormDialog'
 import { diffVersions, type Changes, type VersionDiff } from './compare'
 import { Author, ImmutableBadge, LatestBadge, Time } from './shared'
 import { versionsPath } from './paths'
 import { SnapshotCanvas } from './SnapshotCanvas'
-import { ProjectNotFound } from './VersionsPage'
+import { WorkflowNotFound } from './VersionsPage'
 
 const EXECUTION_PAGE_SIZE = 20
 
@@ -75,7 +75,7 @@ function Metadata({
     version,
     latest,
 }: {
-    version: ProjectVersion
+    version: WorkflowVersion
     latest: number
 }) {
     return (
@@ -93,7 +93,7 @@ function Metadata({
                 <Item term="Published by">
                     <Author author={version.published_by} />
                 </Item>
-                <Item term="Project schema version">
+                <Item term="Workflow schema version">
                     {version.schema_version}
                 </Item>
                 <Item term="Version ID">
@@ -156,7 +156,7 @@ const dependencyColumns: TableColumn<Dependency>[] = [
         cell: (d) => <Mono>{d.version_constraint}</Mono>,
     },
 ]
-const fileColumns: TableColumn<ProjectFile>[] = [
+const fileColumns: TableColumn<WorkflowFile>[] = [
     { key: 'path', header: 'Path', cell: (f) => <Mono>{f.path}</Mono> },
     {
         key: 'size',
@@ -168,7 +168,7 @@ const fileColumns: TableColumn<ProjectFile>[] = [
 
 // The canvas shows the graph; the tables say the same in text (node ids,
 // configured fields, ports) for screen readers and copying.
-function Snapshot({ version }: { version: ProjectVersion }) {
+function Snapshot({ version }: { version: WorkflowVersion }) {
     const edgeKey = (e: Edge) =>
         `${e.source_node_id}.${e.source_port}>${e.target_node_id}.${e.target_port}`
     return (
@@ -287,29 +287,29 @@ function DiffResult({
 type Target = number | 'draft' | null
 
 function Comparison({
-    project,
+    workflow,
     version,
 }: {
-    project: Project
-    version: ProjectVersion
+    workflow: Workflow
+    version: WorkflowVersion
 }) {
     // Versions are numbered 1..current_version without gaps.
     const others = Array.from(
-        { length: project.current_version },
+        { length: workflow.current_version },
         (_, i) => i + 1,
     ).filter((n) => n !== version.version)
     const [other, setOther] = useState<Target>(
         version.version > 1 ? version.version - 1 : 'draft',
     )
     const query = useQuery({
-        ...projectQueries.version(
+        ...workflowQueries.version(
             useApiClient(),
-            project.id,
+            workflow.id,
             typeof other === 'number' ? other : 0,
         ),
         enabled: typeof other === 'number',
     })
-    const label = (v: ProjectVersion) => `v${String(v.version)}`
+    const label = (v: WorkflowVersion) => `v${String(v.version)}`
     return (
         <Card
             title="Compare"
@@ -333,7 +333,7 @@ function Comparison({
                 >
                     <option value="">Choose what to compare with</option>
                     <option value="draft">
-                        Current draft (revision {project.revision})
+                        Current draft (revision {workflow.revision})
                     </option>
                     {others.map((n) => (
                         <option key={n} value={n}>
@@ -346,8 +346,8 @@ function Comparison({
                         from={label(version)}
                         to="the current draft"
                         diff={diffVersions(version, {
-                            ...project.draft,
-                            files: project.files,
+                            ...workflow.draft,
+                            files: workflow.files,
                         })}
                     />
                 )}
@@ -396,15 +396,15 @@ const executionColumns: TableColumn<Execution>[] = [
 ]
 
 function Executions({
-    projectId,
+    workflowId,
     version,
 }: {
-    projectId: string
+    workflowId: string
     version: number
 }) {
     const [offset, setOffset] = useState(0)
     const query = useQuery({
-        ...projectQueries.executions(useApiClient(), projectId, {
+        ...workflowQueries.executions(useApiClient(), workflowId, {
             version,
             offset,
             limit: EXECUTION_PAGE_SIZE,
@@ -479,18 +479,18 @@ function Executions({
 
 type Action = 'restore' | 'clone' | null
 
-/** Copy a version into the draft, or into a new project. Neither changes
+/** Copy a version into the draft, or into a new workflow. Neither changes
  * the version: the backend copies it. */
 function VersionActions({
-    project,
+    workflow,
     version,
 }: {
-    project: Project
-    version: ProjectVersion
+    workflow: Workflow
+    version: WorkflowVersion
 }) {
     const [action, setAction] = useState<Action>(null)
-    const restore = useRestoreProjectVersion()
-    const clone = useDuplicateProject()
+    const restore = useRestoreWorkflowVersion()
+    const clone = useDuplicateWorkflow()
     const queryClient = useQueryClient()
     const navigate = useNavigate()
     const toast = useToast()
@@ -502,7 +502,7 @@ function VersionActions({
     }
     return (
         <>
-            <RunVersion projectId={project.id} version={version.version} />
+            <RunVersion workflowId={workflow.id} version={version.version} />
             <Button
                 onClick={() => {
                     setAction('restore')
@@ -515,7 +515,7 @@ function VersionActions({
                     setAction('clone')
                 }}
             >
-                Clone as new project…
+                Clone as new workflow…
             </Button>
             <ConfirmDialog
                 open={action === 'restore'}
@@ -527,9 +527,9 @@ function VersionActions({
                 onConfirm={() => {
                     restore.mutate(
                         {
-                            projectId: project.id,
+                            workflowId: workflow.id,
                             version: version.version,
-                            expectedRevision: project.revision,
+                            expectedRevision: workflow.revision,
                         },
                         {
                             onSuccess: () => {
@@ -541,7 +541,7 @@ function VersionActions({
                                         'Publish it to make it a new version.',
                                 })
                                 void navigate(
-                                    `/projects/${encodeURIComponent(project.id)}/editor`,
+                                    `/workflows/${encodeURIComponent(workflow.id)}/editor`,
                                 )
                             },
                             // A conflict means the draft changed: reload it,
@@ -552,8 +552,8 @@ function VersionActions({
                                     error.kind === 'conflict'
                                 )
                                     void queryClient.invalidateQueries({
-                                        queryKey: queryKeys.projects.detail(
-                                            project.id,
+                                        queryKey: queryKeys.workflows.detail(
+                                            workflow.id,
                                         ),
                                     })
                             },
@@ -561,17 +561,17 @@ function VersionActions({
                     )
                 }}
             >
-                The current draft (revision {project.revision}) is replaced by a
-                copy of {v}. Draft changes since then are lost. Published
+                The current draft (revision {workflow.revision}) is replaced by
+                a copy of {v}. Draft changes since then are lost. Published
                 versions, {v} included, stay as they are.
             </ConfirmDialog>
-            <ProjectFormDialog
+            <WorkflowFormDialog
                 open={action === 'clone'}
                 onClose={close}
-                title={`Clone ${v} as a new project`}
-                submitLabel="Create project"
+                title={`Clone ${v} as a new workflow`}
+                submitLabel="Create workflow"
                 initial={{
-                    name: `${project.name} (${v})`.slice(0, 200),
+                    name: `${workflow.name} (${v})`.slice(0, 200),
                     description: '',
                 }}
                 withDescription={false}
@@ -580,7 +580,7 @@ function VersionActions({
                 onSubmit={({ name }) => {
                     clone.mutate(
                         {
-                            projectId: project.id,
+                            workflowId: workflow.id,
                             name,
                             version: version.version,
                         },
@@ -589,11 +589,11 @@ function VersionActions({
                                 close()
                                 toast.notify({
                                     tone: 'success',
-                                    title: `Project “${copy.name}” created`,
+                                    title: `Workflow “${copy.name}” created`,
                                     description: `Its draft is a copy of ${v}; it has no published versions.`,
                                 })
                                 void navigate(
-                                    `/projects/${encodeURIComponent(copy.id)}`,
+                                    `/workflows/${encodeURIComponent(copy.id)}`,
                                 )
                             },
                         },
@@ -605,19 +605,19 @@ function VersionActions({
 }
 
 function VersionView({
-    project,
+    workflow,
     version,
 }: {
-    project: Project
-    version: ProjectVersion
+    workflow: Workflow
+    version: WorkflowVersion
 }) {
-    const latest = version.version === project.current_version
+    const latest = version.version === workflow.current_version
     return (
         <>
             <PageHeader
-                title={`${project.name} · v${String(version.version)}`}
+                title={`${workflow.name} · v${String(version.version)}`}
                 description={
-                    <TextLink to={versionsPath(project.id)}>
+                    <TextLink to={versionsPath(workflow.id)}>
                         All versions
                     </TextLink>
                 }
@@ -627,7 +627,7 @@ function VersionView({
                             <ImmutableBadge />
                             {latest && <LatestBadge />}
                         </span>
-                        <VersionActions project={project} version={version} />
+                        <VersionActions workflow={workflow} version={version} />
                     </>
                 }
             />
@@ -636,33 +636,36 @@ function VersionView({
                     v{version.version} cannot be edited. Changes go into the
                     draft and become a new version when it is published.{' '}
                     <TextLink
-                        to={`/projects/${encodeURIComponent(project.id)}/editor`}
+                        to={`/workflows/${encodeURIComponent(workflow.id)}/editor`}
                     >
                         Open draft in editor
                     </TextLink>
                 </Alert>
-                <Metadata version={version} latest={project.current_version} />
+                <Metadata version={version} latest={workflow.current_version} />
                 <Snapshot version={version} />
                 <Comparison
                     // Reset the selection when navigating between versions.
                     key={version.version}
-                    project={project}
+                    workflow={workflow}
                     version={version}
                 />
-                <Executions projectId={project.id} version={version.version} />
+                <Executions
+                    workflowId={workflow.id}
+                    version={version.version}
+                />
             </div>
         </>
     )
 }
 
-function VersionNotFound({ projectId }: { projectId: string }) {
+function VersionNotFound({ workflowId }: { workflowId: string }) {
     return (
         <ErrorState
             title="Version not found"
             titleAs="h1"
-            description="This project has no published version with that number."
+            description="This workflow has no published version with that number."
             action={
-                <TextLink to={versionsPath(projectId)}>All versions</TextLink>
+                <TextLink to={versionsPath(workflowId)}>All versions</TextLink>
             }
         />
     )
@@ -672,34 +675,34 @@ const notFound = (error: unknown) =>
     error instanceof ApiError && error.kind === 'not_found'
 
 function VersionDetail({
-    projectId,
+    workflowId,
     version,
 }: {
-    projectId: string
+    workflowId: string
     version: number
 }) {
     const client = useApiClient()
-    const project = useQuery(projectQueries.detail(client, projectId))
+    const workflow = useQuery(workflowQueries.detail(client, workflowId))
     const snapshot = useQuery(
-        projectQueries.version(client, projectId, version),
+        workflowQueries.version(client, workflowId, version),
     )
 
-    if (project.data === undefined && notFound(project.error))
-        return <ProjectNotFound />
+    if (workflow.data === undefined && notFound(workflow.error))
+        return <WorkflowNotFound />
     if (snapshot.data === undefined && notFound(snapshot.error))
-        return <VersionNotFound projectId={projectId} />
+        return <VersionNotFound workflowId={workflowId} />
     return (
         <>
-            {(project.data === undefined || snapshot.data === undefined) && (
+            {(workflow.data === undefined || snapshot.data === undefined) && (
                 <PageHeader title={`Version ${String(version)}`} />
             )}
-            <QuerySection query={project} subject="the project">
+            <QuerySection query={workflow} subject="the workflow">
                 {(p) => (
                     <QuerySection
                         query={snapshot}
                         subject={`version ${String(version)}`}
                     >
-                        {(v) => <VersionView project={p} version={v} />}
+                        {(v) => <VersionView workflow={p} version={v} />}
                     </QuerySection>
                 )}
             </QuerySection>
@@ -708,16 +711,16 @@ function VersionDetail({
 }
 
 export function VersionDetailPage() {
-    const { projectId = '', version = '' } = useParams()
+    const { workflowId = '', version = '' } = useParams()
     const number = Number(version)
     // Only canonical positive integers ("3", not "03" or "3.0") are versions.
     if (!Number.isInteger(number) || number < 1 || String(number) !== version)
-        return <VersionNotFound projectId={projectId} />
+        return <VersionNotFound workflowId={workflowId} />
     return (
         <VersionDetail
             // Fresh local state (pages, comparison) per version.
-            key={`${projectId}/${version}`}
-            projectId={projectId}
+            key={`${workflowId}/${version}`}
+            workflowId={workflowId}
             version={number}
         />
     )

@@ -68,13 +68,13 @@ test('a credential is created, referenced, exported without its secret and repor
         ).not.toContain(secret)
     })
 
-    let projectId = ''
+    let workflowId = ''
     await test.step('a node references it by name', async () => {
-        const created = await api.post('/api/v1/projects', {
+        const created = await api.post('/api/v1/workflows', {
             data: { name: `Uses ${name}` },
         })
-        projectId = ((await created.json()) as { id: string }).id
-        await p.goto(`/projects/${projectId}/editor`)
+        workflowId = ((await created.json()) as { id: string }).id
+        await p.goto(`/workflows/${workflowId}/editor`)
         const library = p.getByRole('region', { name: 'Node library' })
         await library
             .getByRole('searchbox', { name: 'Search nodes' })
@@ -106,7 +106,7 @@ test('a credential is created, referenced, exported without its secret and repor
         await p.keyboard.press('ControlOrMeta+s')
         await expect(p.getByText('All changes saved to draft')).toBeVisible()
         const draft = await (
-            await api.get(`/api/v1/projects/${projectId}`)
+            await api.get(`/api/v1/workflows/${workflowId}`)
         ).text()
         expect(draft).toContain(`"Authorization":"${reference}"`)
         expect(draft).not.toContain(secret)
@@ -114,7 +114,7 @@ test('a credential is created, referenced, exported without its secret and repor
 
     let packagePath = ''
     await test.step('the export holds the reference, never the secret', async () => {
-        await p.goto(`/projects/${projectId}`)
+        await p.goto(`/workflows/${workflowId}`)
         const { path } = await downloaded(p, () =>
             p.getByRole('button', { name: 'Export', exact: true }).click(),
         )
@@ -138,11 +138,11 @@ test('a credential is created, referenced, exported without its secret and repor
             ).status(),
         ).toBe(404)
 
-        await p.goto('/projects')
-        await p.getByRole('button', { name: 'Import project' }).click()
-        const dialog = p.getByRole('dialog', { name: 'Import project' })
+        await p.goto('/workflows')
+        await p.getByRole('button', { name: 'Import workflow' }).click()
+        const dialog = p.getByRole('dialog', { name: 'Import workflow' })
         await dialog
-            .getByLabel('Project package (.zip)')
+            .getByLabel('Workflow package (.zip)')
             .setInputFiles(packagePath)
         await dialog
             .getByRole('button', { name: 'Import', exact: true })
@@ -159,16 +159,16 @@ test('a credential is created, referenced, exported without its secret and repor
 test('a broken package is refused with the backend reason', async ({
     page: p,
 }) => {
-    await p.goto('/projects')
-    await p.getByRole('button', { name: 'Import project' }).click()
-    const dialog = p.getByRole('dialog', { name: 'Import project' })
-    await dialog.getByLabel('Project package (.zip)').setInputFiles({
+    await p.goto('/workflows')
+    await p.getByRole('button', { name: 'Import workflow' }).click()
+    const dialog = p.getByRole('dialog', { name: 'Import workflow' })
+    await dialog.getByLabel('Workflow package (.zip)').setInputFiles({
         name: 'broken.akasha.zip',
         mimeType: 'application/zip',
         buffer: Buffer.from('not a zip archive'),
     })
     const response = p.waitForResponse((r) =>
-        r.url().endsWith('/api/v1/projects/import'),
+        r.url().endsWith('/api/v1/workflows/import'),
     )
     await dialog.getByRole('button', { name: 'Import', exact: true }).click()
     const refused = await response
@@ -176,5 +176,5 @@ test('a broken package is refused with the backend reason', async ({
     const { message } = (await refused.json()) as { message: string }
     await expect(dialog.getByRole('alert')).toContainText(message)
     // Still the upload form: nothing was imported.
-    await expect(dialog.getByLabel('Project package (.zip)')).toBeVisible()
+    await expect(dialog.getByLabel('Workflow package (.zip)')).toBeVisible()
 })

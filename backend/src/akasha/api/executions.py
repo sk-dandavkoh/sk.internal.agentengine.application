@@ -1,9 +1,9 @@
 """Execution inspection and control: thin HTTP adapters (architecture §22).
 
 - GET  /executions?status=&offset=&limit= : runs across the caller's
-  projects (all for an admin), newest first, optionally by status
+  workflows (all for an admin), newest first, optionally by status
 - GET  /executions/status-counts : how many of those runs are in each status
-- GET  /projects/{project_id}/executions?version= : the project's runs,
+- GET  /workflows/{workflow_id}/executions?version= : the workflow's runs,
   newest first, optionally of one published version
 - GET  /executions/{execution_id} : one run's state
 - GET  /executions/{execution_id}/events?after=&limit= : its event history
@@ -11,8 +11,8 @@
   its nodes logged (redacted, bounded per attempt)
 - POST /executions/{execution_id}/cancel : request cooperative cancellation
 
-Where the path carries the project or execution id, ``authorize_path``
-limits the route to callers who may see that project; the cross-project
+Where the path carries the workflow or execution id, ``authorize_path``
+limits the route to callers who may see that workflow; the cross-workflow
 routes apply the same rule through the owner filter. Full node-level detail
 (outputs, errors, usage, cost) is the report: GET /reports/executions/{id}.
 """
@@ -24,14 +24,14 @@ from fastapi import APIRouter, Body, Depends, Query, Request, status
 from pydantic import BaseModel, Field, JsonValue
 
 from akasha.api.auth import CurrentIdentity
-from akasha.api.project_schemas import PageInfo
-from akasha.api.projects import Limit, Offset
 from akasha.api.schemas import ErrorResponse
 from akasha.api.trigger_schemas import ExecutionDetail, ExecutionListItem
+from akasha.api.workflow_schemas import PageInfo
+from akasha.api.workflows import Limit, Offset
 from akasha.application.auth import AuthorizationService
 from akasha.application.executions import ExecutionService
 from akasha.application.persistence import ExecutionSummary
-from akasha.application.projects import MAX_PAGE_SIZE, Page
+from akasha.application.workflows import MAX_PAGE_SIZE, Page
 from akasha.domain.event import Event
 from akasha.domain.execution import ExecutionStatus, LogLevel, NodeLogEntry
 from akasha.errors import ConfigurationError
@@ -78,8 +78,8 @@ class EventOut(BaseModel):
     schema_version: int
     position: int
     occurred_at: datetime
-    project_id: str
-    project_version: int | None
+    workflow_id: str
+    workflow_version: int | None
     execution_id: str | None
     node_id: str | None
     correlation_id: str | None
@@ -95,8 +95,8 @@ class EventOut(BaseModel):
             # Stored events always carry their position.
             position=event.position or 0,
             occurred_at=event.occurred_at,
-            project_id=event.project_id,
-            project_version=event.project_version,
+            workflow_id=event.workflow_id,
+            workflow_version=event.workflow_version,
             execution_id=event.execution_id,
             node_id=event.node_id,
             correlation_id=event.correlation_id,
@@ -188,9 +188,9 @@ def create_executions_router() -> APIRouter:
         visible = AuthorizationService.visible_to(identity)
         return StatusCounts(counts=await svc.count_by_status(visible_to=visible))
 
-    @router.get("/projects/{project_id}/executions")
+    @router.get("/workflows/{workflow_id}/executions")
     async def list_executions(
-        project_id: str,
+        workflow_id: str,
         svc: Executions,
         offset: Offset = 0,
         limit: Limit = 50,
@@ -199,7 +199,7 @@ def create_executions_router() -> APIRouter:
         ] = None,
     ) -> ExecutionPage:
         page = await svc.list_executions(
-            project_id, version=version, offset=offset, limit=limit
+            workflow_id, version=version, offset=offset, limit=limit
         )
         return ExecutionPage.from_page(page)
 

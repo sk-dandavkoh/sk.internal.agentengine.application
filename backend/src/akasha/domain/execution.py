@@ -1,6 +1,6 @@
 """Execution and NodeExecution: WHAT happened / is happening.
 
-An Execution always pins an immutable ProjectVersion snapshot — never a draft
+An Execution always pins an immutable WorkflowVersion snapshot — never a draft
 (vision §5.5). Status changes only through named transition methods
 (architecture §3.6); there is no other way to move a status.
 
@@ -54,8 +54,8 @@ from akasha.domain.primitives import (
     utcnow,
     validate_id,
 )
-from akasha.domain.project import ProjectVersion
 from akasha.domain.trigger import TriggerType
+from akasha.domain.workflow import WorkflowVersion
 from akasha.errors import DomainValidationError, InvalidStateTransitionError
 
 
@@ -432,7 +432,7 @@ class NodeExecution(Entity):
     history survives a later success. Mutate only through ``Execution``.
     """
 
-    node_id: str  # id of the NodeInstance in the pinned ProjectVersion
+    node_id: str  # id of the NodeInstance in the pinned WorkflowVersion
     status: NodeExecutionStatus = NodeExecutionStatus.PENDING
     attempt: int = 0
     failures: list[ExecutionError] = field(default_factory=list)
@@ -536,14 +536,14 @@ class NodeExecution(Entity):
 
 @dataclass(eq=False)
 class Execution(Entity):
-    """One run of one immutable ProjectVersion snapshot (aggregate root).
+    """One run of one immutable WorkflowVersion snapshot (aggregate root).
 
     ``node_executions`` is keyed by node instance id and covers exactly the
     nodes of the pinned graph.
     """
 
-    project_id: str
-    project_version: ProjectVersion
+    workflow_id: str
+    workflow_version: WorkflowVersion
     metadata: ExecutionMetadata = field(default_factory=ExecutionMetadata)
     retry_policy: RetryPolicy = field(default_factory=RetryPolicy)
     timeout_policy: TimeoutPolicy = field(default_factory=TimeoutPolicy)
@@ -568,13 +568,13 @@ class Execution(Entity):
 
     def __post_init__(self) -> None:
         self.id = validate_id(self.id)
-        validate_id(self.project_id)
+        validate_id(self.workflow_id)
         self.status = ExecutionStatus(self.status)
         if self.revision < 0:
             raise DomainValidationError("revision must be >= 0")
         if not isinstance(self.input, dict) or not is_storable(self.input):
             raise DomainValidationError("execution input must be a JSON object")
-        graph_nodes = self.project_version.graph.nodes
+        graph_nodes = self.workflow_version.graph.nodes
         for key, ne in self.node_executions.items():
             if key != ne.node_id or key not in graph_nodes:
                 raise DomainValidationError(
@@ -600,8 +600,8 @@ class Execution(Entity):
     @classmethod
     def create(
         cls,
-        project_id: str,
-        project_version: ProjectVersion,
+        workflow_id: str,
+        workflow_version: WorkflowVersion,
         *,
         metadata: ExecutionMetadata | None = None,
         retry_policy: RetryPolicy | None = None,
@@ -611,14 +611,14 @@ class Execution(Entity):
     ) -> "Execution":
         execution = cls(
             id=new_id("exec"),
-            project_id=project_id,
-            project_version=project_version,
+            workflow_id=workflow_id,
+            workflow_version=workflow_version,
             metadata=metadata or ExecutionMetadata(),
             retry_policy=retry_policy or RetryPolicy(),
             timeout_policy=timeout_policy or TimeoutPolicy(),
             node_executions={
                 node_id: NodeExecution.for_node(node_id)
-                for node_id in project_version.graph.nodes
+                for node_id in workflow_version.graph.nodes
             },
             created_at=now or utcnow(),
             # Deep copy: the caller's payload must not alias the record.
@@ -664,10 +664,10 @@ class Execution(Entity):
             Event(
                 event_type=event_type,
                 occurred_at=now,
-                project_id=self.project_id,
+                workflow_id=self.workflow_id,
                 execution_id=self.id,
                 node_id=node_id,
-                project_version=self.project_version.version,
+                workflow_version=self.workflow_version.version,
                 correlation_id=self.metadata.correlation_id,
                 payload=payload,
             )

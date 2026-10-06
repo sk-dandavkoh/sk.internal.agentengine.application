@@ -1,8 +1,8 @@
 import { useId } from 'react'
 import { errorMessage } from '../../api/errors'
-import type { ValidationIssue } from '../../api/projects'
+import type { ValidationIssue } from '../../api/workflows'
 import { Alert, Badge, Button, ConfirmDialog } from '../../components/ui'
-import type { PublishWorkflow } from './usePublishWorkflow'
+import type { PublishFlow } from './usePublishFlow'
 import {
     issueScope,
     SCOPE_LABELS,
@@ -14,7 +14,7 @@ const SCOPES: readonly IssueScope[] = [
     'node',
     'connection',
     'trigger',
-    'project',
+    'workflow',
 ]
 
 const plural = (n: number, word: string) =>
@@ -27,14 +27,14 @@ const plural = (n: number, word: string) =>
  * it in the editor.
  */
 export function ValidationPanel({
-    workflow,
+    publishFlow,
     revision,
     clean,
     currentVersion,
     nodeName,
     onLocate,
 }: {
-    workflow: PublishWorkflow
+    publishFlow: PublishFlow
     revision: number
     clean: boolean
     /** Latest published version; 0 before the first publish. */
@@ -44,13 +44,13 @@ export function ValidationPanel({
     onLocate: (issue: ValidationIssue) => void
 }) {
     const statusId = useId()
-    const { checked, current } = workflow
+    const { checked, current } = publishFlow
     const next = currentVersion + 1
     const issues = checked?.result.issues ?? []
 
     const status = !clean
         ? 'Save the draft first: the backend validates and publishes the saved draft only.'
-        : workflow.stale
+        : publishFlow.stale
           ? 'The draft was changed elsewhere. Reload it before validating or publishing.'
           : checked === null
             ? `Revision ${String(revision)} has not been validated yet.`
@@ -61,9 +61,9 @@ export function ValidationPanel({
                 : `The backend rejected revision ${String(revision)} with ${plural(issues.length, 'error')}. Fix them and validate again.`
 
     const publishFailure =
-        workflow.publishError !== null &&
-        publishIssues(workflow.publishError) === null
-            ? errorMessage(workflow.publishError)
+        publishFlow.publishError !== null &&
+        publishIssues(publishFlow.publishError) === null
+            ? errorMessage(publishFlow.publishError)
             : undefined
 
     return (
@@ -107,9 +107,9 @@ export function ValidationPanel({
             <div className="flex flex-wrap gap-2">
                 <Button
                     size="sm"
-                    onClick={workflow.validate}
-                    loading={workflow.validating}
-                    disabled={!clean || workflow.stale}
+                    onClick={publishFlow.validate}
+                    loading={publishFlow.validating}
+                    disabled={!clean || publishFlow.stale}
                     aria-describedby={statusId}
                 >
                     Validate
@@ -117,16 +117,16 @@ export function ValidationPanel({
                 <Button
                     size="sm"
                     variant="primary"
-                    onClick={workflow.requestPublish}
-                    disabled={!workflow.canPublish}
+                    onClick={publishFlow.requestPublish}
+                    disabled={!publishFlow.canPublish}
                     aria-describedby={statusId}
                 >
                     Publish…
                 </Button>
             </div>
-            {workflow.validateError !== null && (
+            {publishFlow.validateError !== null && (
                 <Alert tone="danger" title="Could not validate the draft">
-                    {errorMessage(workflow.validateError)}
+                    {errorMessage(publishFlow.validateError)}
                 </Alert>
             )}
 
@@ -175,15 +175,15 @@ export function ValidationPanel({
             )}
 
             <ConfirmDialog
-                open={workflow.confirming}
+                open={publishFlow.confirming}
                 title={`Publish version ${String(next)}?`}
                 confirmLabel={`Publish version ${String(next)}`}
                 tone="primary"
                 irreversible
-                pending={workflow.publishing}
+                pending={publishFlow.publishing}
                 error={publishFailure}
-                onCancel={workflow.cancelPublish}
-                onConfirm={workflow.publish}
+                onCancel={publishFlow.cancelPublish}
+                onConfirm={publishFlow.publish}
             >
                 The backend validates draft revision {revision} once more and
                 freezes it as version {next}. Published versions are immutable:

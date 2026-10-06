@@ -23,7 +23,7 @@ Frontend:
 - An inspector panel: `NodeInspector.tsx`, wired into `EditorPage.tsx`.
 - A new `configure` editor-reducer action, so config edits are undoable draft changes saved by the existing save/autosave path.
 
-**Resulting system state.** Selecting exactly one node in `/projects/:id/editor` shows a "Settings: <node>" panel:
+**Resulting system state.** Selecting exactly one node in `/workflows/:id/editor` shows a "Settings: <node>" panel:
 - The form is derived only from that node's `config_schema`.
 - The backend checks the config 400 ms after typing settles, and issues appear at their fields and in a list.
 - Edits are saved with the draft.
@@ -177,7 +177,7 @@ See §12.
 | `frontend/src/features/editor/configSchema.test.ts` | Created | 11 unit tests |
 | `frontend/src/features/editor/NodeInspector.test.tsx` | Created | 16 component tests |
 | `frontend/src/features/editor/editorState.test.ts` | Modified | 4 `configure` tests |
-| `frontend/tests/fullstack/projects.spec.ts` | Modified | 1 full-stack inspector test |
+| `frontend/tests/fullstack/workflows.spec.ts` | Modified | 1 full-stack inspector test |
 | `docs/architecture.md` | Modified | §3.5 implementation notes; §22 endpoint table |
 | `docs/sdk.md` | Modified | SDK version; `NodeConfigSchema` keywords; `CREDENTIAL_REFERENCE_FORMAT` row |
 | `frontend/README.md` | Modified | New "Node inspector" section |
@@ -192,7 +192,7 @@ There are no new directories, migrations, configuration files or dependency chan
 ### 5.1 Backend endpoint for per-field config validation
 
 - **Decision:** add `POST /api/v1/nodes/{node_type}/config/validate`.
-- **Context:** The inspector must show validation errors per field. The only existing check was `POST /projects/{id}/validate`. That endpoint:
+- **Context:** The inspector must show validation errors per field. The only existing check was `POST /workflows/{id}/validate`. That endpoint:
   - works on the saved draft
   - reports only the first config issue per node
   - carries no field path, only a message
@@ -202,7 +202,7 @@ There are no new directories, migrations, configuration files or dependency chan
 - **Chosen approach:** a stateless endpoint backed by `NodeDefinition.config_issues`. It returns every issue with a key/index path.
 - **Alternatives considered:**
   1. Re-implement the JSON-Schema subset in TypeScript. Rejected: it duplicates domain rules and could drift.
-  2. Use the project validate endpoint only. Rejected: it requires a save and gives no field paths.
+  2. Use the workflow validate endpoint only. Rejected: it requires a save and gives no field paths.
   3. Add a JSON-Schema library to the frontend. Rejected: it adds a dependency and is still a second, non-authoritative interpreter.
 - **Consequences:**
   - The frontend sends the config about 400 ms after typing settles; results are cached per config.
@@ -395,7 +395,7 @@ No infrastructure or environment problems occurred. Docker, Testcontainers and P
    - `test_config_required_and_unknown_keys`: the message regexes were updated to the new wording.
    - `test_invalid_configuration_is_a_configuration_error[credential:Not Valid]`: the case moved to `test_config_schema_rejects`, because the schema now rejects it before the node runs.
 5. **Publish validation reports every config problem (follow-up after the first report).**
-   - Symptom: `POST /projects/{id}/validate` and publish returned one `invalid_config` issue per node, the first violation only, so fixing a config took one validate round per problem.
+   - Symptom: `POST /workflows/{id}/validate` and publish returned one `invalid_config` issue per node, the first violation only, so fixing a config took one validate round per problem.
    - Root cause: `graph_validation._check_node_config` called `validate_config`, which raises on the first issue.
    - Implementation: it now iterates `definition.config_schema.issues(config)` and emits one `ValidationIssue(INVALID_CONFIG, "invalid configuration: <location> <message>", node_id)` per issue. Message format per issue is unchanged. Unchanged: plaintext secrets still short-circuit into one `plaintext_secret` issue (avoids a duplicate "must be a credential reference" for the same field); a malformed node schema (`NodeContractError`) still yields one issue.
    - Verification: `tests/domain/test_graph_validation.py::test_invalid_config_missing_key` now asserts both issues (`config.retries is required`, `config.x is not allowed`); full backend suite re-run (§13).
@@ -570,7 +570,7 @@ Both are reported in §20. They do not block any acceptance criterion, which is 
 | `frontend/README.md` | New feature | "Node inspector" section: kinds, defaults, validation flow, credentials, schema changes, undo, tests |
 | `docs/reports/frontend/phase-09-node-inspector.md` | Phase report | This document |
 
-Should be updated in a future phase: `docs/project-format.md` does not mention the config schema annotations. It is not required, because the project format is unchanged.
+Should be updated in a future phase: `docs/workflow-format.md` does not mention the config schema annotations. It is not required, because the workflow format is unchanged.
 
 ---
 
@@ -688,7 +688,7 @@ None. No dependency, version, environment variable, Docker, database, Redis or t
   - Duplicating a node copies `config` as is.
   - The reducer's `lastEdit` must be reset by every new commit; `commit()` already does this.
 - **For Phase 11 (validation/publish):**
-  - Project validation issues currently carry `node_id` but no config path.
+  - Workflow validation issues currently carry `node_id` but no config path.
   - To focus a field from a validation issue, extend `ValidationIssue` with the `ConfigIssue` path rather than parsing messages.
 - **Must not be changed casually:**
   - `format: "credential-reference"` semantics (enforced and SDK-public).

@@ -74,15 +74,15 @@ async def test_a_token_authenticates_as_its_user_with_that_users_access(
     # No more than the user: admin areas stay closed.
     response = await env.client.get("/api/v1/users", headers=pat(created))
     assert_error(response, 403, "PERMISSION_DENIED")
-    project = await env.client.post(
-        "/api/v1/projects", json={"name": "admins"}, headers=admin
+    workflow = await env.client.post(
+        "/api/v1/workflows", json={"name": "admins"}, headers=admin
     )
     hidden = await env.client.get(
-        f"/api/v1/projects/{project.json()['id']}", headers=pat(created)
+        f"/api/v1/workflows/{workflow.json()['id']}", headers=pat(created)
     )
-    assert_error(hidden, 404, "PROJECT_NOT_FOUND")
+    assert_error(hidden, 404, "WORKFLOW_NOT_FOUND")
     mine = await env.client.post(
-        "/api/v1/projects", json={"name": "bots"}, headers=pat(created)
+        "/api/v1/workflows", json={"name": "bots"}, headers=pat(created)
     )
     assert mine.status_code == 201
     assert mine.json()["owner_id"] == who.json()["id"]

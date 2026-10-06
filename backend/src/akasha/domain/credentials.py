@@ -1,8 +1,8 @@
 """Credentials: named secrets held by the Credential Store (architecture §32).
 
-Projects store ``CredentialReference``s (``credential:<name>``), never values.
+Workflows store ``CredentialReference``s (``credential:<name>``), never values.
 The name is the credential's identity and is immutable, so references stay
-valid across value rotation and survive project export/import (the target
+valid across value rotation and survive workflow export/import (the target
 installation provides a credential of the same name).
 
 ``Secret`` wraps plaintext so it cannot leak by accident: ``str``/``repr``
@@ -28,7 +28,7 @@ MAX_SECRET_LENGTH = 64 * 1024
 
 
 class PlaintextSecretError(AkashaError):
-    """Project configuration contains a secret value instead of a reference."""
+    """Workflow configuration contains a secret value instead of a reference."""
 
     code = "PLAINTEXT_SECRET"
     http_status = 422

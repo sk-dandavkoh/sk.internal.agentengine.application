@@ -5,7 +5,7 @@
 **Supposed to achieve.** Roadmap §23 asks the backend to "generate useful
 execution reports from persisted data". It names `ReportService`,
 `ExecutionReport` and `ReportGenerator`. It asks for:
-- report contents: project, project version, execution status, duration,
+- report contents: workflow, workflow version, execution status, duration,
   nodes, errors, token usage, cost estimates, outputs, artifacts and
   timestamps;
 - at least one export format;
@@ -37,7 +37,7 @@ There are no schema changes, no migrations and no new dependencies.
   JSON report, whatever its status (created, running, completed, failed,
   cancelled or timed out).
 - Every field is derived from the persisted Execution aggregate and its pinned
-  ProjectVersion.
+  WorkflowVersion.
 - The persisted event log is attached as a timeline only.
 
 **Acceptance criteria.** The single roadmap acceptance criterion ("Reports
@@ -59,7 +59,7 @@ Both are reported as deferred (§19).
 **Roadmap §23 (Phase 19 — Reports):**
 - Goal: generate useful execution reports from persisted data.
 - Scope: `ReportService`, `ExecutionReport`, `ReportGenerator`.
-- Contents: project, project version, execution status, duration, nodes,
+- Contents: workflow, workflow version, execution status, duration, nodes,
   errors, token usage, cost estimates, outputs, artifacts, timestamps.
 - At least one export format.
 - Tests: successful report, failed execution report, cost information,
@@ -71,7 +71,7 @@ Both are reported as deferred (§19).
   - reports are built from persisted data and must not depend on volatile
     runtime memory;
   - they must be secret-safe;
-  - minimum content: project, version, execution, start/end, status, node
+  - minimum content: workflow, version, execution, start/end, status, node
     executions, errors, run times, relevant metrics, and token usage and cost
     where available.
 - **`backend/AGENTS.md` §8:** names the use case `GenerateExecutionReport`.
@@ -96,21 +96,21 @@ Both are reported as deferred (§19).
   - `ErrorReport`
   - `TokenUsageReport`
   - `CostReport`
-  - `ProjectReport`
+  - `WorkflowReport`
   - `CancellationReport`
   - `ExecutionSection`
   - `NodeReport`
   - `MetricsReport`
   - `EventReport`
   - `ExecutionReport`, the root
-- **`build_report(execution, *, project_name, events=(), events_truncated=False)`:**
+- **`build_report(execution, *, workflow_name, events=(), events_truncated=False)`:**
   a pure function from persisted state to an `ExecutionReport`. It does no
   I/O and reads no clock. This is the roadmap's "ReportGenerator" (see §5,
   D-4).
 - **`report_json(report)`:** the export format. It produces canonical JSON
   (`sort_keys=True`, `ensure_ascii=False`, `allow_nan=False`, `indent=2`).
 - **`ReportService(uow).execution_report(execution_id)`:** the use case. It
-  loads events, the execution and the project in one unit of work.
+  loads events, the execution and the workflow in one unit of work.
 - **Helpers:**
   - `_node` and `_metrics`;
   - `_usage_and_cost`, a defensive parser for node-reported usage and cost;
@@ -205,7 +205,7 @@ The following decisions clarify how architecture §55 is realised.
   canonical state", and architecture §18.
 - **Chosen approach:**
   - status, timings, attempts, failures, outputs, errors and metrics come
-    from `Execution`, its `NodeExecution`s and its pinned `ProjectVersion`;
+    from `Execution`, its `NodeExecution`s and its pinned `WorkflowVersion`;
   - `events` is a verbatim, redacted list of the stored event rows (position,
     type, time, node id, payload).
 - **Alternatives considered:** reconstructing node timelines from
@@ -243,7 +243,7 @@ The following decisions clarify how architecture §55 is realised.
   state and a single method.
 - **Reason:** `AGENTS.md` §119 (no premature abstraction). A pure function
   is the simplest testable form.
-- **Consequences:** if more report kinds appear (project-level, aggregate),
+- **Consequences:** if more report kinds appear (workflow-level, aggregate),
   add sibling functions or introduce a class then.
 
 ### D-5: Token usage and cost are recognised by output shape
@@ -291,8 +291,8 @@ The following decisions clarify how architecture §55 is realised.
 
 | Model | Fields |
 |---|---|
-| `ExecutionReport` | `schema_version`, `execution_id`, `project`, `execution`, `nodes`, `metrics`, `events`, `events_truncated` |
-| `ProjectReport` | `id`, `name` (nullable), `version`, `version_description`, `published_at` |
+| `ExecutionReport` | `schema_version`, `execution_id`, `workflow`, `execution`, `nodes`, `metrics`, `events`, `events_truncated` |
+| `WorkflowReport` | `id`, `name` (nullable), `version`, `version_description`, `published_at` |
 | `ExecutionSection` | `status`, `trigger_type`, `trigger_id`, `correlation_id`, `engine_version`, `node_versions`, `created_at`, `started_at`, `finished_at`, `duration_ms`, `input`, `error`, `cancellation` |
 | `NodeReport` | `node_id`, `node_type`, `label`, `status`, `attempts`, `retries`, `started_at`, `finished_at`, `duration_ms`, `error`, `failures`, `outputs`, `usage`, `cost` |
 | `MetricsReport` | `node_status_counts` (all 7 statuses, zero-filled), `attempts`, `retries`, `failed_attempts`, `usage`, `costs`, `cost_complete` |
@@ -356,9 +356,9 @@ The following decisions clarify how architecture §55 is realised.
    the first 10,000 and `truncated=True` when there were more.
 3. `load_execution(uow, id)` (existing helper in `application/executions.py`)
    raises `ExecutionNotFoundError` for unknown ids.
-4. `uow.projects.get(project_id)` supplies the project name. `None` becomes
-   `name=None`. This cannot normally happen: the `project_versions` foreign
-   key to `projects` is `ON DELETE RESTRICT`.
+4. `uow.workflows.get(workflow_id)` supplies the workflow name. `None` becomes
+   `name=None`. This cannot normally happen: the `workflow_versions` foreign
+   key to `workflows` is `ON DELETE RESTRICT`.
 5. The unit of work is left without commit (read-only, so the transaction
    rolls back).
 6. `build_report(...)` runs.
@@ -480,7 +480,7 @@ not defects.
 
 | Problem | Root cause | Fix | Regression test | Area |
 |---|---|---|---|---|
-| Test called `project.publish_draft(now=T0)` | Wrong keyword; the signature is `publish_draft(*, published_at=...)` | Changed to `published_at=T0` | All integration report tests exercise it | Tests |
+| Test called `workflow.publish_draft(now=T0)` | Wrong keyword; the signature is `publish_draft(*, published_at=...)` | Changed to `published_at=T0` | All integration report tests exercise it | Tests |
 | Unwired-endpoint test expected 503 | Wrong assumption about `ConfigurationError` (F-6) | Expect 500 `CONFIGURATION_ERROR`; moved to the Docker-free unit file | `test_report_endpoint_without_persistence` | Tests |
 | mypy: `amount > float` on `Any \| None`; `float(Any \| None)` | `type(x) in (...)` does not narrow for mypy | `isinstance(amount, int \| float) and not isinstance(amount, bool)` | `test_malformed_cost_keeps_usage` (bool, NaN, inf cases) | `application/reports.py` |
 | mypy: `sorted()` over `list[int \| None]` in a test | Optional positions | Assert `None not in positions`, then sort the filtered list | `test_successful_execution_report` | Tests |
@@ -538,7 +538,7 @@ status, timestamps, node order, per-node status, attempts, failure count
 and timings against the execution **reloaded from the database**.
 
 - `test_successful_execution_report`: **PASS**. It checks:
-  - project name, version and description;
+  - workflow name, version and description;
   - trigger `api` and the correlation id;
   - node versions;
   - `duration_ms = 7000` and the input;
@@ -657,8 +657,8 @@ after it.
 | Scope: `ReportService` | PASS | `application/reports.py` |
 | Scope: `ExecutionReport` | PASS | `application/reports.py` |
 | Scope: `ReportGenerator` | PASS (as a function) | `build_report`; decision D-4 |
-| Content: project | PASS | `ProjectReport`; success test |
-| Content: project version | PASS | `ProjectReport.version`, `published_at`, `version_description` |
+| Content: workflow | PASS | `WorkflowReport`; success test |
+| Content: workflow version | PASS | `WorkflowReport.version`, `published_at`, `version_description` |
 | Content: execution status | PASS | `ExecutionSection.status`; every scenario |
 | Content: duration | PASS | `duration_ms` (execution and node); success and partial tests |
 | Content: nodes | PASS | `NodeReport` per node; `assert_matches_persisted` |
@@ -729,7 +729,7 @@ criterion, hence **COMPLETE WITH LIMITATIONS** rather than COMPLETE.
 **Queries per report:**
 - 1 execution load (the existing repository: the execution row plus its
   node executions);
-- 1 project load (the existing repository loads the full project row
+- 1 workflow load (the existing repository loads the full workflow row
   including the draft graph and files, but only `name` is used);
 - `ceil(events / 500)` event queries, with a maximum of 21. They use
   `ix_events_execution_position`.
@@ -772,7 +772,7 @@ deterministic), but it is not needed yet.
 
 - **Dependencies:** none added, removed or upgraded. `pydantic` was already a
   dependency (via FastAPI) and was already used in the application layer
-  (`application/project_package.py`).
+  (`application/workflow_package.py`).
 - **Configuration and environment variables:** none.
 - **Docker / database / Redis:** none. No migration.
 - **Test infrastructure:** existing fixtures reused (`database`, `uow`,
@@ -791,7 +791,7 @@ deterministic), but it is not needed yet.
 | Authorization on `/api/v1/reports` | Out of scope | Phase 20 | Auth subsystem | No |
 | CLI access (`akasha report …`) | Out of scope | Phase 21 | CLI | No |
 | Additional export formats (Markdown, PDF) | Roadmap requires one; YAGNI | When a consumer needs it | None | No |
-| Report listing, search, project or aggregate reports | Not in roadmap scope | Unassigned | None | No |
+| Report listing, search, workflow or aggregate reports | Not in roadmap scope | Unassigned | None | No |
 
 ---
 
@@ -829,7 +829,7 @@ deterministic), but it is not needed yet.
 | Reports unauthenticated | Any API client can read any execution's data | MEDIUM (same as all current endpoints) | `api/reports.py` | Put it behind the Phase 20 router dependency | Phase 20 |
 | Token usage of failed attempts not persisted | Costs understated | LOW | Domain (`NodeExecution`), `nodes/llm.py` | Persist usage per attempt | Phase 23 |
 | Roadmap lists artifacts for Phase 19 | Documentation mismatch | LOW | `docs/roadmap-backend.md` | Re-home the artifact items when artifacts are planned | Next roadmap revision |
-| Project load reads the full draft for one field | Unnecessary I/O per report | LOW | `ReportService` | Only if measured: a name-only query | Phase 24, if profiling shows it |
+| Workflow load reads the full draft for one field | Unnecessary I/O per report | LOW | `ReportService` | Only if measured: a name-only query | Phase 24, if profiling shows it |
 
 ---
 
@@ -859,7 +859,7 @@ deterministic), but it is not needed yet.
 ## 23. Repository / Git State
 
 - **Branch:** `main`.
-- **Last commit:** `599e011 backend phase 18 - project import and export`.
+- **Last commit:** `599e011 backend phase 18 - workflow import and export`.
   Phase 19 is **not committed**.
 - **Working tree (from `git status --short`):**
   ```
@@ -905,7 +905,7 @@ deterministic), but it is not needed yet.
 
 ### Open
 - See §21: unbounded output payload, no authorization, failed-attempt usage,
-  the roadmap artifact mismatch, the project over-fetch.
+  the roadmap artifact mismatch, the workflow over-fetch.
 
 ### Blocking Issues
 - None for the roadmap acceptance criterion.
@@ -925,7 +925,7 @@ deterministic), but it is not needed yet.
   pattern as the other routers. A router-level auth dependency can be added
   there.
 - Report data is as sensitive as execution input and outputs. Authorization
-  should use the same ownership rule as executions and projects: a user who
+  should use the same ownership rule as executions and workflows: a user who
   may read an execution may read its report.
 
 **Must not be changed casually:**

@@ -119,14 +119,14 @@ Rules:
   `capabilities=NodeCapabilities(has_side_effects=True)` and use
   `context.node_execution_id` as idempotency key.
 - Other context members: execution_input (entry nodes), execution_id,
-  project_id, project_version, runtime_metadata["attempt"].
+  workflow_id, workflow_version, runtime_metadata["attempt"].
 
 ## Lifecycle over MCP (admin only)
 
 plugin_create (starter files) -> edit files -> plugin_validate (static, no
 code runs) -> plugin_test (runs one node, needs AKASHA_MCP_PLUGIN_CODE) ->
 plugin_package -> plugin_install -> node_types_list (the nodes appear) ->
-use them in a project draft -> project_publish (pins the plugin version)
+use them in a workflow draft -> workflow_publish (pins the plugin version)
 -> execution_start. plugin_update replaces an installed plugin; published
 versions pinned to the old version then refuse to run until it is back.
 plugin_disable / plugin_enable / plugin_remove (dependency-aware; force to

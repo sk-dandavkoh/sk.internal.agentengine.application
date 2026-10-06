@@ -1,10 +1,10 @@
-"""Project import / export use cases (roadmap Phase 18).
+"""Workflow import / export use cases (roadmap Phase 18).
 
-- ProjectExporter      ``export_project``: draft or published version →
-                       package bytes (``project_package.write_package``)
-- ProjectImporter      ``import_project``: package bytes → a new project
+- WorkflowExporter      ``export_workflow``: draft or published version →
+                       package bytes (``workflow_package.write_package``)
+- WorkflowImporter      ``import_workflow``: package bytes → a new workflow
                        whose draft is the package content
-- DependencyValidator  ``_requirement_issues`` plus the project dependency
+- DependencyValidator  ``_requirement_issues`` plus the workflow dependency
                        rules (``validate_dependencies``)
 
 Secrets never leave: configs hold credential references only, and export
@@ -27,19 +27,19 @@ from types import MappingProxyType
 
 from akasha import __version__ as ENGINE_VERSION
 from akasha.application.events import EventPublisher
-from akasha.application.project_package import (
+from akasha.application.workflow_package import (
     NodeRequirement,
-    ProjectPackage,
-    ProjectPackageIncompatibleError,
     Requirements,
+    WorkflowPackage,
+    WorkflowPackageIncompatibleError,
     credential_names,
     read_package,
     write_package,
 )
-from akasha.application.projects import (
-    ProjectVersionNotFoundError,
+from akasha.application.workflows import (
     UowFactory,
-    load_project,
+    WorkflowVersionNotFoundError,
+    load_workflow,
 )
 from akasha.domain.credentials import PlaintextSecretError
 from akasha.domain.event import Event, EventType
@@ -50,9 +50,9 @@ from akasha.domain.graph_validation import (
 )
 from akasha.domain.node import NodeDefinition
 from akasha.domain.primitives import semver_key, utcnow, version_satisfies
-from akasha.domain.project import (
-    Project,
-    ProjectDraft,
+from akasha.domain.workflow import (
+    Workflow,
+    WorkflowDraft,
     plaintext_secret_locations,
     validate_dependencies,
 )
@@ -63,7 +63,7 @@ logger = logging.getLogger("akasha.application.packages")
 
 @dataclass(frozen=True)
 class ImportResult:
-    project: Project
+    workflow: Workflow
     validation: ValidationResult
     # Referenced credentials this installation does not have yet (names
     # only). Not an error: the operator creates them; until then a run
@@ -71,9 +71,9 @@ class ImportResult:
     missing_credentials: tuple[str, ...]
 
 
-class ProjectPackageService:
+class WorkflowPackageService:
     """``node_definitions`` and ``plugins`` are the same live views
-    ``ProjectService`` validates against."""
+    ``WorkflowService`` validates against."""
 
     def __init__(
         self,
@@ -89,22 +89,22 @@ class ProjectPackageService:
         self._events = events or EventPublisher()
         self._engine_version = engine_version
 
-    async def export_project(
-        self, project_id: str, *, version: int | None = None
+    async def export_workflow(
+        self, workflow_id: str, *, version: int | None = None
     ) -> bytes:
         """The package of published ``version``, or of the draft if None."""
         async with self._uow() as uow:
-            project = await load_project(uow, project_id)
+            workflow = await load_workflow(uow, workflow_id)
             if version is None:
-                draft = project.draft
+                draft = workflow.draft
             else:
-                found = await uow.versions.get(project_id, version)
+                found = await uow.versions.get(workflow_id, version)
                 if found is None:
-                    raise ProjectVersionNotFoundError(
-                        "Project version not found.",
-                        details={"project_id": project_id, "version": version},
+                    raise WorkflowVersionNotFoundError(
+                        "Workflow version not found.",
+                        details={"workflow_id": workflow_id, "version": version},
                     )
-                draft = ProjectDraft(
+                draft = WorkflowDraft(
                     graph=found.graph,
                     triggers=list(found.triggers),
                     dependencies=list(found.dependencies),
@@ -112,35 +112,35 @@ class ProjectPackageService:
                     files=dict(found.files),
                 )
             data = write_package(
-                ProjectPackage(
-                    name=project.name,
+                WorkflowPackage(
+                    name=workflow.name,
                     draft=draft,
                     requires=self._requirements(draft),
                     engine_version=self._engine_version,
-                    source_project_version=version,
+                    source_workflow_version=version,
                 )
             )
             exported = Event(
-                event_type=EventType.PROJECT_EXPORTED,
+                event_type=EventType.WORKFLOW_EXPORTED,
                 occurred_at=utcnow(),
-                project_id=project.id,
-                project_version=version,
+                workflow_id=workflow.id,
+                workflow_version=version,
             )
             await uow.events.append([exported])
             await uow.commit()
         await self._events.publish([exported])
         logger.info(
-            "project_exported",
+            "workflow_exported",
             extra={
-                "event": "project_exported",
-                "project_id": project.id,
-                "project_version": version,
+                "event": "workflow_exported",
+                "workflow_id": workflow.id,
+                "workflow_version": version,
                 "package_bytes": len(data),
             },
         )
         return data
 
-    async def import_project(
+    async def import_workflow(
         self, data: bytes, *, owner_id: str | None = None
     ) -> ImportResult:
         package = read_package(data, engine_version=self._engine_version)
@@ -149,15 +149,15 @@ class ProjectPackageService:
             draft.dependencies, self._definitions, self._plugins
         )
         if issues:
-            raise ProjectPackageIncompatibleError(
-                "This installation does not provide what the project requires.",
+            raise WorkflowPackageIncompatibleError(
+                "This installation does not provide what the workflow requires.",
                 issues=issues,
             )
-        project = Project.create(
+        workflow = Workflow.create(
             package.name, description=draft.description, owner_id=owner_id
         )
         # The same write gate as every draft: file rules, no secret values.
-        project.replace_draft(draft, name=package.name)
+        workflow.replace_draft(draft, name=package.name)
         async with self._uow() as uow:
             missing = tuple(
                 [
@@ -167,37 +167,37 @@ class ProjectPackageService:
                 ]
             )
             imported = Event(
-                event_type=EventType.PROJECT_IMPORTED,
+                event_type=EventType.WORKFLOW_IMPORTED,
                 occurred_at=utcnow(),
-                project_id=project.id,
+                workflow_id=workflow.id,
             )
-            await uow.projects.save(project)
+            await uow.workflows.save(workflow)
             await uow.events.append([imported])
             await uow.commit()
         await self._events.publish([imported])
         logger.info(
-            "project_imported",
+            "workflow_imported",
             extra={
-                "event": "project_imported",
-                "project_id": project.id,
-                "revision": project.revision,
+                "event": "workflow_imported",
+                "workflow_id": workflow.id,
+                "revision": workflow.revision,
                 "source_engine_version": package.engine_version,
             },
         )
         return ImportResult(
-            project=project,
-            validation=project.draft.validate(self._definitions, self._plugins),
+            workflow=workflow,
+            validation=workflow.draft.validate(self._definitions, self._plugins),
             missing_credentials=missing,
         )
 
-    def _requirements(self, draft: ProjectDraft) -> Requirements:
+    def _requirements(self, draft: WorkflowDraft) -> Requirements:
         leaks = plaintext_secret_locations(draft.graph, draft.triggers, draft.files)
         if leaks:
             # Refuse, never strip: a silently altered export would import
-            # as a different project. Reachable only for content stored
+            # as a different workflow. Reachable only for content stored
             # before Phase 13 enforced references.
             raise PlaintextSecretError(
-                "The project contains secret values and cannot be exported;"
+                "The workflow contains secret values and cannot be exported;"
                 " replace them with credential references first.",
                 details={"paths": leaks},
             )
@@ -205,8 +205,8 @@ class ProjectPackageService:
         for node_type in sorted({n.node_type for n in draft.graph.nodes.values()}):
             definition = self._definitions.get(node_type)
             if definition is None:
-                raise ProjectPackageIncompatibleError(
-                    "The project uses a node type that is not installed, so its"
+                raise WorkflowPackageIncompatibleError(
+                    "The workflow uses a node type that is not installed, so its"
                     " requirements cannot be recorded.",
                     details={"node_type": node_type},
                 )

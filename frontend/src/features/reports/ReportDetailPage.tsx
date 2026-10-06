@@ -75,22 +75,22 @@ function Summary({ report: r }: { report: ExecutionReport }) {
                 <Item term="Status">
                     <StatusBadge status={e.status} />
                 </Item>
-                <Item term="Project">
+                <Item term="Workflow">
                     <TextLink
-                        to={`/projects/${encodeURIComponent(r.project.id)}`}
+                        to={`/workflows/${encodeURIComponent(r.workflow.id)}`}
                     >
-                        {r.project.name ?? r.project.id}
+                        {r.workflow.name ?? r.workflow.id}
                     </TextLink>
-                    {r.project.name === null && (
+                    {r.workflow.name === null && (
                         <span className="block text-muted">
-                            The project no longer exists.
+                            The workflow no longer exists.
                         </span>
                     )}
                 </Item>
                 <Item term="Version">
                     <VersionLink
-                        projectId={r.project.id}
-                        version={r.project.version}
+                        workflowId={r.workflow.id}
+                        version={r.workflow.version}
                     />
                 </Item>
                 <Item term="Trigger">

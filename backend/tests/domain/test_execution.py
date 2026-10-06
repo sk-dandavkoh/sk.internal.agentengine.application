@@ -40,8 +40,8 @@ from akasha.domain.execution import (
 )
 from akasha.domain.graph import Graph, NodeInstance
 from akasha.domain.node import NodeError, NodeErrorKind
-from akasha.domain.project import Project, ProjectVersion
 from akasha.domain.trigger import TriggerType
+from akasha.domain.workflow import Workflow, WorkflowVersion
 from akasha.errors import DomainValidationError, InvalidStateTransitionError
 
 E = ExecutionStatus
@@ -69,11 +69,11 @@ TRANSIENT = _err(NodeErrorKind.TRANSIENT)
 PERMANENT = _err(NodeErrorKind.PERMANENT)
 
 
-def _version(n_nodes: int) -> ProjectVersion:
-    project = Project.create(name="Demo")
+def _version(n_nodes: int) -> WorkflowVersion:
+    workflow = Workflow.create(name="Demo")
     for _ in range(n_nodes):
-        project.draft.graph.add_node(NodeInstance.create(node_type="core.log"))
-    return project.publish_draft(published_at=T0)
+        workflow.draft.graph.add_node(NodeInstance.create(node_type="core.log"))
+    return workflow.publish_draft(published_at=T0)
 
 
 def _execution(
@@ -85,8 +85,8 @@ def _execution(
     now: datetime | None = None,
 ) -> Execution:
     return Execution.create(
-        project_id="proj_" + "a" * 32,
-        project_version=_version(n_nodes),
+        workflow_id="wf_" + "a" * 32,
+        workflow_version=_version(n_nodes),
         metadata=metadata,
         retry_policy=retry_policy,
         timeout_policy=timeout_policy,
@@ -368,7 +368,7 @@ class TestLifecycle:
 
     def test_node_executions_cover_exactly_the_pinned_graph(self) -> None:
         version = _version(3)
-        e = Execution.create(project_id="proj_" + "a" * 32, project_version=version)
+        e = Execution.create(workflow_id="wf_" + "a" * 32, workflow_version=version)
         assert set(e.node_executions) == set(version.graph.nodes)
         assert all(k == ne.node_id for k, ne in e.node_executions.items())
 
@@ -381,8 +381,8 @@ class TestLifecycle:
         with pytest.raises(DomainValidationError):
             Execution(
                 id="exec_" + "a" * 32,
-                project_id="proj_" + "a" * 32,
-                project_version=_version(1),
+                workflow_id="wf_" + "a" * 32,
+                workflow_version=_version(1),
                 node_executions={
                     "node_" + "f" * 32: NodeExecution.for_node("node_" + "f" * 32)
                 },
@@ -475,7 +475,7 @@ class TestLifecycle:
     def test_input_is_a_private_json_object(self) -> None:
         payload = {"lead": {"name": "Ada"}}
         e = Execution.create(
-            project_id="proj_" + "a" * 32, project_version=_version(1), input=payload
+            workflow_id="wf_" + "a" * 32, workflow_version=_version(1), input=payload
         )
         payload["lead"]["name"] = "changed"
         assert e.input == {"lead": {"name": "Ada"}}
@@ -488,20 +488,20 @@ class TestLifecycle:
     def test_input_must_be_storable_json(self, payload: dict[str, object]) -> None:
         with pytest.raises(ValueError, match="JSON object"):
             Execution.create(
-                project_id="proj_" + "a" * 32,
-                project_version=_version(1),
+                workflow_id="wf_" + "a" * 32,
+                workflow_version=_version(1),
                 input=payload,
             )
 
     def test_execution_pins_version_not_draft(self) -> None:
-        project = Project.create(name="Demo")
+        workflow = Workflow.create(name="Demo")
         node = NodeInstance.create(node_type="core.log")
-        project.draft.graph.add_node(node)
+        workflow.draft.graph.add_node(node)
         e = Execution.create(
-            project_id=project.id, project_version=project.publish_draft()
+            workflow_id=workflow.id, workflow_version=workflow.publish_draft()
         )
-        project.draft.graph.remove_node(node.id)
-        assert node.id in e.project_version.graph.nodes
+        workflow.draft.graph.remove_node(node.id)
+        assert node.id in e.workflow_version.graph.nodes
         assert node.id in e.node_executions
 
 
@@ -1090,8 +1090,8 @@ class ExecutionMachine(RuleBasedStateMachine):
         e = self.e
         Execution(
             id=e.id,
-            project_id=e.project_id,
-            project_version=e.project_version,
+            workflow_id=e.workflow_id,
+            workflow_version=e.workflow_version,
             retry_policy=e.retry_policy,
             status=e.status,
             node_executions=e.node_executions,
@@ -1118,9 +1118,9 @@ def test_graph_without_nodes_can_complete() -> None:
     # Degenerate but legal snapshot; the runtime rejects empty graphs via
     # validation, not the state machine.
     e = Execution.create(
-        project_id="proj_" + "a" * 32,
-        project_version=ProjectVersion(
-            id="pver_" + "a" * 32, version=1, schema_version=1, graph=Graph()
+        workflow_id="wf_" + "a" * 32,
+        workflow_version=WorkflowVersion(
+            id="wfver_" + "a" * 32, version=1, schema_version=1, graph=Graph()
         ),
     )
     e.enqueue()
@@ -1168,8 +1168,8 @@ class TestBreakRegressions:
         with pytest.raises(DomainValidationError):
             Execution(
                 id="exec_" + "a" * 32,
-                project_id="proj_" + "a" * 32,
-                project_version=version,
+                workflow_id="wf_" + "a" * 32,
+                workflow_version=version,
                 status=status,
                 node_executions={node_id: ne},
             )
@@ -1204,8 +1204,8 @@ class TestBreakRegressions:
         with pytest.raises(ValueError):
             Execution(
                 id="exec_" + "a" * 32,
-                project_id="proj_" + "a" * 32,
-                project_version=_version(0),
+                workflow_id="wf_" + "a" * 32,
+                workflow_version=_version(0),
                 status="exploded",  # type: ignore[arg-type]  # the attack itself
             )
 
@@ -1245,8 +1245,8 @@ class TestPhase08Additions:
         with pytest.raises(DomainValidationError):
             Execution(
                 id="exec_" + "a" * 32,
-                project_id="proj_" + "a" * 32,
-                project_version=version,
+                workflow_id="wf_" + "a" * 32,
+                workflow_version=version,
                 status=status,
                 node_executions={node_id: ne},
             )
@@ -1255,8 +1255,8 @@ class TestPhase08Additions:
         with pytest.raises(DomainValidationError):
             Execution(
                 id="exec_" + "a" * 32,
-                project_id="proj_" + "a" * 32,
-                project_version=_version(0),
+                workflow_id="wf_" + "a" * 32,
+                workflow_version=_version(0),
                 revision=-1,
             )
 
@@ -1463,8 +1463,8 @@ class TestRecovery:
         def rehydrate(nodes: dict[str, NodeExecution]) -> Execution:
             return Execution(
                 id=e.id,
-                project_id=e.project_id,
-                project_version=e.project_version,
+                workflow_id=e.workflow_id,
+                workflow_version=e.workflow_version,
                 status=E.QUEUED,
                 started_at=e.started_at,
                 node_executions=nodes,

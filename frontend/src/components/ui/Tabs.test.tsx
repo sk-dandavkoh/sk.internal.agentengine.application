@@ -11,10 +11,10 @@ const items: TabItem[] = [
 
 describe('Tabs', () => {
     it('exposes tablist, selected tab and its labelled panel', () => {
-        render(<Tabs label="Project sections" items={items} />)
+        render(<Tabs label="Workflow sections" items={items} />)
 
         expect(
-            screen.getByRole('tablist', { name: 'Project sections' }),
+            screen.getByRole('tablist', { name: 'Workflow sections' }),
         ).toBeInTheDocument()
         expect(screen.getByRole('tab', { name: 'Overview' })).toHaveAttribute(
             'aria-selected',

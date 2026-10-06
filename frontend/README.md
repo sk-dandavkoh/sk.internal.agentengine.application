@@ -46,7 +46,7 @@ AKASHA_API_PROXY_TARGET=http://127.0.0.1:8001 npm run dev
 ```
 
 (or put `AKASHA_API_PROXY_TARGET` in `.env.local`). The built-in example
-projects are in `backend/examples/projects/` (see `backend/README.md`).
+workflows are in `backend/examples/workflows/` (see `backend/README.md`).
 
 ## Commands
 
@@ -206,7 +206,7 @@ it('shows the report', async () => {
   log.
 - **Fixtures**: build response bodies with small functions at the top of the
   test file that return a valid backend object and take overrides
-  (`execution(id, status)`, `project(overrides)`). They must match the
+  (`execution(id, status)`, `workflow(overrides)`). They must match the
   backend contract, since the client validates every response: a fixture the
   schema rejects shows up as a "malformed response" error, not as a pass.
 - **Live updates**: `WebSocket` is `FakeWebSocket` (`src/test/websocket.ts`)
@@ -230,7 +230,7 @@ inspect). `session.ts` holds the shared helpers (admin API context,
 cookie sign-in, download capture, a minimal zip reader for packages).
 
 - `journey.spec.ts`: the V1 journey in one test of steps, UI only: login
-  form → dashboard → create project → editor (add, configure, connect,
+  form → dashboard → create workflow → editor (add, configure, connect,
   save) → manual trigger → validate → publish → run from the trigger →
   live view to the end → inspector (nodes, logs, graph) → monitoring
   (figures checked against the summary response the page received) →
@@ -240,11 +240,11 @@ cookie sign-in, download capture, a minimal zip reader for packages).
   export (the package holds the reference, never the secret; no API
   response the page received holds it), delete it, import (reported
   missing); a corrupt package is refused with the backend's message.
-- `projects.spec.ts`: lifecycle details (conflicts, versions, cancel,
+- `workflows.spec.ts`: lifecycle details (conflicts, versions, cancel,
   dropped live connection, failed-run diagnosis, triggers, event triggers,
   sessions). `a11y.spec.ts`: axe and overflow sweep of every screen.
 - `roles.spec.ts`: a member account. The backend refuses Credentials,
-  Plugins and another user's project (403/404), and the UI shows that
+  Plugins and another user's workflow (403/404), and the UI shows that
   refusal; a crafted write from the page is refused as well. Settings
   changes the password: a wrong current password is a field error, and a
   change revokes the member's other sessions. Plugins as an admin shows the
@@ -303,7 +303,7 @@ state and both themes, and feature screens are best seen against
   `useApiClient()`, never imported as a singleton.
 - **Services**: one module per backend router, functions taking the client,
   e.g. `auth.ts` (`login`, `logout`, `fetchSession`, `changePassword`),
-  `projects.ts`, `executions.ts`, `reports.ts`, `nodes.ts`, `credentials.ts`,
+  `workflows.ts`, `executions.ts`, `reports.ts`, `nodes.ts`, `credentials.ts`,
   `plugins.ts`.
 - **Live updates**: `live.ts` follows one execution over the backend
   WebSocket (`docs/architecture.md` §23); see "Live execution" below.
@@ -311,15 +311,15 @@ state and both themes, and feature screens are best seen against
 ### Domain types
 
 The domain types are the Zod schemas of the service modules, with the
-TypeScript type inferred from each (`Project = z.infer<typeof projectSchema>`).
+TypeScript type inferred from each (`Workflow = z.infer<typeof workflowSchema>`).
 There is no second, hand-written model: what the type promises is what the
 response was checked against. Shared pieces live in `schemas.ts`.
 
 | Backend concept     | Type (module)                                                         |
 | ------------------- | --------------------------------------------------------------------- |
-| Project             | `ProjectSummary` (lists), `Project` (detail) — `projects.ts`          |
-| ProjectDraft        | `ProjectDraft` (`graph`, `triggers`, `dependencies`)                  |
-| ProjectVersion      | `ProjectVersionSummary`, `ProjectVersion` (immutable)                 |
+| Workflow            | `WorkflowSummary` (lists), `Workflow` (detail) — `workflows.ts`       |
+| WorkflowDraft       | `WorkflowDraft` (`graph`, `triggers`, `dependencies`)                 |
+| WorkflowVersion     | `WorkflowVersionSummary`, `WorkflowVersion` (immutable)               |
 | Graph / Node / Edge | `Graph`, `NodeInstance`, `Edge`                                       |
 | Trigger             | `Trigger`, `TriggerType`                                              |
 | Validation errors   | `ValidationResult`, `ValidationIssue`, `ValidationCode`               |
@@ -341,31 +341,31 @@ TanStack Query owns all server state; nothing copies it into React state or a
 store.
 
 - **`queries.ts`**: `queryKeys` (the only place keys are spelled) and query
-  options per read endpoint — `projectQueries`, `executionQueries`,
+  options per read endpoint — `workflowQueries`, `executionQueries`,
   `nodeQueries`, `pluginQueries`, `credentialQueries` — used as
-  `useQuery(projectQueries.detail(useApiClient(), id))` or in route loaders
+  `useQuery(workflowQueries.detail(useApiClient(), id))` or in route loaders
   via `queryClient.ensureQueryData`. Keys nest by ownership:
-  `['projects', id]` covers the project's versions and executions,
+  `['workflows', id]` covers the workflow's versions and executions,
   `['executions', id]` its events and report. Every execution write also
-  invalidates `['executions', 'overview']`: the cross-project lists and the
+  invalidates `['executions', 'overview']`: the cross-workflow lists and the
   status counts the dashboard shows.
 - **Freshness**: default stale-immediately (refetch on mount, stale data
   shown meanwhile); published versions `staleTime: Infinity` (immutable);
   node catalog and plugins 5 minutes (change only on backend restart).
-- **`mutations.ts`**: one hook per write (`useUpdateProject`,
-  `usePublishProject`, `useExecuteProjectVersion`, `useCancelExecution`,
+- **`mutations.ts`**: one hook per write (`useUpdateWorkflow`,
+  `usePublishWorkflow`, `useExecuteWorkflowVersion`, `useCancelExecution`,
   `useCreateCredential`, …). Each declares what it invalidates; the mutation
   stays pending until that refetch finished. No optimistic updates. Saving a
-  draft writes the returned project into the cache (no refetch); deleting
-  removes the project's queries. Credential mutations use `gcTime: 0` so the
+  draft writes the returned workflow into the cache (no refetch); deleting
+  removes the workflow's queries. Credential mutations use `gcTime: 0` so the
   secret in their variables leaves the mutation cache once unobserved.
 
 **State boundaries**: server state = the query cache above. UI state
 (dialogs, selection, filters) = component state or the URL. Editor state
-(Phase 07) is initialized from `project.draft`, edited locally and persisted
-only through `useUpdateProject`; it never writes into the query cache.
+(Phase 07) is initialized from `workflow.draft`, edited locally and persisted
+only through `useUpdateWorkflow`; it never writes into the query cache.
 
-Binary responses (project packages) go through `ApiClient.download`, with
+Binary responses (workflow packages) go through `ApiClient.download`, with
 the same headers and error mapping. Not covered: user management
 (Phase 21).
 
@@ -390,9 +390,9 @@ Two tests keep both sides in step:
 ## Dashboard
 
 `features/dashboard/` (`/dashboard`): status counts, active executions,
-recent failures, recent executions, system readiness/version and projects by
+recent failures, recent executions, system readiness/version and workflows by
 status, each from its backend endpoint (`/executions?status=`,
-`/executions/status-counts`, `/system/status`, `/projects`). Every section
+`/executions/status-counts`, `/system/status`, `/workflows`). Every section
 loads, fails, retries and shows its empty state on its own
 (`QuerySection`); a failed refresh keeps the last data with a warning. When
 every section has failed with nothing to show (backend down, no session),
@@ -403,39 +403,39 @@ report (`/reports/executions/{id}`) is fetched only when a row is opened.
 
 Not shown, because the backend has no aggregate for them: token usage and
 cost (per execution only, in the report) and Prometheus metrics (`/metrics`
-is a scrape target, not an API). Project names and status counts cover the
-first 100 projects (the page limit); beyond that the card says so.
+is a scrape target, not an API). Workflow names and status counts cover the
+first 100 workflows (the page limit); beyond that the card says so.
 
-## Projects
+## Workflows
 
-`features/projects/`: `/projects` lists the caller's projects (search by
+`features/workflows/`: `/workflows` lists the caller's workflows (search by
 name, status filter, sort, 25 per page) with search, filter, sort and page
 in the URL, so links and Back restore the view. All of it runs on the
-backend (`GET /projects?q=&status=&sort=`), never on a client-side copy.
-`/projects/:projectId` shows the metadata and offers Open editor
-(`/projects/:id/editor`, Phase 07), Edit details (name and description),
+backend (`GET /workflows?q=&status=&sort=`), never on a client-side copy.
+`/workflows/:workflowId` shows the metadata and offers Open editor
+(`/workflows/:id/editor`, Phase 07), Edit details (name and description),
 Duplicate, Export and Delete.
 
 **Import/export**: Export downloads the draft's package
-(`GET /projects/{id}/export`, `.akasha.zip`, saved byte for byte through
+(`GET /workflows/{id}/export`, `.akasha.zip`, saved byte for byte through
 `ApiClient.download`); credential values are never in it, only
-`credential:<name>` references. Import project (on `/projects`) uploads a
-package (`POST /projects/import`, size-checked in the browser for UX only)
-and shows the backend's answer: the new draft-only project, its validation
+`credential:<name>` references. Import workflow (on `/workflows`) uploads a
+package (`POST /workflows/import`, size-checked in the browser for UX only)
+and shows the backend's answer: the new draft-only workflow, its validation
 result and the referenced credentials this installation lacks, or the
 refusal with its requirement issues. Nothing is published or run.
 
 Writes are authoritative, not optimistic: a dialog stays open with a
 pending button until the backend answers, and the screen shows only data
 the backend returned. Edit details sends the draft back unchanged with the
-`revision` it was read at; a 409 is shown and the project reloaded. Delete
-asks for confirmation; the backend refuses projects with published
-versions (409 `PROJECT_HAS_VERSIONS`), and the dialog shows that answer.
+`revision` it was read at; a 409 is shown and the workflow reloaded. Delete
+asks for confirmation; the backend refuses workflows with published
+versions (409 `WORKFLOW_HAS_VERSIONS`), and the dialog shows that answer.
 Request validation errors (`details["body.name"]`) appear at their field.
 
 ## Draft editor
 
-`features/editor/` (`/projects/:projectId/editor`) edits the project
+`features/editor/` (`/workflows/:workflowId/editor`) edits the workflow
 **draft** only. The page says so: "Draft" badge, the draft revision, and
 that published versions stay unchanged. Saving never publishes.
 
@@ -451,7 +451,7 @@ that published versions stay unchanged. Saving never publishes.
   plus selected edges) are single undo steps. The reducer refuses only
   what the backend would refuse to store (self-edges, duplicate edges,
   dangling ends).
-- `useDraftEditor.ts`: persistence. A save is `PUT /projects/{id}` with the
+- `useDraftEditor.ts`: persistence. A save is `PUT /workflows/{id}` with the
   whole draft (only the graph changed) and the `expected_revision` the
   editor last saw. Only one save runs at a time, and a 409 is never
   overwritten: the user may discard local edits and reload. Autosave runs
@@ -503,7 +503,7 @@ undo/redo, invalid stored edges and reload consistency.
 `tests/e2e/editor.spec.ts` covers what needs real layout: drag, pan, edge
 paths, minimap, saved positions, drag-to-connect with fit feedback, refused
 drops, reconnect, edge delete and box selection.
-`tests/fullstack/projects.spec.ts` connects built-ins by dragging against
+`tests/fullstack/workflows.spec.ts` connects built-ins by dragging against
 the real backend, checks `/validate` and reloads.
 
 ## Node library
@@ -573,7 +573,7 @@ Tests: `configSchema.test.ts` (schema reading), `editorState.test.ts`
 (the `configure` action), `NodeInspector.test.tsx` (the route against a
 stub backend: every field kind, nesting, defaults, null, validation,
 credentials, invalid input, save failure, schema changes) and
-`tests/fullstack/projects.spec.ts` (core.http configured against the real
+`tests/fullstack/workflows.spec.ts` (core.http configured against the real
 backend).
 
 ## Validate and publish
@@ -589,9 +589,9 @@ of the editor's side column: Draft → Validate → Publish → immutable versio
 - A result belongs to one revision. Any later edit marks it outdated; only
   a current, valid result enables Publish.
 - Every issue is listed, grouped by where it points (node, connection,
-  trigger, project) with a count per group. Node issues name node and port,
+  trigger, workflow) with a count per group. Node issues name node and port,
   mark the node on the canvas and in the node list, and jump to it; edge-only
-  issues select the edge. Trigger and project issues have no editor surface
+  issues select the edge. Trigger and workflow issues have no editor surface
   yet and are listed only. The backend reports errors only, no warnings.
 - Publish needs a confirmation naming the version number. A publish the
   backend refuses (422) replaces the result with its issues; other failures
@@ -601,34 +601,34 @@ of the editor's side column: Draft → Validate → Publish → immutable versio
 Tests: `validation.test.ts`, the "Validate and publish" block of
 `EditorPage.test.tsx` (valid, invalid, multiple and node errors, navigation,
 unsaved changes, stale draft at validate and at publish, refused and failed
-publish) and `tests/fullstack/projects.spec.ts` (validate → fix → publish
+publish) and `tests/fullstack/workflows.spec.ts` (validate → fix → publish
 against the real backend).
 
-## Project versions
+## Workflow versions
 
-`features/versions/`: `/projects/:id/versions` and
-`/projects/:id/versions/:n`. Published versions are shown as what they are:
+`features/versions/`: `/workflows/:id/versions` and
+`/workflows/:id/versions/:n`. Published versions are shown as what they are:
 immutable snapshots, never as an editable draft.
 
 - The list keeps the draft (revision, editor link) in its own card, apart
   from the published versions (number, published at, published by,
-  description; the project's `current_version` is marked "Latest").
+  description; the workflow's `current_version` is marked "Latest").
   Versions come oldest first, as the backend pages them.
 - A version page shows its metadata, an "Immutable" badge and a read-only
   notice pointing edits to the draft, its snapshot on a frozen canvas
   (`SnapshotCanvas`: the editor's node cards, pan and zoom only) and as
   tables (nodes with the names of their configured fields but not their
   values, connections, triggers, dependencies, files), a comparison and
-  the executions that ran it (`GET /projects/:id/executions?version=n`).
+  the executions that ran it (`GET /workflows/:id/executions?version=n`).
 - Comparison (`compare.ts`) diffs a version against another version or the
   current draft (the default for the first version): added, removed and
   changed nodes, connections, triggers, dependencies and files. Node
   positions are layout and ignored; files compare by path and size
   (contents are not served).
 - "Restore to draft…" replaces the draft with a copy of the version after
-  a confirmation naming the revision it replaces (409 reloads the project),
-  then opens the editor. "Clone as new project…" creates an unpublished
-  project from the version. Neither changes the version.
+  a confirmation naming the revision it replaces (409 reloads the workflow),
+  then opens the editor. "Clone as new workflow…" creates an unpublished
+  workflow from the version. Neither changes the version.
 - Every execution's version links to its version page (dashboard tables),
   so it is always clear which snapshot a run used.
 - Authors show their username (the user id in a tooltip, or alone if the
@@ -637,8 +637,8 @@ immutable snapshots, never as an editable draft.
 Tests: `compare.test.ts`, `VersionsPage.test.tsx` (loading, empty,
 pagination, API failure, not found, immutable presentation and frozen
 canvas, comparison with versions and the draft, restore incl. conflict,
-clone, per-version executions, navigation from project and dashboard) and
-`tests/fullstack/projects.spec.ts` (publish twice, run v1, inspect,
+clone, per-version executions, navigation from workflow and dashboard) and
+`tests/fullstack/workflows.spec.ts` (publish twice, run v1, inspect,
 compare, clone and restore against the real backend).
 
 ## Live execution
@@ -724,7 +724,7 @@ failed, timed out, cancelled), newest first. It uses the paginated
 `GET /executions?status=` list; a report exists for every execution, so no
 separate list endpoint is needed. Each row links to its report and its
 inspector. `/reports/:executionId` renders `GET /reports/executions/{id}`
-alone: summary (status, project, version, trigger, timestamps, the
+alone: summary (status, workflow, version, trigger, timestamps, the
 backend's `duration_ms`), usage and cost, nodes (status, attempts,
 duration, tokens, cost, outputs on demand), errors, run snapshot and the
 event timeline. It reuses the inspector panels. Logs are not part of the
@@ -747,7 +747,7 @@ metadata: name, type, description, the `credential:<name>` reference nodes
 use, and when it changed. Create, edit (description; rotate the value) and
 delete (confirmed) go through `/api/v1/credentials`. Name and type are the
 identity and cannot be edited. Members get "Admin access required"; their
-projects still reference credentials by name in the node inspector.
+workflows still reference credentials by name in the node inspector.
 
 Secret handling: the API never returns a value, so the UI has none to show
 (the value column is a fixed mask). The value is typed into an uncontrolled
@@ -759,13 +759,13 @@ field is not sent (keep). `CredentialsPage.test.tsx` checks that the value is
 in none of DOM, inputs, browser storage, URL, request URLs, console output
 or the query/mutation cache after create, failed create and rotate.
 
-Not shown: which projects use a credential; the backend has no usage
+Not shown: which workflows use a credential; the backend has no usage
 endpoint yet.
 
 ## Triggers
 
-`/projects/:projectId/triggers` (`features/triggers/`, linked from the
-project page) lists the draft's triggers: type, id, configuration, the
+`/workflows/:workflowId/triggers` (`features/triggers/`, linked from the
+workflow page) lists the draft's triggers: type, id, configuration, the
 invoke or webhook endpoint, status and the backend's validation verdict.
 Create, edit, enable/disable and delete (confirmed) all `PUT` the whole
 draft with `expected_revision`, so a stale page gets a 409 and is reloaded
@@ -777,16 +777,16 @@ backend stores triggers on the draft (architecture §125).
   with the latest published version, which is the only one that fires.
   Triggers removed from the draft but still live in that version are listed.
 - Validation is `POST /validate` pinned to the shown revision
-  (`projectQueries.validation`, keyed by revision, so every save re-checks).
+  (`workflowQueries.validation`, keyed by revision, so every save re-checks).
   Cron syntax, interval range and webhook secrets are decided there, never
   in the browser. Structural errors (empty cron, interval ≤ 0) are the
   PUT's 422 and stay in the dialog.
 - All six backend types can be created: manual, API, cron (5 fields, UTC),
   interval (1 s to 1 year), webhook and event.
 - Event triggers pick an event (`execution.completed|failed|cancelled|
-timed_out`, `project.published`) and a source: this project, or any
-  other project the caller can access. The backend fires only if the
-  trigger project's owner can access the source (an admin any project, a
+timed_out`, `workflow.published`) and a source: this workflow, or any
+  other workflow the caller can access. The backend fires only if the
+  trigger workflow's owner can access the source (an admin any workflow, a
   member only their own).
   Stored values the pickers do not offer are shown as "Unsupported" or
   "Unavailable" rather than silently replaced. The backend dispatcher
@@ -810,7 +810,7 @@ types and, for a failed plugin, its reason. Plugins are executable code, so a
 trust warning is always shown (ADR 0001).
 
 - Enable, disable and remove go through the backend after a confirmation;
-  a removal that projects block can be forced behind a second confirmation.
+  a removal that workflows block can be forced behind a second confirmation.
   Compatibility, validity and in-use are the backend's answer, shown with
   its error details.
 - Install uploads a `.zip` only when the operator turned on
@@ -888,7 +888,7 @@ is never a control.
 - **Storage**: only the theme is stored (`localStorage`); ESLint rejects
   storage anywhere else. Secrets stay in uncontrolled inputs and in
   `gcTime: 0` mutations (Credentials, Authentication).
-- **Downloads**: report exports (`application/json`) and project packages
+- **Downloads**: report exports (`application/json`) and workflow packages
   are saved as blobs with sanitized file names (`lib/saveFile.ts`). **Uploads**: the plugin package is size-checked in the
   browser for UX; the backend validates it.
 - **Errors**: users see backend envelope messages (redacted server-side) or

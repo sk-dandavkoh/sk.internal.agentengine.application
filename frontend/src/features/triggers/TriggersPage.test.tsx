@@ -9,13 +9,13 @@ import {
     type Reply,
 } from '../../test/app'
 
-const PID = 'proj_1'
+const PID = 'wf_1'
 const AT = '2026-10-04T08:00:00Z'
-const PATH = `/projects/${PID}/triggers`
+const PATH = `/workflows/${PID}/triggers`
 // If it shows up anywhere on screen, a stored secret leaked.
 const SECRET = 'sk-live-canary-1234'
 
-const OTHER = 'proj_2'
+const OTHER = 'wf_2'
 
 const summary = (id: string, name: string, owner_id: string) => ({
     id,
@@ -77,7 +77,7 @@ const putSchema = z.object({
 })
 
 /**
- * A backend holding one project: PUT replaces the draft under optimistic
+ * A backend holding one workflow: PUT replaces the draft under optimistic
  * concurrency, validate answers for the stored revision. Overrides replace
  * single routes (errors).
  */
@@ -102,7 +102,7 @@ function backend({
         triggers,
         puts: [] as z.infer<typeof putSchema>[],
     }
-    const project = () => ({
+    const workflow = () => ({
         id: PID,
         name: 'Lead scoring',
         description: 'Scores leads',
@@ -120,13 +120,13 @@ function backend({
         files: [],
     })
     const requests = stubBackend({
-        [`GET /projects/${PID}`]: () => ok(project()),
+        [`GET /workflows/${PID}`]: () => ok(workflow()),
         // The caller's access (api/sharing); tests override it as a viewer.
-        [`GET /projects/${PID}/members`]: () =>
+        [`GET /workflows/${PID}/members`]: () =>
             ok({ access: 'manage', owner: null, members: [] }),
-        [`GET /projects/${PID}/versions/1`]: () =>
+        [`GET /workflows/${PID}/versions/1`]: () =>
             ok({
-                id: 'pver_1',
+                id: 'wfver_1',
                 version: 1,
                 description: '',
                 schema_version: 1,
@@ -138,16 +138,16 @@ function backend({
                 files: [],
                 plugin_versions: {},
             }),
-        [`PUT /projects/${PID}`]: (_url, init) => {
+        [`PUT /workflows/${PID}`]: (_url, init) => {
             const body = putSchema.parse(jsonBody(init))
             state.puts.push(body)
             if (body.expected_revision !== state.revision)
                 return apiError(409, 'CONFLICT', 'The draft was changed.')
             state.triggers = body.draft.triggers
             state.revision += 1
-            return ok(project())
+            return ok(workflow())
         },
-        [`POST /projects/${PID}/validate`]: (_url, init) => {
+        [`POST /workflows/${PID}/validate`]: (_url, init) => {
             const body = z
                 .object({ expected_revision: z.number() })
                 .parse(jsonBody(init))
@@ -161,12 +161,12 @@ function backend({
             }))
             return ok({ valid: issues.length === 0, issues })
         },
-        'GET /projects': () =>
+        'GET /workflows': () =>
             ok({
                 items: [
                     summary(PID, 'Lead scoring', 'user_1'),
                     summary(OTHER, 'CRM sync', 'user_1'),
-                    summary('proj_9', 'Someone else', 'user_2'),
+                    summary('wf_9', 'Someone else', 'user_2'),
                 ],
                 page: { offset: 0, limit: 100, has_more: false },
             }),
@@ -240,7 +240,7 @@ describe('TriggersPage', () => {
                 trigger(4, 'event', { event: 'lead.created' }),
                 trigger(5, 'event', {
                     event: 'execution.failed',
-                    source_project_id: OTHER,
+                    source_workflow_id: OTHER,
                 }),
             ],
             published: [
@@ -287,11 +287,11 @@ describe('TriggersPage', () => {
 
         const event = await rowOf(tid(4))
         expect(
-            within(event).getByText('On lead.created in this project'),
+            within(event).getByText('On lead.created in this workflow'),
         ).toBeVisible()
         expect(
             within(await rowOf(tid(5))).getByText(
-                `On execution.failed in project ${OTHER}`,
+                `On execution.failed in workflow ${OTHER}`,
             ),
         ).toBeVisible()
         expect(
@@ -322,11 +322,11 @@ describe('TriggersPage', () => {
         expect(document.body.innerHTML).not.toContain(SECRET)
     })
 
-    it('shows the empty state for a project without triggers', async () => {
+    it('shows the empty state for a workflow without triggers', async () => {
         backend()
         renderRoute(PATH)
         expect(await screen.findByText(/No triggers\./)).toBeVisible()
-        expect(screen.getByText(/this project has none yet/)).toBeVisible()
+        expect(screen.getByText(/this workflow has none yet/)).toBeVisible()
     })
 
     it.each([
@@ -401,7 +401,7 @@ describe('TriggersPage', () => {
         },
     )
 
-    it('creates an event trigger on another accessible project', async () => {
+    it('creates an event trigger on another accessible workflow', async () => {
         const { state } = backend()
         renderRoute(PATH)
         const dialog = await openCreate()
@@ -409,33 +409,33 @@ describe('TriggersPage', () => {
         const event = within(dialog).getByLabelText(/^Event/)
         expect(event).toHaveValue('execution.completed')
         fireEvent.change(event, { target: { value: 'execution.failed' } })
-        const source = within(dialog).getByLabelText(/Source project/)
-        // Every other project the caller can access; the backend applies
+        const source = within(dialog).getByLabelText(/Source workflow/)
+        // Every other workflow the caller can access; the backend applies
         // the owner's access when it fires.
         await within(source).findByRole('option', { name: 'CRM sync' })
         expect(
             within(source)
                 .getAllByRole('option')
                 .map((o) => o.textContent),
-        ).toEqual(['This project', 'CRM sync', 'Someone else'])
+        ).toEqual(['This workflow', 'CRM sync', 'Someone else'])
         fireEvent.change(source, { target: { value: OTHER } })
         submit(dialog)
 
         await waitFor(() => {
             expect(state.triggers[0]?.config).toEqual({
                 event: 'execution.failed',
-                source_project_id: OTHER,
+                source_workflow_id: OTHER,
             })
         })
         expect(state.triggers[0]?.trigger_type).toBe('event')
     })
 
-    it('switches an event trigger back to its own project', async () => {
+    it('switches an event trigger back to its own workflow', async () => {
         const { state } = backend({
             triggers: [
                 trigger(1, 'event', {
                     event: 'node.completed',
-                    source_project_id: 'proj_gone',
+                    source_workflow_id: 'wf_gone',
                 }),
             ],
         })
@@ -450,19 +450,19 @@ describe('TriggersPage', () => {
         expect(within(dialog).getByLabelText(/^Event/)).toHaveValue(
             'node.completed',
         )
-        expect(within(dialog).getByLabelText(/Source project/)).toHaveValue(
-            'proj_gone',
+        expect(within(dialog).getByLabelText(/Source workflow/)).toHaveValue(
+            'wf_gone',
         )
         fireEvent.change(within(dialog).getByLabelText(/^Event/), {
-            target: { value: 'project.published' },
+            target: { value: 'workflow.published' },
         })
-        fireEvent.change(within(dialog).getByLabelText(/Source project/), {
+        fireEvent.change(within(dialog).getByLabelText(/Source workflow/), {
             target: { value: '' },
         })
         submit(dialog, 'Save trigger')
         await waitFor(() => {
             expect(state.triggers[0]?.config).toEqual({
-                event: 'project.published',
+                event: 'workflow.published',
             })
         })
     })
@@ -477,11 +477,11 @@ describe('TriggersPage', () => {
                 trigger(3, 'api'),
             ],
             overrides: {
-                [`POST /projects/${PID}/triggers/${tid(1)}/invoke`]: () => ({
+                [`POST /workflows/${PID}/triggers/${tid(1)}/invoke`]: () => ({
                     status: 201,
                     body: {
                         id: 'exec_1',
-                        project_id: PID,
+                        workflow_id: PID,
                         version: 1,
                         status: 'queued',
                         trigger_type: 'manual',
@@ -522,7 +522,7 @@ describe('TriggersPage', () => {
             triggers: [manual],
             published: [manual],
             overrides: {
-                [`POST /projects/${PID}/triggers/${tid(1)}/invoke`]: () =>
+                [`POST /workflows/${PID}/triggers/${tid(1)}/invoke`]: () =>
                     apiError(409, 'TRIGGER_DISABLED', 'Trigger is disabled.'),
             },
         })
@@ -566,7 +566,7 @@ describe('TriggersPage', () => {
     it('keeps the dialog open with the backend message when a config is rejected', async () => {
         const { state } = backend({
             overrides: {
-                [`PUT /projects/${PID}`]: () =>
+                [`PUT /workflows/${PID}`]: () =>
                     apiError(
                         422,
                         'DOMAIN_VALIDATION_ERROR',
@@ -713,7 +713,7 @@ describe('TriggersPage', () => {
         expect(await screen.findByText(tid(5))).toBeVisible()
         expect(state.triggers[0]?.enabled).toBe(true)
         expect(
-            requests.filter((u) => u.pathname === `/api/v1/projects/${PID}`)
+            requests.filter((u) => u.pathname === `/api/v1/workflows/${PID}`)
                 .length,
         ).toBeGreaterThanOrEqual(3)
     })
@@ -722,11 +722,11 @@ describe('TriggersPage', () => {
         backend({
             triggers: [trigger(1, 'api')],
             overrides: {
-                [`PUT /projects/${PID}`]: () =>
+                [`PUT /workflows/${PID}`]: () =>
                     apiError(
                         403,
                         'FORBIDDEN',
-                        'You do not have access to this project.',
+                        'You do not have access to this workflow.',
                     ),
             },
         })
@@ -744,25 +744,25 @@ describe('TriggersPage', () => {
         )
         expect(
             await within(dialog).findByText(
-                'You do not have access to this project.',
+                'You do not have access to this workflow.',
             ),
         ).toBeVisible()
         fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
         expect(await rowOf(tid(1))).toBeVisible()
     })
 
-    it('shows a not-found state for an unknown or inaccessible project', async () => {
+    it('shows a not-found state for an unknown or inaccessible workflow', async () => {
         stubBackend()
         renderRoute(PATH)
         expect(
-            await screen.findByRole('heading', { name: 'Project not found' }),
+            await screen.findByRole('heading', { name: 'Workflow not found' }),
         ).toBeVisible()
     })
 
-    it('shows a retryable error when the project cannot be loaded', async () => {
+    it('shows a retryable error when the workflow cannot be loaded', async () => {
         backend({
             overrides: {
-                [`GET /projects/${PID}`]: () =>
+                [`GET /workflows/${PID}`]: () =>
                     apiError(500, 'INTERNAL_ERROR', 'The server failed.'),
             },
         })
@@ -777,7 +777,7 @@ describe('TriggersPage', () => {
         backend({
             triggers: [trigger(1, 'api')],
             overrides: {
-                [`POST /projects/${PID}/validate`]: () =>
+                [`POST /workflows/${PID}/validate`]: () =>
                     apiError(500, 'INTERNAL_ERROR', 'The server failed.'),
             },
         })
@@ -795,7 +795,7 @@ describe('TriggersPage', () => {
             triggers: [trigger(1, 'manual')],
             published: [trigger(1, 'manual')],
             overrides: {
-                [`GET /projects/${PID}/members`]: () =>
+                [`GET /workflows/${PID}/members`]: () =>
                     ok({ access: 'view', owner: null, members: [] }),
             },
         })

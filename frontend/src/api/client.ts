@@ -94,7 +94,7 @@ export class ApiClient {
         return { data: parsed.data, body: text }
     }
 
-    /** A binary response (e.g. a project package), its bytes untouched;
+    /** A binary response (e.g. a workflow package), its bytes untouched;
      * failures are ApiErrors exactly as for `request`. */
     async download(
         method: HttpMethod,

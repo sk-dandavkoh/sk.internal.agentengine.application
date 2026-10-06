@@ -9,7 +9,7 @@ Opt-in, because it builds the image and takes minutes:
 
     AKASHA_TESTS_DEPLOYMENT=1 uv run pytest tests/deployment
 
-Every run is its own Compose project (own volumes, network and a random
+Every run is its own Compose workflow (own volumes, network and a random
 loopback port) configured only by its own env file — never the
 developer's .env or shell — and is removed with its volumes afterwards.
 """
@@ -52,7 +52,7 @@ class Deployment:
         given_secrets: bool = True,
         extra: dict[str, str] | None = None,
     ) -> None:
-        self.project = f"akasha-e2e-{secrets.token_hex(4)}"
+        self.workflow = f"akasha-e2e-{secrets.token_hex(4)}"
         self.env_file = tmp_path / "deployment.env"
         # Without them, the stack generates its own (the zero-config path).
         settings = (
@@ -86,7 +86,7 @@ class Deployment:
     def compose(
         self, *args: str, stdin: bytes | None = None, check: bool = True
     ) -> subprocess.CompletedProcess[bytes]:
-        argv = ["docker", "compose", "-p", self.project]
+        argv = ["docker", "compose", "-p", self.workflow]
         argv += ["--env-file", str(self.env_file), *args]
         result = subprocess.run(
             argv,
@@ -186,9 +186,9 @@ def login(api: httpx.Client) -> dict[str, str]:
 
 def publish(api: httpx.Client, name: str, delay_seconds: float) -> tuple[str, int]:
     """input(title) → delay → output, published as version 1."""
-    project = api.post("/api/v1/projects", json={"name": name})
-    assert project.status_code == 201, project.text
-    pid = project.json()["id"]
+    workflow = api.post("/api/v1/workflows", json={"name": name})
+    assert workflow.status_code == 201, workflow.text
+    pid = workflow.json()["id"]
     source, wait, sink = new_id("node"), new_id("node"), new_id("node")
     nodes = [
         {"id": source, "node_type": "core.input", "config": {"field": "title"}},
@@ -206,10 +206,10 @@ def publish(api: httpx.Client, name: str, delay_seconds: float) -> tuple[str, in
     ]
     draft = {"graph": {"nodes": nodes, "edges": edges}, "triggers": []}
     body = {"expected_revision": 1, "name": name, "draft": draft}
-    updated = api.put(f"/api/v1/projects/{pid}", json=body)
+    updated = api.put(f"/api/v1/workflows/{pid}", json=body)
     assert updated.status_code == 200, updated.text
     published = api.post(
-        f"/api/v1/projects/{pid}/publish", json={"expected_revision": 2}
+        f"/api/v1/workflows/{pid}/publish", json={"expected_revision": 2}
     )
     assert published.status_code == 201, published.text
     return pid, published.json()["version"]
@@ -217,7 +217,7 @@ def publish(api: httpx.Client, name: str, delay_seconds: float) -> tuple[str, in
 
 def start(api: httpx.Client, pid: str, version: int, title: str) -> str:
     response = api.post(
-        f"/api/v1/projects/{pid}/versions/{version}/execute", json={"title": title}
+        f"/api/v1/workflows/{pid}/versions/{version}/execute", json={"title": title}
     )
     assert response.status_code == 201, response.text
     execution_id: str = response.json()["id"]
@@ -255,7 +255,7 @@ def test_install_run_restart_backup_restore_recover(deployment: Deployment) -> N
     revision = json.loads(rerun.stdout)["schema_revision"]
     assert revision and f"database at schema {revision}" in first_migration
 
-    # -- run: first admin, a credential, a project executed by the worker ---
+    # -- run: first admin, a credential, a workflow executed by the worker ---
     setup = api.post(
         "/api/v1/auth/setup", json={"username": "admin", "password": PASSWORD}
     )
@@ -285,7 +285,7 @@ def test_install_run_restart_backup_restore_recover(deployment: Deployment) -> N
             d.compose("up", "-d")
         api = d.api(headers)  # the session itself is persisted
         assert status(api, first) == "completed"
-        assert api.get(f"/api/v1/projects/{pid}").status_code == 200
+        assert api.get(f"/api/v1/workflows/{pid}").status_code == 200
 
     # -- backup: streamed out of the running API container -----------------
     backup = d.compose("exec", "-T", "api", "akasha", "backup", "-o", "-").stdout
@@ -296,7 +296,7 @@ def test_install_run_restart_backup_restore_recover(deployment: Deployment) -> N
     # -- destroy: containers and every volume ------------------------------
     d.compose("down", "-v")
     volumes = subprocess.run(
-        ["docker", "volume", "ls", "-q", "--filter", f"name={d.project}_"],
+        ["docker", "volume", "ls", "-q", "--filter", f"name={d.workflow}_"],
         capture_output=True,
         check=True,
     ).stdout
@@ -316,11 +316,11 @@ def test_install_run_restart_backup_restore_recover(deployment: Deployment) -> N
     assert b"restored backup" in restored.stdout
     d.compose("up", "-d")
 
-    # -- verify: accounts, projects, history, credentials, and it runs -----
+    # -- verify: accounts, workflows, history, credentials, and it runs -----
     api = d.api()
     api.headers.update(login(api))
     assert status(api, first) == "completed"
-    assert api.get(f"/api/v1/projects/{pid}/versions/{version}").status_code == 200
+    assert api.get(f"/api/v1/workflows/{pid}/versions/{version}").status_code == 200
     names = [c["name"] for c in api.get("/api/v1/credentials").json()["items"]]
     assert names == ["ops-check"]
     after_restore = start(api, pid, version, "after restore")
@@ -350,7 +350,7 @@ def test_zero_config_install_serves_ui_and_keeps_generated_secrets(
     d = zero_config
     d.compose("up", "-d", "--build")
     api = d.api()
-    page = api.get("/projects")  # a client-side route: index.html
+    page = api.get("/workflows")  # a client-side route: index.html
     assert page.status_code == 200
     assert page.headers["content-type"].startswith("text/html")
     assert page.headers["x-content-type-options"] == "nosniff"
@@ -395,9 +395,9 @@ def web_search_through_bundled_searxng(d: Deployment, api: httpx.Client) -> None
     its generated secret and serves format=json (else 403 → node fails).
     The result count depends on the public engines, so only the shape is
     asserted."""
-    project = api.post("/api/v1/projects", json={"name": "search"})
-    assert project.status_code == 201, project.text
-    pid = project.json()["id"]
+    workflow = api.post("/api/v1/workflows", json={"name": "search"})
+    assert workflow.status_code == 201, workflow.text
+    pid = workflow.json()["id"]
     query, search, sink = new_id("node"), new_id("node"), new_id("node")
     nodes = [
         {"id": query, "node_type": "core.input", "config": {"field": "query"}},
@@ -420,13 +420,13 @@ def web_search_through_bundled_searxng(d: Deployment, api: httpx.Client) -> None
     ]
     draft = {"graph": {"nodes": nodes, "edges": edges}, "triggers": []}
     body = {"expected_revision": 1, "name": "search", "draft": draft}
-    assert api.put(f"/api/v1/projects/{pid}", json=body).status_code == 200
+    assert api.put(f"/api/v1/workflows/{pid}", json=body).status_code == 200
     published = api.post(
-        f"/api/v1/projects/{pid}/publish", json={"expected_revision": 2}
+        f"/api/v1/workflows/{pid}/publish", json={"expected_revision": 2}
     )
     assert published.status_code == 201, published.text
     started = api.post(
-        f"/api/v1/projects/{pid}/versions/1/execute", json={"query": "searxng"}
+        f"/api/v1/workflows/{pid}/versions/1/execute", json={"query": "searxng"}
     )
     assert started.status_code == 201, started.text
     execution_id = started.json()["id"]
@@ -440,7 +440,7 @@ async def test_mcp_through_the_reverse_proxy_with_dedicated_workers(
     with_mcp: Deployment,
 ) -> None:
     """MCP enabled in the shipped stack: a real MCP client reaches it
-    through the UI's nginx, builds and publishes a project, and the
+    through the UI's nginx, builds and publishes a workflow, and the
     dedicated worker container runs it. Stopping the API is graceful."""
     d = with_mcp
     d.compose("up", "-d", "--build")
@@ -465,24 +465,24 @@ async def test_mcp_through_the_reverse_proxy_with_dedicated_workers(
 
         info = await call("system_info")
         assert info["executions_run_automatically"] is True
-        project = await call("project_create", name="over mcp")
-        pid = project["id"]
+        workflow = await call("workflow_create", name="over mcp")
+        pid = workflow["id"]
         source = await call(
             "graph_node_add",
-            project_id=pid,
-            expected_revision=project["revision"],
+            workflow_id=pid,
+            expected_revision=workflow["revision"],
             node_type="core.input",
             config={"field": "title"},
         )
         sink = await call(
             "graph_node_add",
-            project_id=pid,
+            workflow_id=pid,
             expected_revision=source["revision"],
             node_type="core.output",
         )
         edge = await call(
             "graph_edge_add",
-            project_id=pid,
+            workflow_id=pid,
             expected_revision=sink["revision"],
             source_node_id=source["node_id"],
             source_port="value",
@@ -490,9 +490,9 @@ async def test_mcp_through_the_reverse_proxy_with_dedicated_workers(
             target_port="value",
         )
         await call(
-            "project_publish", project_id=pid, expected_revision=edge["revision"]
+            "workflow_publish", workflow_id=pid, expected_revision=edge["revision"]
         )
-        started = await call("execution_start", project_id=pid, input={"title": "x"})
+        started = await call("execution_start", workflow_id=pid, input={"title": "x"})
     # The worker container runs it; observed over REST like any run.
     api.headers.update(headers)
     wait_for(d, api, started["id"], "completed")

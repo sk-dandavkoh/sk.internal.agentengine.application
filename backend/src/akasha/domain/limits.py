@@ -6,7 +6,7 @@ nothing below it hard-codes a number. Where each cap is enforced:
 
 - Admission (``ExecutionService.create_execution``): execution and node
   duration, attempts (retries), graph size and depth, and active executions
-  per project. A request over a cap is rejected before anything is queued.
+  per workflow. A request over a cap is rejected before anything is queued.
   Policies a caller leaves out default to the cap, so every persisted
   execution carries finite, explicit limits. A resumed run therefore keeps
   the limits it was admitted with, even if the operator changed them since.
@@ -61,7 +61,7 @@ class ResourceLimitError(AkashaError):
 
 
 class ExecutionCapacityError(ResourceLimitError):
-    """The project has too many unfinished executions. Retry once some of
+    """The workflow has too many unfinished executions. Retry once some of
     them finish."""
 
     code = "EXECUTION_CAPACITY_EXCEEDED"
@@ -75,7 +75,7 @@ class ResourceLimits:
     max_node_attempts: int = 5  # including the first, so at most 4 retries
     max_graph_nodes: int = 500
     max_graph_depth: int = 100  # nodes on the longest dependency chain
-    max_active_executions_per_project: int = 100
+    max_active_executions_per_workflow: int = 100
     max_node_output_bytes: int = 1024 * 1024
     max_execution_output_bytes: int = 16 * 1024 * 1024
 
@@ -90,7 +90,7 @@ class ResourceLimits:
             "max_node_attempts",
             "max_graph_nodes",
             "max_graph_depth",
-            "max_active_executions_per_project",
+            "max_active_executions_per_workflow",
             "max_node_output_bytes",
             "max_execution_output_bytes",
         ):
@@ -134,12 +134,12 @@ class ResourceLimits:
             )
 
     def check_capacity(self, active: int) -> None:
-        """``active``: the project's unfinished executions, not counting the
+        """``active``: the workflow's unfinished executions, not counting the
         one being admitted."""
-        if active >= self.max_active_executions_per_project:
+        if active >= self.max_active_executions_per_workflow:
             raise ExecutionCapacityError(
                 Limit.ACTIVE_EXECUTIONS,
-                maximum=self.max_active_executions_per_project,
+                maximum=self.max_active_executions_per_workflow,
                 requested=active + 1,
             )
 

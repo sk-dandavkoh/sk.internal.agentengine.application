@@ -102,12 +102,12 @@ def greet_file(tmp_path: Path) -> Path:
     [
         [],
         ["unknown"],
-        ["project"],
-        ["project", "publish"],  # missing project id
-        ["project", "export", "proj_1"],  # missing --output
-        ["project", "run", "proj_1", "--version", "one"],
-        ["project", "run", "proj_1", "--input", "{not json"],
-        ["project", "run", "proj_1", "--input", "[1, 2]"],
+        ["workflow"],
+        ["workflow", "publish"],  # missing workflow id
+        ["workflow", "export", "wf_1"],  # missing --output
+        ["workflow", "run", "wf_1", "--version", "one"],
+        ["workflow", "run", "wf_1", "--input", "{not json"],
+        ["workflow", "run", "wf_1", "--input", "[1, 2]"],
         ["node", "test", "core.log", "--config", "@/nonexistent/config.json"],
     ],
 )
@@ -122,7 +122,7 @@ def test_version_and_help(cli: Cli) -> None:
     assert cli("--version").code == EXIT_OK
     result = cli("--help")
     assert result.code == EXIT_OK
-    for group in ("project", "node", "plugin", "execution", "backup", "restore"):
+    for group in ("workflow", "node", "plugin", "execution", "backup", "restore"):
         assert group in result.out
 
 
@@ -130,7 +130,7 @@ def test_json_input_accepts_a_file(cli: Cli, tmp_path: Path) -> None:
     # Parsing succeeds (exit is the missing database, not usage).
     doc = tmp_path / "input.json"
     doc.write_text('{"title": "x"}')
-    assert cli("project", "run", "proj_1", "--input", f"@{doc}").code == EXIT_FAILED
+    assert cli("workflow", "run", "wf_1", "--input", f"@{doc}").code == EXIT_FAILED
 
 
 # -- configuration ---------------------------------------------------------
@@ -139,8 +139,8 @@ def test_json_input_accepts_a_file(cli: Cli, tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     "argv",
     [
-        ["project", "list"],
-        ["project", "create", "demo"],
+        ["workflow", "list"],
+        ["workflow", "create", "demo"],
         ["execution", "get", "exec_1"],
         ["backup", "-o", "unused.backup"],
     ],
@@ -172,7 +172,7 @@ def test_invalid_configuration_does_not_echo_values(
 
 
 def test_errors_as_json_on_stderr(cli: Cli) -> None:
-    result = cli("project", "list", "--json")
+    result = cli("workflow", "list", "--json")
     assert result.code == EXIT_FAILED
     error = json.loads(result.err)
     assert error["code"] == "CONFIGURATION_ERROR"
@@ -187,7 +187,7 @@ def test_unreachable_database_is_an_internal_error_without_secrets(
     monkeypatch.setenv(
         "AKASHA_DATABASE_URL", "postgresql://akasha:db-password-value@127.0.0.1:1/x"
     )
-    result = cli("project", "list")
+    result = cli("workflow", "list")
     assert result.code == EXIT_INTERNAL
     assert "INTERNAL_ERROR" in result.err
     assert "db-password-value" not in result.err + result.out

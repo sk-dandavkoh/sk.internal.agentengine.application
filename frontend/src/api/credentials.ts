@@ -3,7 +3,7 @@ import type { ApiClient } from './client'
 import { pageSchema, timestamp, type PageParams } from './schemas'
 
 // Contract of backend api/credentials.py (admin only). Responses carry
-// metadata and the reference projects use; the secret value never comes
+// metadata and the reference workflows use; the secret value never comes
 // back (AGENTS §35, §36).
 
 export const credentialKindSchema = z.enum([

@@ -23,7 +23,7 @@ x-backend: &backend
     AKASHA_WEB_SEARCH_URL: ${AKASHA_WEB_SEARCH_URL:-http://searxng:8080}
   volumes:
     - plugins:/var/lib/akasha/plugins
-    # Per-project files of the file nodes and core.command (ADR 0005).
+    # Per-workflow files of the file nodes and core.command (ADR 0005).
     - workspace:/var/lib/akasha/workspace
     # AKASHA_DATABASE_URL and AKASHA_CREDENTIAL_ENCRYPTION_KEY, read by the
     # backend's settings (backend/src/akasha/config.py).

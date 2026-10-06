@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import type { ApiClient } from './client'
-import { dependencySchema } from './projects'
+import { dependencySchema } from './workflows'
 
 // Contract of backend api/plugins.py (admin only, ADR 0001). Every rule —
 // compatibility, dependencies, whether a plugin is in use — is decided by
@@ -39,8 +39,8 @@ export type PluginList = z.infer<typeof pluginListSchema>
 
 export const removePluginResponseSchema = z.object({
     plugin_id: z.string(),
-    /** Projects that used the plugin (non-empty only when forced). */
-    affected_projects: z.array(z.string()),
+    /** Workflows that used the plugin (non-empty only when forced). */
+    affected_workflows: z.array(z.string()),
 })
 
 /** Matches the backend's cap (plugins/archive.py MAX_ARCHIVE_BYTES). */

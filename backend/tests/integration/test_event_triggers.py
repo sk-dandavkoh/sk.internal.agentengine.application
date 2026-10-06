@@ -1,6 +1,6 @@
 """EVENT triggers against real PostgreSQL (architecture §129/§130).
 
-Projects are published through the HTTP API, source executions really run
+Workflows are published through the HTTP API, source executions really run
 through the ExecutionRuntime, and the dispatcher reads the persisted event
 log. Time is a fake clock and ``tick()`` is driven directly: no sleeps
 (backend/AGENTS §62/§63). The commit-order gap test holds a real open
@@ -16,8 +16,8 @@ import httpx
 import pytest
 
 from akasha.application.executions import ExecutionService
-from akasha.application.projects import ProjectService
 from akasha.application.triggers import TriggerRegistry, TriggerService
+from akasha.application.workflows import WorkflowService
 from akasha.domain.event import Event, EventType
 from akasha.domain.execution import ExecutionStatus
 from akasha.domain.identity import Role
@@ -46,9 +46,9 @@ CATALOG: NodeCatalog = {"test.source": _Source, "test.sink": _Sink}
 
 @pytest.fixture
 async def api(
-    database: Database, project_service: ProjectService
+    database: Database, workflow_service: WorkflowService
 ) -> AsyncIterator[httpx.AsyncClient]:
-    async with trigger_client(database, project_service) as client:
+    async with trigger_client(database, workflow_service) as client:
         yield client
 
 
@@ -74,7 +74,7 @@ def on_event(event: str = "execution.completed", **config: Any) -> dict[str, Any
 
 async def run_manual(api: httpx.AsyncClient, database: Database, pid: str) -> str:
     """Start version 1 of ``pid`` and run it to its end; returns its id."""
-    started = await api.post(f"/api/v1/projects/{pid}/versions/1/execute", json={})
+    started = await api.post(f"/api/v1/workflows/{pid}/versions/1/execute", json={})
     assert started.status_code == 201, started.text
     runtime = ExecutionRuntime(lambda: uow_of(database), CATALOG)
     execution = await asyncio.wait_for(runtime.run(started.json()["id"]), timeout=30)
@@ -90,11 +90,11 @@ async def event_runs(database: Database) -> list[dict[str, Any]]:
     ]
 
 
-async def test_completion_of_a_source_project_starts_the_target(
+async def test_completion_of_a_source_workflow_starts_the_target(
     api: httpx.AsyncClient, database: Database
 ) -> None:
     source, _, _ = await publish_with(api, [])
-    trigger = on_event(source_project_id=source)
+    trigger = on_event(source_workflow_id=source)
     target, _, _ = await publish_with(api, [trigger])
     events = dispatcher(database, FakeClock(START))
     assert await events.tick() == 0  # anchors at the end of the log
@@ -109,11 +109,11 @@ async def test_completion_of_a_source_project_starts_the_target(
     assert run["metadata"]["trigger_depth"] == 1
     fired_by = run["input"]["event"]
     assert fired_by["type"] == "execution.completed"
-    assert fired_by["project_id"] == source
+    assert fired_by["workflow_id"] == source
     assert fired_by["execution_id"] == source_run
-    assert fired_by["project_version"] == 1
+    assert fired_by["workflow_version"] == 1
     assert fired_by["data"] == {}
-    detail = await api.get(f"/api/v1/projects/{target}/executions")
+    detail = await api.get(f"/api/v1/workflows/{target}/executions")
     assert [e["trigger_type"] for e in detail.json()["items"]] == ["event"]
 
 
@@ -129,7 +129,7 @@ async def test_history_before_the_first_tick_is_not_replayed(
     assert await event_runs(database) == []
 
 
-async def test_a_self_triggering_project_stops_at_the_depth_limit(
+async def test_a_self_triggering_workflow_stops_at_the_depth_limit(
     api: httpx.AsyncClient, database: Database
 ) -> None:
     pid, _, _ = await publish_with(api, [on_event()])
@@ -159,8 +159,8 @@ async def test_only_matching_enabled_triggers_fire(
     api: httpx.AsyncClient, database: Database
 ) -> None:
     source, _, _ = await publish_with(api, [])
-    on_failure = on_event("execution.failed", source_project_id=source)
-    disabled = {**on_event(source_project_id=source), "enabled": False}
+    on_failure = on_event("execution.failed", source_workflow_id=source)
+    disabled = {**on_event(source_workflow_id=source), "enabled": False}
     await publish_with(api, [on_failure, disabled])
     events = dispatcher(database, FakeClock(START))
     await events.tick()
@@ -174,51 +174,51 @@ async def test_publishing_is_an_event_too(
     api: httpx.AsyncClient, database: Database
 ) -> None:
     source, _, revision = await publish_with(api, [])
-    trigger = on_event("project.published", source_project_id=source)
+    trigger = on_event("workflow.published", source_workflow_id=source)
     await publish_with(api, [trigger])
     events = dispatcher(database, FakeClock(START))
     await events.tick()
 
-    await publish_with(api, [], project_id=source, revision=revision)
+    await publish_with(api, [], workflow_id=source, revision=revision)
     assert await events.tick() == 1
     [run] = await event_runs(database)
-    assert run["input"]["event"]["type"] == "project.published"
-    assert run["input"]["event"]["project_version"] == 2
+    assert run["input"]["event"]["type"] == "workflow.published"
+    assert run["input"]["event"]["workflow_version"] == 2
     assert run["metadata"]["trigger_depth"] == 1
 
 
 async def publish_as(
     api: httpx.AsyncClient, headers: dict[str, str], triggers: list[dict[str, Any]]
 ) -> str:
-    """A project owned by the user of ``headers``, published as v1."""
-    created = await api.post("/api/v1/projects", json={"name": "o"}, headers=headers)
+    """A workflow owned by the user of ``headers``, published as v1."""
+    created = await api.post("/api/v1/workflows", json={"name": "o"}, headers=headers)
     pid: str = created.json()["id"]
     put = await api.put(
-        f"/api/v1/projects/{pid}",
+        f"/api/v1/workflows/{pid}",
         headers=headers,
         json={"expected_revision": 1, "name": "o", "draft": draft_with(triggers)},
     )
     assert put.status_code == 200, put.text
-    published = await api.post(f"/api/v1/projects/{pid}/publish", headers=headers)
+    published = await api.post(f"/api/v1/workflows/{pid}/publish", headers=headers)
     assert published.status_code == 201, published.text
     return pid
 
 
-async def test_a_member_cannot_point_a_trigger_at_another_users_project(
+async def test_a_member_cannot_point_a_trigger_at_another_users_workflow(
     api: httpx.AsyncClient, database: Database
 ) -> None:
     source, _, _ = await publish_with(api, [])  # owned by the admin
     kit = make_auth_kit(database)
     member = await kit.member_headers(await kit.login("admin"), "mallory")
-    created = await api.post("/api/v1/projects", json={"name": "o"}, headers=member)
+    created = await api.post("/api/v1/workflows", json={"name": "o"}, headers=member)
     pid = created.json()["id"]
     put = await api.put(
-        f"/api/v1/projects/{pid}",
+        f"/api/v1/workflows/{pid}",
         headers=member,
         json={
             "expected_revision": 1,
             "name": "o",
-            "draft": draft_with([on_event(source_project_id=source)]),
+            "draft": draft_with([on_event(source_workflow_id=source)]),
         },
     )
     assert put.status_code == 422, put.text
@@ -234,9 +234,9 @@ async def test_a_trigger_stops_when_its_owner_loses_the_source(
     source, _, _ = await publish_with(api, [])  # owned by the admin
     kit = make_auth_kit(database)
     member = await kit.member_headers(await kit.login("admin"), "mallory")
-    share = f"/api/v1/projects/{source}/members/mallory"
+    share = f"/api/v1/workflows/{source}/members/mallory"
     assert (await api.put(share, json={"role": "viewer"})).status_code == 200
-    await publish_as(api, member, [on_event(source_project_id=source)])
+    await publish_as(api, member, [on_event(source_workflow_id=source)])
     events = dispatcher(database, FakeClock(START))
     await events.tick()
 
@@ -250,24 +250,24 @@ async def test_a_trigger_stops_when_its_owner_loses_the_source(
     assert len(await event_runs(database)) == 1
 
 
-async def test_an_admin_reacts_to_any_project_until_disabled(
+async def test_an_admin_reacts_to_any_workflow_until_disabled(
     api: httpx.AsyncClient, database: Database
 ) -> None:
     kit = make_auth_kit(database)
     admin = await kit.login("admin")
     member = await kit.member_headers(admin, "bob")
     ops = await kit.member_headers(admin, "ops", role=Role.ADMIN)
-    source = await publish_as(api, member, [])  # someone else's project
-    target = await publish_as(api, ops, [on_event(source_project_id=source)])
+    source = await publish_as(api, member, [])  # someone else's workflow
+    target = await publish_as(api, ops, [on_event(source_workflow_id=source)])
     events = dispatcher(database, FakeClock(START))
     await events.tick()
 
     await run_manual(api, database, source)
     assert await events.tick() == 1  # same rule as the API: admins see all
     [run] = await event_runs(database)
-    detail = await api.get(f"/api/v1/projects/{target}/executions", headers=ops)
+    detail = await api.get(f"/api/v1/workflows/{target}/executions", headers=ops)
     assert [e["trigger_type"] for e in detail.json()["items"]] == ["event"]
-    assert run["input"]["event"]["project_id"] == source
+    assert run["input"]["event"]["workflow_id"] == source
 
     # Checked per fire: the disabled admin's trigger stops reacting.
     identity = await kit.auth.authenticate(admin["Authorization"][7:])
@@ -283,12 +283,12 @@ async def test_an_admin_reacts_to_any_project_until_disabled(
 async def test_an_event_committed_after_a_later_one_is_still_dispatched(
     api: httpx.AsyncClient, database: Database
 ) -> None:
-    pid, _, _ = await publish_with(api, [on_event("project.published")])
+    pid, _, _ = await publish_with(api, [on_event("workflow.published")])
     events = dispatcher(database, FakeClock(START))
     await events.tick()
 
     def published() -> Event:
-        return Event(EventType.PROJECT_PUBLISHED, START, pid, project_version=1)
+        return Event(EventType.WORKFLOW_PUBLISHED, START, pid, workflow_version=1)
 
     slow = uow_of(database)
     await slow.__aenter__()
@@ -309,18 +309,18 @@ async def test_an_event_committed_after_a_later_one_is_still_dispatched(
 async def test_a_rolled_back_gap_is_given_up_after_the_timeout(
     api: httpx.AsyncClient, database: Database
 ) -> None:
-    pid, _, _ = await publish_with(api, [on_event("project.published")])
+    pid, _, _ = await publish_with(api, [on_event("workflow.published")])
     clock = FakeClock(START)
     events = dispatcher(database, clock)
     await events.tick()
 
     async with uow_of(database) as rolled_back:
         await rolled_back.events.append(
-            [Event(EventType.PROJECT_PUBLISHED, START, pid, project_version=1)]
+            [Event(EventType.WORKFLOW_PUBLISHED, START, pid, workflow_version=1)]
         )
         async with uow_of(database) as fast:
             await fast.events.append(
-                [Event(EventType.PROJECT_PUBLISHED, START, pid, project_version=1)]
+                [Event(EventType.WORKFLOW_PUBLISHED, START, pid, workflow_version=1)]
             )
             await fast.commit()
         assert await events.tick() == 1
@@ -334,15 +334,15 @@ async def test_a_rolled_back_gap_is_given_up_after_the_timeout(
 async def test_validation_rejects_events_that_never_fire(
     api: httpx.AsyncClient,
 ) -> None:
-    created = await api.post("/api/v1/projects", json={"name": "v"})
+    created = await api.post("/api/v1/workflows", json={"name": "v"})
     pid = created.json()["id"]
     bad_event = on_event("node.completed")
-    bad_source = on_event(source_project_id="not-a-project")
+    bad_source = on_event(source_workflow_id="not-a-workflow")
     # An unknown source is refused at save, like one the caller cannot see
     # (no existence probing); validation still catches a source deleted
     # after the trigger was saved.
     refused = await api.put(
-        f"/api/v1/projects/{pid}",
+        f"/api/v1/workflows/{pid}",
         json={
             "expected_revision": 1,
             "name": "v",
@@ -356,7 +356,7 @@ async def test_validation_rejects_events_that_never_fire(
     assert refused.status_code == 422
     assert refused.json()["code"] == "TRIGGER_SOURCE_NOT_FOUND"
     put = await api.put(
-        f"/api/v1/projects/{pid}",
+        f"/api/v1/workflows/{pid}",
         json={
             "expected_revision": 1,
             "name": "v",
@@ -368,7 +368,7 @@ async def test_validation_rejects_events_that_never_fire(
         },
     )
     assert put.status_code == 200, put.text
-    result = (await api.post(f"/api/v1/projects/{pid}/validate")).json()
+    result = (await api.post(f"/api/v1/workflows/{pid}/validate")).json()
     issues = {
         i["trigger_id"]: i
         for i in result["issues"]

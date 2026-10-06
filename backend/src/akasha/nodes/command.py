@@ -1,4 +1,4 @@
-"""core.command: run one operator-allowed program inside the project workspace.
+"""core.command: run one operator-allowed program inside the workflow workspace.
 
 Security model (ADR 0005). This is *not* a sandbox: an allowed program runs
 with the engine's OS user and can do whatever that program can do —
@@ -6,11 +6,11 @@ allowing ``python3`` or ``bash`` allows arbitrary code. The node therefore
 guarantees only what it can enforce:
 
 - off unless the operator lists executables (``AKASHA_COMMAND_ALLOWED``);
-  the config names one of them, a project cannot widen the list;
+  the config names one of them, a workflow cannot widen the list;
 - argv execution, never a shell: arguments are passed verbatim, so ``;``,
   ``|`` or ``$(...)`` in model-written arguments are plain text;
 - a minimal environment (no engine variables, so no database URL or
-  encryption key), the project workspace as working directory and HOME;
+  encryption key), the workflow workspace as working directory and HOME;
 - a time limit and an output cap; on timeout or cancellation the whole
   process group is killed, so no child outlives the node attempt.
 """
@@ -55,7 +55,7 @@ class CommandNode(Node):
         metadata=NodeMetadata(
             node_id="core.command",
             name="Run Command",
-            description="Runs an operator-allowed program in the project workspace.",
+            description="Runs an operator-allowed program in the workflow workspace.",
             version=VERSION,
             category="utility",
         ),
@@ -102,7 +102,7 @@ class CommandNode(Node):
                 "working_directory": {
                     "type": "string",
                     "default": ".",
-                    "description": "Directory relative to the project workspace.",
+                    "description": "Directory relative to the workflow workspace.",
                 },
                 "timeout_seconds": {
                     "type": "number",
@@ -173,7 +173,7 @@ class CommandNode(Node):
                 "COMMAND_INVALID_ARGS",
             )
         cwd = self._workspace.resolve(
-            context.project_id, cfg.get("working_directory", ".")
+            context.workflow_id, cfg.get("working_directory", ".")
         )
         if not cwd.is_dir():
             raise _error(

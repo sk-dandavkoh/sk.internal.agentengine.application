@@ -1,7 +1,7 @@
 """Test helpers for custom Nodes: run one node the way the engine does.
 
 ``run_node`` applies the engine's checks in the engine's order, so a node
-that passes here behaves the same inside a published Project:
+that passes here behaves the same inside a published Workflow:
 
 1. contract (``check_node_contract``) — as at registration;
 2. config: no plaintext secrets, then the config schema — as at publish;
@@ -89,8 +89,8 @@ async def run_node(
         execution_id=new_id("exec"),
         node_execution_id=new_id("nexec"),
         node_instance_id=new_id("node"),
-        project_id=new_id("proj"),
-        project_version="1",
+        workflow_id=new_id("wf"),
+        workflow_version="1",
         config=config,
         inputs=inputs,
         logger=logging.getLogger(f"akasha.nodes.{definition.node_id}"),

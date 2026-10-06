@@ -122,7 +122,7 @@ The session prompt added:
   - `src/test/websocket.ts`: `FakeWebSocket`, `sockets()`, `lastSocket()`.
   - `src/test/setup.ts`: installs `FakeWebSocket` as the global `WebSocket` before every test.
 - **Frontend tests:** `src/api/live.test.ts` (new); a "Live updates" describe block in `ExecutionsPage.test.tsx`.
-- **Full stack:** new test in `frontend/tests/fullstack/projects.spec.ts`.
+- **Full stack:** new test in `frontend/tests/fullstack/workflows.spec.ts`.
 
 ---
 
@@ -147,7 +147,7 @@ The session prompt added:
 | `frontend/src/features/executions/ExecutionsPage.test.tsx` | Modified | 4 "Live updates" component tests |
 | `frontend/src/test/websocket.ts` | Created | Deterministic `FakeWebSocket` |
 | `frontend/src/test/setup.ts` | Modified | Install `FakeWebSocket` globally per test |
-| `frontend/tests/fullstack/projects.spec.ts` | Modified | Full-stack live test (real backend, dropped connection) |
+| `frontend/tests/fullstack/workflows.spec.ts` | Modified | Full-stack live test (real backend, dropped connection) |
 | `frontend/vite.config.ts` | Modified | Proxy WebSocket upgrades under `/api` |
 | `docs/architecture.md` | Modified | §22 endpoint list and removed "not over HTTP: live updates"; §23 implementation; §33 (SDK) note on per-attempt flushing |
 | `frontend/README.md` | Modified | API layer bullet, dashboard note, new "Live execution" section |
@@ -703,7 +703,7 @@ Follow-up additions:
   - `frontend/src/features/executions/ExecutionDetailPage.tsx`
   - `frontend/src/features/executions/ExecutionsPage.test.tsx`
   - `frontend/src/test/setup.ts`
-  - `frontend/tests/fullstack/projects.spec.ts`
+  - `frontend/tests/fullstack/workflows.spec.ts`
   - `frontend/vite.config.ts`
   - (`git diff --stat`: 648 insertions, 22 deletions.)
 - **Untracked (new):**
@@ -780,4 +780,4 @@ Follow-up additions:
 - The full-stack harness runs no worker (`AKASHA_WORKER_ENABLED=false`). Executions there stay QUEUED unless cancelled; a live graph test needs cancellation or a worker.
 - The node status table shows raw backend values. The inspector should introduce proper node-status labels and tones, as `executionStatusDisplay` does for executions.
 
-**Prerequisites:** none beyond the above. The execution graph for the inspector needs the pinned version graph (`GET /projects/{id}/versions/{n}`) combined with `report.nodes` statuses.
+**Prerequisites:** none beyond the above. The execution graph for the inspector needs the pinned version graph (`GET /workflows/{id}/versions/{n}`) combined with `report.nodes` statuses.

@@ -12,7 +12,7 @@ from akasha.api.app import create_app
 from akasha.application.plugins import PluginService
 from akasha.config import Settings
 from akasha.domain.graph import Graph, NodeInstance
-from akasha.domain.project import Dependency, pinned_plugin_issues, plugins_in_use
+from akasha.domain.workflow import Dependency, pinned_plugin_issues, plugins_in_use
 from akasha.errors import AkashaError, DomainValidationError
 from akasha.mcp.authoring import manifest_schema, scaffold
 from akasha.mcp.server import error_payload

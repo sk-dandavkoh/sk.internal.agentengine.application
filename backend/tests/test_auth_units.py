@@ -10,13 +10,13 @@ from akasha.domain.identity import (
     MAX_PASSWORD_LENGTH,
     MIN_PASSWORD_LENGTH,
     Access,
-    ProjectRole,
     Role,
     User,
-    project_access,
+    WorkflowRole,
     validate_display_name,
     validate_password,
     validate_username,
+    workflow_access,
 )
 from akasha.errors import DomainValidationError
 from akasha.security.passwords import PasswordHasher
@@ -99,7 +99,7 @@ def test_invalid_display_names(name: str) -> None:
         validate_display_name(name)
 
 
-V, E = ProjectRole.VIEWER, ProjectRole.EDITOR
+V, E = WorkflowRole.VIEWER, WorkflowRole.EDITOR
 
 
 @pytest.mark.parametrize(
@@ -113,15 +113,15 @@ V, E = ProjectRole.VIEWER, ProjectRole.EDITOR
         # Members get exactly their role.
         ("bob", "alice", V, Access.VIEW),
         ("bob", "alice", E, Access.EDIT),
-        # Everyone else: nothing, also for ownerless (pre-accounts) projects.
+        # Everyone else: nothing, also for ownerless (pre-accounts) workflows.
         ("bob", "alice", None, None),
         ("alice", None, None, None),
-        # A shared ownerless project is reachable by its members only.
+        # A shared ownerless workflow is reachable by its members only.
         ("alice", None, V, Access.VIEW),
     ],
 )
-def test_project_access_rules(
-    who: str, owner: str | None, role: ProjectRole | None, expected: Access | None
+def test_workflow_access_rules(
+    who: str, owner: str | None, role: WorkflowRole | None, expected: Access | None
 ) -> None:
     users = {
         "root": User.create("root", role=Role.ADMIN),
@@ -129,7 +129,7 @@ def test_project_access_rules(
         "bob": User.create("bob"),
     }
     owner_id = None if owner is None else users[owner].id
-    assert project_access(users[who], owner_id, role) == expected
+    assert workflow_access(users[who], owner_id, role) == expected
 
 
 def test_access_levels_are_ordered() -> None:

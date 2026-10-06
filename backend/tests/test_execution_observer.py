@@ -10,8 +10,8 @@ from akasha.domain.execution import Execution, ExecutionError, ExecutionMetadata
 from akasha.domain.graph import Edge, Graph, NodeInstance
 from akasha.domain.node import NodeErrorKind
 from akasha.domain.primitives import new_id
-from akasha.domain.project import ProjectDraft
 from akasha.domain.trigger import TriggerType
+from akasha.domain.workflow import WorkflowDraft
 from akasha.observability.execution import observe_execution
 from akasha.observability.metrics import EngineMetrics
 from tests.support import capture_json_logs
@@ -31,8 +31,8 @@ def two_nodes() -> tuple[Execution, str, str]:
     graph.add_node(b)
     graph.add_edge(Edge(a.id, "out", b.id, "in"))
     execution = Execution.create(
-        new_id("proj"),
-        ProjectDraft(graph=graph).publish(version=2),
+        new_id("wf"),
+        WorkflowDraft(graph=graph).publish(version=2),
         metadata=ExecutionMetadata(
             trigger_type=TriggerType.WEBHOOK, correlation_id="corr-9"
         ),
@@ -73,8 +73,8 @@ def test_successful_run_logs_every_transition_with_ids_and_timings() -> None:
     ]
     for line in ours:
         assert line["execution_id"] == execution.id
-        assert line["project_id"] == execution.project_id
-        assert line["project_version"] == 2
+        assert line["workflow_id"] == execution.workflow_id
+        assert line["workflow_version"] == 2
         assert line["correlation_id"] == "corr-9"
         assert line["event_id"].startswith("evt_")
     node_lines = [ln for ln in ours if ln["event"].startswith("node.")]

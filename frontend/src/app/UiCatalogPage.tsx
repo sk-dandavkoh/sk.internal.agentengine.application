@@ -80,8 +80,8 @@ export function UiCatalogPage() {
                         }}
                     >
                         <Input
-                            label="Project name"
-                            description="Shown in the project list."
+                            label="Workflow name"
+                            description="Shown in the workflow list."
                             required
                         />
                         <Input
@@ -181,7 +181,7 @@ export function UiCatalogPage() {
                                 onClick={() => {
                                     notify({
                                         tone: 'success',
-                                        title: 'Project saved',
+                                        title: 'Workflow saved',
                                     })
                                 }}
                             >
@@ -212,7 +212,7 @@ export function UiCatalogPage() {
                                 label: 'Table',
                                 content: (
                                     <Table
-                                        caption="Projects"
+                                        caption="Workflows"
                                         hideCaption
                                         rows={rows}
                                         rowKey={(row) => row.id}
@@ -249,11 +249,11 @@ export function UiCatalogPage() {
                                 content: (
                                     <div className="grid gap-4 md:grid-cols-3">
                                         <EmptyState
-                                            title="No projects yet"
-                                            description="Create a project to start building."
+                                            title="No workflows yet"
+                                            description="Create a workflow to start building."
                                             action={
                                                 <Button variant="primary">
-                                                    Create project
+                                                    Create workflow
                                                 </Button>
                                             }
                                         />
@@ -289,8 +289,8 @@ export function UiCatalogPage() {
                 onClose={() => {
                     setDialogOpen(false)
                 }}
-                title="Rename project"
-                description="The name is shown in the project list."
+                title="Rename workflow"
+                description="The name is shown in the workflow list."
                 footer={
                     <>
                         <Button

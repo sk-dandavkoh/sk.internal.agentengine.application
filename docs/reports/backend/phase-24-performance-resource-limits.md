@@ -7,7 +7,7 @@ Engine from uncontrolled workloads." It asks for configurable limits on
 execution duration, node duration, loop iterations, concurrency, output
 size, artifact size, HTTP response size, LLM token usage, retry count and
 execution depth, plus concurrency controls. The single acceptance
-criterion is: "A malformed or badly configured Project cannot trivially
+criterion is: "A malformed or badly configured Workflow cannot trivially
 consume unlimited resources."
 
 **State found before implementation.** Inspected in
@@ -25,7 +25,7 @@ consume unlimited resources."
   - Node outputs reached memory, PostgreSQL (JSONB) and the API at any
     size. The architecture said explicitly: "Size limits (Phase 24) … are
     not applied yet."
-  - Executions per project were unbounded.
+  - Executions per workflow were unbounded.
   - Graph size and depth had no limit.
 - Hard-coded or partial:
   - `ExecutionRuntime(max_concurrency=8)` (nodes in flight per execution)
@@ -46,8 +46,8 @@ consume unlimited resources."
     is rejected.
   - **Attempts:** a retry policy above the cap is rejected.
   - **Graph:** too many nodes, or a graph too deep, is rejected.
-  - **Capacity:** unfinished executions per project are capped (HTTP 429),
-    made atomic by a project-row lock.
+  - **Capacity:** unfinished executions per workflow are capped (HTTP 429),
+    made atomic by a workflow-row lock.
 - **Runtime enforcement of output size:** per node and per execution. The
   execution budget is recounted on resume.
 - **Configuration wiring:** the per-execution node concurrency is
@@ -63,7 +63,7 @@ consume unlimited resources."
   duration limits.
 - Per execution, these are bounded: run time, attempts per node, number
   and depth of nodes, stored output, and nodes in flight.
-- Unfinished executions per project are bounded.
+- Unfinished executions per workflow are bounded.
 - No-op items (with justification, §9):
   - Loop iterations and execution nesting depth: no loop, subgraph or
     sub-execution construct exists.
@@ -87,7 +87,7 @@ Roadmap `docs/roadmap-backend.md` §28:
   response size, LLM token usage, retry count, execution depth.
   Implement concurrency controls."
 - Tests: "Test that every relevant limit is enforced."
-- Acceptance: "A malformed or badly configured Project cannot trivially
+- Acceptance: "A malformed or badly configured Workflow cannot trivially
   consume unlimited resources."
 - Phase prompt (roadmap): "Do not perform unrelated optimization. Stop
   after Phase 24."
@@ -148,7 +148,7 @@ Relevant rules:
 - Ten new settings: `limit_execution_timeout_seconds`,
   `limit_node_timeout_seconds`, `limit_node_attempts`,
   `limit_graph_nodes`, `limit_graph_depth`,
-  `limit_active_executions_per_project`, `limit_node_output_bytes`,
+  `limit_active_executions_per_workflow`, `limit_node_output_bytes`,
   `limit_execution_output_bytes`, `limit_execution_concurrency` and
   `limit_llm_output_tokens`. Each has pydantic range constraints.
 - `Settings.resource_limits() -> ResourceLimits`. It is also called from
@@ -167,10 +167,10 @@ Relevant rules:
   - **`_create`:**
     - applies `limits.policies` before opening the transaction
     - inside the transaction, calls `check_graph(snapshot.graph)` and
-      `check_capacity(await uow.executions.count_unfinished(project_id))`
+      `check_capacity(await uow.executions.count_unfinished(workflow_id))`
       before `Execution.create`
 - `ExecutionRepository` protocol (`application/persistence.py`): new
-  method `count_unfinished(project_id) -> int`.
+  method `count_unfinished(workflow_id) -> int`.
 - `AIService` (`application/ai.py`): new keyword
   `max_output_tokens: int = 16_384`, validated `>= 1`. In `complete`:
   - `max_tokens is None` → the request is `replace`d with the limit
@@ -181,9 +181,9 @@ Relevant rules:
 ### Persistence (`infrastructure/persistence.py`)
 
 - `SqlAlchemyExecutionRepository.count_unfinished`:
-  - first runs `SELECT projects.id … FOR NO KEY UPDATE`
+  - first runs `SELECT workflows.id … FOR NO KEY UPDATE`
     (`with_for_update(key_share=True)`)
-  - then counts executions of the project whose `status` is not in
+  - then counts executions of the workflow whose `status` is not in
     `TERMINAL_EXECUTION_STATUSES`
 
 ### Runtime (`runtime/runtime.py`)
@@ -224,7 +224,7 @@ Relevant rules:
 | retry count | `AKASHA_LIMIT_NODE_ATTEMPTS` (5 = 4 retries) | admission | 422 |
 | execution depth | `AKASHA_LIMIT_GRAPH_DEPTH` (100) | admission | 422 |
 | loop iterations (bounded via graph size × attempts) | `AKASHA_LIMIT_GRAPH_NODES` (500) | admission | 422 |
-| concurrency, per project | `AKASHA_LIMIT_ACTIVE_EXECUTIONS_PER_PROJECT` (100) | admission (row lock) | 429 |
+| concurrency, per workflow | `AKASHA_LIMIT_ACTIVE_EXECUTIONS_PER_WORKFLOW` (100) | admission (row lock) | 429 |
 | concurrency, per execution | `AKASHA_LIMIT_EXECUTION_CONCURRENCY` (8) | runtime scheduler `_launch` | waits for a slot |
 | concurrency, per worker | `AKASHA_WORKER_CONCURRENCY` (4, existing) | `Worker` | job waits in the queue |
 | output size, per node | `AKASHA_LIMIT_NODE_OUTPUT_BYTES` (1 MiB) | runtime | node `NODE_OUTPUT_TOO_LARGE` |
@@ -258,7 +258,7 @@ never repeats them.
 | `backend/src/akasha/config.py` | Modified (+32) | `AKASHA_LIMIT_*` settings, `resource_limits()`, fail-fast validation |
 | `backend/src/akasha/application/executions.py` | Modified (+50) | Admission control, metric, `execution_rejected` log |
 | `backend/src/akasha/application/persistence.py` | Modified (+6) | `ExecutionRepository.count_unfinished` contract |
-| `backend/src/akasha/infrastructure/persistence.py` | Modified (+21) | `count_unfinished` with project-row lock |
+| `backend/src/akasha/infrastructure/persistence.py` | Modified (+21) | `count_unfinished` with workflow-row lock |
 | `backend/src/akasha/runtime/runtime.py` | Modified (+54/−4) | Output limits, resume recount, `limits` injection |
 | `backend/src/akasha/application/ai.py` | Modified (+22/−3) | Output-token limit |
 | `backend/src/akasha/observability/metrics.py` | Modified (+8) | `akasha_resource_limit_exceeded_total{limit}` |
@@ -311,7 +311,7 @@ domain modules and `akasha.errors`.
 
 ### 5.2 Enforcement at admission for anything decidable before running
 
-- **Decision:** Durations, attempts, graph size and depth, and project
+- **Decision:** Durations, attempts, graph size and depth, and workflow
   capacity are enforced in `ExecutionService.create_execution`.
 - **Context:** Every trigger path converges on `create_execution`
   (documented in `application/executions.py`).
@@ -322,7 +322,7 @@ domain modules and `akasha.errors`.
   - Enforcing in the runtime's `load_plan` (too late: rows are already
     stored and queued).
   - Enforcing at publish (the limits are operator configuration, not
-    project validity, and can change after publish).
+    workflow validity, and can change after publish).
 - **Reason:** A rejected request stores nothing and consumes no queue or
   worker capacity. Persisted policies make each execution's limits
   explicit and reproducible (AGENTS §73).
@@ -348,22 +348,22 @@ domain modules and `akasha.errors`.
 - **Consequences:** Output limits are the running engine's values, not
   persisted per execution (§20).
 
-### 5.4 Capacity race prevention through a project-row lock
+### 5.4 Capacity race prevention through a workflow-row lock
 
-- **Decision:** `count_unfinished` locks the project row with
+- **Decision:** `count_unfinished` locks the workflow row with
   `FOR NO KEY UPDATE` before counting.
 - **Context:** A plain count lets concurrent admissions all pass. The
   stress test proves it: with the lock removed, it failed 3 out of 3
   runs.
 - **Alternatives considered:**
-  - `pg_advisory_xact_lock(hashtext(project_id))` (hash collisions; less
+  - `pg_advisory_xact_lock(hashtext(workflow_id))` (hash collisions; less
     explicit).
   - Plain `FOR UPDATE` (would also block foreign-key key-share locks).
   - An approximate cap without a lock.
 - **Reason:** An exact cap with the smallest lock scope that serializes
-  only admissions to the same project.
-- **Consequences:** Admissions to one project serialize for one short
-  transaction. Draft updates (CAS `UPDATE` on the project row) can
+  only admissions to the same workflow.
+- **Consequences:** Admissions to one workflow serialize for one short
+  transaction. Draft updates (CAS `UPDATE` on the workflow row) can
   briefly wait for an admission.
 
 ---
@@ -388,7 +388,7 @@ domain modules and `akasha.errors`.
   document): `NODE_OUTPUT_TOO_LARGE` and `EXECUTION_OUTPUT_TOO_LARGE`,
   kind `permanent`, details `{size, limit}` as strings.
 - **No tables, columns, indexes, constraints or migrations.** The
-  existing `ix_executions_project_id` serves the count.
+  existing `ix_executions_workflow_id` serves the count.
 - **No state transitions added.**
 
 ---
@@ -399,7 +399,7 @@ domain modules and `akasha.errors`.
 
 **New error responses** on every endpoint that creates executions:
 
-- `POST /api/v1/projects/{id}/versions/{v}/execute`
+- `POST /api/v1/workflows/{id}/versions/{v}/execute`
 - trigger invoke
 - webhooks
 
@@ -409,9 +409,9 @@ All use the existing error schema (`code`, `message`, `details`,
 | Code | HTTP | When | `details` |
 |---|---|---|---|
 | `RESOURCE_LIMIT_EXCEEDED` | 422 | policy, graph size or graph depth above a limit | `{limit, maximum, requested}` |
-| `EXECUTION_CAPACITY_EXCEEDED` | 429 | project at its unfinished-execution cap | `{"limit": "active_executions", "maximum": N, "requested": N+1}` |
+| `EXECUTION_CAPACITY_EXCEEDED` | 429 | workflow at its unfinished-execution cap | `{"limit": "active_executions", "maximum": N, "requested": N+1}` |
 
-Verified by `test_manual_execute_over_project_capacity_is_429`.
+Verified by `test_manual_execute_over_workflow_capacity_is_429`.
 
 **Execution state contract.** Executions now report finite
 `timeout_policy` values when the caller set none.
@@ -437,7 +437,7 @@ code `PROVIDER_CONFIGURATION` (`ProviderError` kind `configuration` →
 - **Order of checks in `create_execution`.** The checks run in this
   order:
   1. `policies` (pure, no transaction)
-  2. version lookup (404 `PROJECT_VERSION_NOT_FOUND`)
+  2. version lookup (404 `WORKFLOW_VERSION_NOT_FOUND`)
   3. `check_graph`
   4. `count_unfinished` + `check_capacity`
   5. `Execution.create`
@@ -478,10 +478,10 @@ code `PROVIDER_CONFIGURATION` (`ProviderError` kind `configuration` →
 - **Concurrency.**
   - Per-execution node concurrency uses the existing `_launch` slot
     logic, now fed from settings.
-  - Per-project capacity is serialized by the row lock (§5.4).
+  - Per-workflow capacity is serialized by the row lock (§5.4).
   - Worker-level concurrency is unchanged.
 - **Logging.** Both log events carry no payload content:
-  - `execution_rejected` fields: `project_id`, `project_version`,
+  - `execution_rejected` fields: `workflow_id`, `workflow_version`,
     `reason` (code), `limit`.
   - `node_output_limit_exceeded` fields: `node_id`, `node_type`, `limit`,
     `size`. It inherits the execution and correlation ids from the
@@ -519,11 +519,11 @@ code `PROVIDER_CONFIGURATION` (`ProviderError` kind `configuration` →
 - **Impact:** HIGH
 - **Resolution:** FIXED (per-node and per-execution limits).
 
-### 9.4 Unbounded executions per project
+### 9.4 Unbounded executions per workflow
 - **Finding:** An interval trigger faster than its runs, or a webhook
   flood, could accumulate unlimited `QUEUED` executions.
 - **Impact:** MEDIUM
-- **Resolution:** FIXED (per-project capacity, HTTP 429). The scheduler
+- **Resolution:** FIXED (per-workflow capacity, HTTP 429). The scheduler
   logs and skips a rejected fire (existing `except` in
   `runtime/scheduler.py`).
 
@@ -535,8 +535,8 @@ code `PROVIDER_CONFIGURATION` (`ProviderError` kind `configuration` →
   - Iterations are bounded by graph nodes × attempts, both now capped.
   - "Execution depth" is implemented as graph depth (the longest
     dependency chain).
-  - Artifact-size limits wait for an artifact store. Project files are
-    already capped (`MAX_PROJECT_FILE_BYTES` etc., Phase 18), and node
+  - Artifact-size limits wait for an artifact store. Workflow files are
+    already capped (`MAX_WORKFLOW_FILE_BYTES` etc., Phase 18), and node
     outputs (the stored results) are capped here.
 - **Notes:** This is a roadmap assumption that does not match the current
   system: the roadmap lists loop-iteration and artifact limits, but the
@@ -551,7 +551,7 @@ code `PROVIDER_CONFIGURATION` (`ProviderError` kind `configuration` →
   - Not blocked when the engine is reachable under a public name, or
     when `AKASHA_NETWORK_ALLOW_PRIVATE` / `AKASHA_NETWORK_ALLOWED_HOSTS`
     allow it.
-  - Per-project capacity bounds parallel fan-out, not a sequential chain.
+  - Per-workflow capacity bounds parallel fan-out, not a sequential chain.
 - **Notes:** Architecture §130 lists "event-trigger recursion". A fix
   needs a recursion depth propagated across triggers (e.g. a signed
   header or execution lineage).
@@ -562,7 +562,7 @@ code `PROVIDER_CONFIGURATION` (`ProviderError` kind `configuration` →
 - **Impact:** LOW
 - **Resolution:** OPEN (documented).
 - **Notes:** Publish-time validation cannot know operator limits without
-  coupling project validation to configuration.
+  coupling workflow validation to configuration.
 
 ### 9.8 Pre-existing Windows-only test failures
 - **Finding:** 6 tests fail and 4 error in this Windows environment, both
@@ -578,7 +578,7 @@ code `PROVIDER_CONFIGURATION` (`ProviderError` kind `configuration` →
 |---|---|---|---|---|---|---|
 | 1 | Production executions ran without time limits | Policies defaulted to `None`; no caller set them | Admission fills limits (§3) | `test_unset_policies_are_persisted_as_the_caps`, `test_execution_duration_cap_applies_without_a_policy`, `test_node_duration_cap_applies_without_a_policy` | application | pre-existing, discovered this phase |
 | 2 | New HTTP boundary test failed for `/stream-big` | The test assumed a 2048-byte body; the local server sends 4096 | Test parametrized with the per-endpoint body size (`_BIG`) | itself | tests | introduced and fixed this phase (test bug) |
-| 3 | New integration tests failed with `ProjectValidationFailedError` | Test graphs had edge-less nodes; validation rejects `DISCONNECTED_NODE` | Test graphs reshaped (root → fan-out, A → B) | itself | tests | introduced and fixed this phase (test bug) |
+| 3 | New integration tests failed with `WorkflowValidationFailedError` | Test graphs had edge-less nodes; validation rejects `DISCONNECTED_NODE` | Test graphs reshaped (root → fan-out, A → B) | itself | tests | introduced and fixed this phase (test bug) |
 | 4 | `mypy` error `Need type annotation for "fan"` | An empty-dict config literal inside a comprehension | Explicit annotation | mypy gate | tests | introduced and fixed this phase |
 | 5 | Edited files were written with CRLF line endings | Python text-mode writes on Windows | All changed files normalized back to LF | `git diff` shows no line-ending noise | tooling | environment |
 | 6 | Windows-only failures (symlinks, POSIX modes, SIGTERM, backslash paths, long test ids) | Test environment | Not fixed | — | tests/CLI/plugins | pre-existing environment problem |
@@ -603,7 +603,7 @@ code `PROVIDER_CONFIGURATION` (`ProviderError` kind `configuration` →
    - Verification: node and execution limits tested exactly at the limit
      and one byte over, with the persisted `FAILED` state and no stored
      oversized output.
-4. **Unbounded executions per project.**
+4. **Unbounded executions per workflow.**
    - Implementation: `count_unfinished` with a lock, and
      `check_capacity`.
    - Verification: boundary test, concurrent-admission stress test
@@ -666,7 +666,7 @@ code `PROVIDER_CONFIGURATION` (`ProviderError` kind `configuration` →
   - policies exactly at the limits admitted and persisted
 - **Graph:** limits at 4 run to `COMPLETED`; 5 rejected (nodes and depth
   variants).
-- **Capacity:** at limit 2 the third request is refused; another project
+- **Capacity:** at limit 2 the third request is refused; another workflow
   is unaffected; a cancelled execution frees its slot; the metric
   counts rejections.
 - **Node output:**
@@ -693,8 +693,8 @@ code `PROVIDER_CONFIGURATION` (`ProviderError` kind `configuration` →
   - result: `EXECUTION_OUTPUT_TOO_LARGE`; A not re-executed
 
 ### API Tests
-- `test_manual_execute_over_project_capacity_is_429`: real ASGI app, auth
-  and PostgreSQL. With `limit_active_executions_per_project=1`, the first
+- `test_manual_execute_over_workflow_capacity_is_429`: real ASGI app, auth
+  and PostgreSQL. With `limit_active_executions_per_workflow=1`, the first
   execute returns 201 and the second returns 429
   `EXECUTION_CAPACITY_EXCEEDED` in the standard error shape (no
   traceback). PASS.
@@ -718,7 +718,7 @@ code `PROVIDER_CONFIGURATION` (`ProviderError` kind `configuration` →
   in-flight count exactly 3.
 - **Mutation checks** (manual, reverted afterwards):
   - Zeroing the resume recount → the resume test fails.
-  - Disabling the project-row lock (`.where(False)` on the lock select)
+  - Disabling the workflow-row lock (`.where(False)` on the lock select)
     → the concurrent-admission test fails 3 out of 3 runs.
 - **Repeatability:** the limit suites (46 cases) passed 5 consecutive
   runs.
@@ -757,7 +757,7 @@ after the final change:
 
 **Full-suite failures and errors.** Each one fails the same way without
 this phase's changes. I verified this by stashing the changes and
-re-running the affected files on clean `main` (`test_project_package.py`,
+re-running the affected files on clean `main` (`test_workflow_package.py`,
 `integration/test_cli.py`, `test_cli.py`, `test_plugins.py`: 6 failed,
 2 errors; `test_credentials.py`: 2 errors).
 
@@ -769,9 +769,9 @@ re-running the affected files on clean `main` (`test_project_package.py`,
 - `integration/test_cli.py::test_ctrl_c_cancels_the_run_cooperatively`
   and `…::test_worker_process_registers_and_stops_gracefully_on_sigterm`:
   POSIX signal handling.
-- `test_project_package.py::test_unexpected_or_traversal_entries_rejected[docs\\..\\evil.txt]`:
+- `test_workflow_package.py::test_unexpected_or_traversal_entries_rejected[docs\\..\\evil.txt]`:
   backslash path semantics on Windows.
-- ERRORs in `test_project_package.py::test_manifest_not_a_json_object[...]`
+- ERRORs in `test_workflow_package.py::test_manifest_not_a_json_object[...]`
   and `test_credentials.py::test_secret_bounds[...]`: the parametrized
   test ids are too long for Windows temp paths.
 
@@ -787,13 +787,13 @@ evidence.
 
 | Acceptance Criterion | Status | Evidence |
 |---|---|---|
-| **A malformed or badly configured Project cannot trivially consume unlimited resources** | PASS | Every per-execution resource dimension has a server-side limit with boundary tests (rows below); per-project volume is capped. Residual: sequential self-triggering via webhook (§9.6), not "trivial" under default SSRF policy |
+| **A malformed or badly configured Workflow cannot trivially consume unlimited resources** | PASS | Every per-execution resource dimension has a server-side limit with boundary tests (rows below); per-workflow volume is capped. Residual: sequential self-triggering via webhook (§9.6), not "trivial" under default SSRF policy |
 | Scope: execution duration | PASS | Admission limit and runtime deadline; `test_execution_duration_cap_applies_without_a_policy`, unit boundary tests |
 | Scope: node duration | PASS | `test_node_duration_cap_applies_without_a_policy`, unit boundary tests |
 | Scope: loop iterations | PARTIAL | No loop construct exists. Graph DAG + `max_graph_nodes` × `max_node_attempts` bound node attempts (tested). A dedicated iteration limit waits for a loop construct. Not blocking |
-| Scope: concurrency | PASS | Per execution (peak test), per project (boundary + stress + API 429), per worker (existing) |
+| Scope: concurrency | PASS | Per execution (peak test), per workflow (boundary + stress + API 429), per worker (existing) |
 | Scope: output size | PASS | Node and execution limits, at/beyond, persisted state, resume |
-| Scope: artifact size | PARTIAL | No artifact store exists. Node outputs (stored results) capped; project files capped since Phase 18. Not blocking |
+| Scope: artifact size | PARTIAL | No artifact store exists. Node outputs (stored results) capped; workflow files capped since Phase 18. Not blocking |
 | Scope: HTTP response size | PASS | Existing limit; new exact-boundary tests for both body framings |
 | Scope: LLM token usage | PASS (per request) | `AIService` limit tests. A per-execution token budget is deferred (§19) |
 | Scope: retry count | PASS | Attempt cap at/beyond, unit and integration |
@@ -813,7 +813,7 @@ completion; they are the reason for "WITH LIMITATIONS".
 ## 15. Security Considerations
 
 - **Denial of service:**
-  - per-project execution flooding is now rejected before storage (429)
+  - per-workflow execution flooding is now rejected before storage (429)
   - oversized node outputs no longer reach the database or API
   - unbounded LLM output requests are capped
 - **Error disclosure:** limit errors carry only numeric limits, sizes and
@@ -840,12 +840,12 @@ completion; they are the reason for "WITH LIMITATIONS".
   benchmarks in this phase.
 - **Memory:** an oversized output exists in memory until it is measured
   and dropped (§20).
-- **Admission:** one indexed `count(*)` over the project's executions
-  (`ix_executions_project_id`) plus one row lock. Admissions to the same
-  project serialize; different projects are unaffected. The count covers
-  all of the project's executions, terminal ones included, before
+- **Admission:** one indexed `count(*)` over the workflow's executions
+  (`ix_executions_workflow_id`) plus one row lock. Admissions to the same
+  workflow serialize; different workflows are unaffected. The count covers
+  all of the workflow's executions, terminal ones included, before
   filtering by status.
-  - Possible bottleneck: projects with very many historic executions.
+  - Possible bottleneck: workflows with very many historic executions.
   - Upgrade path: a partial index on non-terminal statuses, if
     measurement shows it is needed.
 - **Resume:** the output budget is recomputed by serializing completed
@@ -880,7 +880,7 @@ completion; they are the reason for "WITH LIMITATIONS".
 - **New environment variables:** `AKASHA_LIMIT_EXECUTION_TIMEOUT_SECONDS`,
   `AKASHA_LIMIT_NODE_TIMEOUT_SECONDS`, `AKASHA_LIMIT_NODE_ATTEMPTS`,
   `AKASHA_LIMIT_GRAPH_NODES`, `AKASHA_LIMIT_GRAPH_DEPTH`,
-  `AKASHA_LIMIT_ACTIVE_EXECUTIONS_PER_PROJECT`,
+  `AKASHA_LIMIT_ACTIVE_EXECUTIONS_PER_WORKFLOW`,
   `AKASHA_LIMIT_NODE_OUTPUT_BYTES`, `AKASHA_LIMIT_EXECUTION_OUTPUT_BYTES`,
   `AKASHA_LIMIT_EXECUTION_CONCURRENCY` and
   `AKASHA_LIMIT_LLM_OUTPUT_TOKENS`.
@@ -925,7 +925,7 @@ completion; they are the reason for "WITH LIMITATIONS".
   validation and fails at run time with `PROVIDER_CONFIGURATION`.
 - **Noisy scheduler logs at capacity.** A scheduled trigger fire rejected
   at capacity is logged by the scheduler with a full exception
-  (`scheduled_trigger_failed`) on each fire while the project stays at
+  (`scheduled_trigger_failed`) on each fire while the workflow stays at
   its cap.
 - **`json_size` approximates the stored size.** It is compact JSON, not
   exact JSONB storage.
@@ -964,7 +964,7 @@ completion; they are the reason for "WITH LIMITATIONS".
   first: it names the actual culprit.
 - **"Execution depth" means graph depth** (nodes on the longest
   dependency chain), as long as there is no nesting construct.
-- **The capacity check uses a project-row `FOR NO KEY UPDATE`**, not an
+- **The capacity check uses a workflow-row `FOR NO KEY UPDATE`**, not an
   advisory lock or plain `FOR UPDATE` (§5.4).
 - **Output limits are counted on outputs after secret masking**, i.e.
   exactly what would be stored.
@@ -1000,7 +1000,7 @@ completion; they are the reason for "WITH LIMITATIONS".
 
 ### Implemented
 - `ResourceLimits` with settings and fail-fast validation.
-- Admission control: durations, attempts, graph size and depth, project
+- Admission control: durations, attempts, graph size and depth, workflow
   capacity with a lock.
 - Runtime output limits (node and execution) with resume recount.
 - Configurable per-execution node concurrency.
@@ -1044,7 +1044,7 @@ completion; they are the reason for "WITH LIMITATIONS".
   has finite `timeout_policy` values and `retry_policy.max_attempts ≤`
   the engine limit.
 - No graph larger or deeper than the limits is executed.
-- Per-project unfinished executions are capped.
+- Per-workflow unfinished executions are capped.
 - Stored node outputs never exceed the node or execution limits.
 
 **APIs and contracts now available:**

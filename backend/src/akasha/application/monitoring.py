@@ -25,8 +25,8 @@ from typing import Final
 from pydantic import BaseModel, ConfigDict
 
 from akasha.application.persistence import ExecutionSample, NodeSample
-from akasha.application.projects import UowFactory
 from akasha.application.reports import MetricsReport, MetricsTally, usage_and_cost
+from akasha.application.workflows import UowFactory
 from akasha.domain.execution import (
     TERMINAL_EXECUTION_STATUSES,
     ExecutionStatus,
@@ -103,7 +103,7 @@ class MonitoringService:
         self, *, since: datetime, until: datetime, visible_to: str | None = None
     ) -> MonitoringSummary:
         """Over the executions created in ``[since, until)``, limited to the
-        projects ``visible_to`` that user when given. Both reads share one
+        workflows ``visible_to`` that user when given. Both reads share one
         transaction, so node counts belong to the executions counted."""
         check_window(since, until)
         # ponytail: aggregates in Python over every row of the window (at

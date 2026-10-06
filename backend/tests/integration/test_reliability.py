@@ -83,9 +83,9 @@ async def queue(
     retry_policy: RetryPolicy | None = None,
     timeout_policy: TimeoutPolicy | None = None,
 ) -> Execution:
-    project_id, version = await h.publish(catalog, graph)
+    workflow_id, version = await h.publish(catalog, graph)
     return await h.executions.create_execution(
-        project_id,
+        workflow_id,
         version,
         metadata=ExecutionMetadata(correlation_id="corr-1"),
         retry_policy=retry_policy,

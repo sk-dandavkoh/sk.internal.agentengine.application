@@ -2,7 +2,7 @@
 
 ## 1. Executive Summary
 
-Phase 01 was supposed to establish the global application shell. Per `/docs/roadmap-frontend.md` §7 that means: router, layout, sidebar, header, navigation, content area, error boundary, loading states, global error handling and basic navigation for the eight main areas (Dashboard, Projects, Executions, Monitoring, Reports, Credentials, Plugins, Settings). The task prompt also asked for:
+Phase 01 was supposed to establish the global application shell. Per `/docs/roadmap-frontend.md` §7 that means: router, layout, sidebar, header, navigation, content area, error boundary, loading states, global error handling and basic navigation for the eight main areas (Dashboard, Workflows, Executions, Monitoring, Reports, Credentials, Plugins, Settings). The task prompt also asked for:
 
 - route-level code splitting
 - a not-found page
@@ -17,7 +17,7 @@ What was implemented:
   - the main navigation (a sidebar from the `md` breakpoint up, a horizontally scrolling nav bar below it)
   - a skip link
   - the `<main>` content area
-- **Areas:** routes for all eight areas plus `/projects/:projectId/editor`. Each area is a `lazy` route, so it is code-split. All areas currently share one placeholder chunk.
+- **Areas:** routes for all eight areas plus `/workflows/:workflowId/editor`. Each area is a `lazy` route, so it is code-split. All areas currently share one placeholder chunk.
 - **Root redirect:** `/` redirects to `/dashboard`.
 - **Error boundaries:** two levels. The root boundary catches shell failures. A pathless content boundary keeps the navigation usable when a page fails.
 - **Not found:** a 404 page rendered inside the shell.
@@ -43,7 +43,7 @@ Roadmap objective (`/docs/roadmap-frontend.md` §7): "Eine stabile globale Appli
 - error boundary
 - loading states
 - global error handling
-- basic navigation for Dashboard, Projects, Executions, Monitoring, Reports, Credentials, Plugins, Settings
+- basic navigation for Dashboard, Workflows, Executions, Monitoring, Reports, Credentials, Plugins, Settings
 
 **Additional requirements from the task prompt:**
 
@@ -58,7 +58,7 @@ Roadmap objective (`/docs/roadmap-frontend.md` §7): "Eine stabile globale Appli
 - design-system components (Phase 02)
 - API client (Phase 03)
 - domain types and server state / TanStack Query (Phase 04)
-- any feature functionality: dashboard content, project management, editor, and so on
+- any feature functionality: dashboard content, workflow management, editor, and so on
 - authentication and protected routes
 
 ---
@@ -72,8 +72,8 @@ Roadmap objective (`/docs/roadmap-frontend.md` §7): "Eine stabile globale Appli
   - `/` → `AppLayout`, with the root `errorElement` and `HydrateFallback`
     - pathless content route → content `errorElement`
       - index → `loader: () => redirect('/dashboard')`
-      - `/dashboard`, `/projects`, `/executions`, `/monitoring`, `/reports`, `/credentials`, `/plugins`, `/settings` → `lazy: placeholder(label)`
-      - `/projects/:projectId/editor` → `lazy: placeholder('Editor')`
+      - `/dashboard`, `/workflows`, `/executions`, `/monitoring`, `/reports`, `/credentials`, `/plugins`, `/settings` → `lazy: placeholder(label)`
+      - `/workflows/:workflowId/editor` → `lazy: placeholder('Editor')`
       - `*` → `NotFoundPage`
 - Navigation entries are defined once in `navigation.ts` (`navItems`). The sidebar and the route table both use that list, so the two cannot drift apart.
 
@@ -196,8 +196,8 @@ No frontend/backend contract changes. No backend calls are made.
 Client-side URL contract introduced (bookmarkable routes):
 
 - `/` (redirects to `/dashboard`)
-- `/dashboard`, `/projects`, `/executions`, `/monitoring`, `/reports`, `/credentials`, `/plugins`, `/settings`
-- `/projects/:projectId/editor`
+- `/dashboard`, `/workflows`, `/executions`, `/monitoring`, `/reports`, `/credentials`, `/plugins`, `/settings`
+- `/workflows/:workflowId/editor`
 - any other path → 404 page, rendered client-side
 
 These paths follow the example in `frontend/AGENTS.md` §14. The production reverse proxy must serve `index.html` for these paths (SPA fallback). `vite preview` already does this, as the E2E tests show.
@@ -299,7 +299,7 @@ All of these were introduced and fixed during this phase. No pre-existing produc
   - `/` redirects to `/dashboard`
   - each of the 8 areas renders its heading when opened directly (`it.each(navItems)`)
   - clicking through all 8 sidebar links in sequence: the heading, the router pathname and `aria-current="page"` are correct for each
-  - `/projects/p_1/editor` renders the Editor placeholder
+  - `/workflows/p_1/editor` renders the Editor placeholder
   - an unknown path shows "Page not found" with the navigation still present, and "Go to Dashboard" navigates back
 - **`RouteErrorBoundary.test.tsx`**:
   - `vi.mock('./PlaceholderPage')` makes the Reports page throw `'TypeError: secret internal detail'` while rendering, using the real route tree
@@ -315,7 +315,7 @@ All of these were introduced and fixed during this phase. No pre-existing produc
 
 1. Production build: `/` → URL `/dashboard`, title "Akasha Agent Engine", Dashboard `h1` visible.
 2. Clicking "Executions" in the Main navigation → URL `/executions` and the Executions heading.
-3. Loading `/projects/p_1/editor` directly shows the Editor heading, and loading `/does/not/exist` shows "Page not found". This verifies the preview server's SPA fallback and client-side 404 handling.
+3. Loading `/workflows/p_1/editor` directly shows the Editor heading, and loading `/does/not/exist` shows "Page not found". This verifies the preview server's SPA fallback and client-side 404 handling.
 
 ### Accessibility checks (partial, no automated audit)
 
@@ -324,9 +324,9 @@ All of these were introduced and fixed during this phase. No pre-existing produc
 
 ### Visual check (manual)
 
-Production-build screenshots of `/projects` at 1200×700 and 375×700 were taken with Playwright and inspected:
+Production-build screenshots of `/workflows` at 1200×700 and 375×700 were taken with Playwright and inspected:
 
-- the desktop sidebar shows the active "Projects" item
+- the desktop sidebar shows the active "Workflows" item
 - the mobile top bar has a horizontally scrolling nav
 
 These screenshots are not committed and are not part of any automated test.
@@ -375,7 +375,7 @@ The criteria come from `/docs/roadmap-frontend.md` §7.
 ## 15. Security Considerations
 
 - **Error disclosure:** `RouteErrorBoundary` never renders the error object or its message. A test asserts that error text does not appear in the DOM.
-- **XSS / output encoding:** no `dangerouslySetInnerHTML`, `innerHTML`, `eval` or `Function`. The route param `:projectId` is not rendered at all. The editor placeholder shows a static title.
+- **XSS / output encoding:** no `dangerouslySetInnerHTML`, `innerHTML`, `eval` or `Function`. The route param `:workflowId` is not rendered at all. The editor placeholder shows a static title.
 - **Secrets:** none are handled. No `localStorage` or `sessionStorage` use. Nothing is put in the URL beyond route paths.
 - **Open redirects:** the only redirect target is the hard-coded `/dashboard`.
 - **Authentication / authorization:** not implemented. All routes are public on the client. Protected routes must be added centrally (`frontend/AGENTS.md` §14, §21) when auth arrives. Backend enforcement (backend Phase 20, authentication and authorization) is unaffected.

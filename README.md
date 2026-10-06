@@ -22,11 +22,11 @@ Die zentrale Idee:
 
 > **Eine Engine, kein einzelner Agent.**
 
-Die Plattform ist nicht ein Tool für einen bestimmten Anwendungsfall, sondern eine **Engine und Entwicklungsumgebung**, in der Projekte aus wiederverwendbaren Bausteinen aufgebaut, konfiguriert, getestet, ausgeführt, untersucht und erweitert werden – für **KI-Systeme**.
+Die Plattform ist nicht ein Tool für einen bestimmten Anwendungsfall, sondern eine **Engine und Entwicklungsumgebung**, in der Workflows aus wiederverwendbaren Bausteinen aufgebaut, konfiguriert, getestet, ausgeführt, untersucht und erweitert werden – für **KI-Systeme**.
 
 Benutzer sollen nicht für jeden Anwendungsfall eine neue individuelle AI-Anwendung programmieren müssen.
 
-Stattdessen erstellen sie ein **Project**, bauen darin einen **Graphen aus Nodes**, konfigurieren diese Nodes und lassen die Engine diesen Graphen ausführen.
+Stattdessen erstellen sie ein **Workflow**, bauen darin einen **Graphen aus Nodes**, konfigurieren diese Nodes und lassen die Engine diesen Graphen ausführen.
 
 Beispiel:
 
@@ -110,7 +110,7 @@ Das zentrale Produkt besteht aus drei Ebenen:
 ┌─────────────────────────────────────────────────────────┐
 │                    FRONTEND / IDE                       │
 │                                                         │
-│  Projects · Graph Editor · Node Library · Inspector    │
+│  Workflows · Graph Editor · Node Library · Inspector    │
 │  Executions · Logs · Monitoring · Reports · Settings   │
 └────────────────────────────┬────────────────────────────┘
                              │
@@ -119,7 +119,7 @@ Das zentrale Produkt besteht aus drei Ebenen:
 ┌─────────────────────────────────────────────────────────┐
 │                    AI AGENT ENGINE                      │
 │                                                         │
-│  Project System                                         │
+│  Workflow System                                         │
 │  Graph System                                           │
 │  Validation                                             │
 │  Execution Runtime                                      │
@@ -155,7 +155,7 @@ Wer an diesem Repository arbeitet, sollte immer dieses Modell im Kopf behalten:
 ```text
 Engine
   │
-  ├── Projects
+  ├── Workflows
   │      │
   │      ├── Draft
   │      │    └── Graph
@@ -204,7 +204,7 @@ Die Engine ist die zentrale Runtime des Systems.
 
 Sie kennt:
 
--   Projects
+-   Workflows
     
 -   Graphen
     
@@ -231,9 +231,9 @@ Die Engine ist für die korrekte Ausführung verantwortlich.
 
 ----------
 
-## 4.2 Project
+## 4.2 Workflow
 
-Ein Project beschreibt ein eigenständiges AI-System.
+Ein Workflow beschreibt ein eigenständiges AI-System.
 
 Beispielsweise:
 
@@ -253,7 +253,7 @@ oder:
 Research Assistant
 ```
 
-Ein Project besitzt unter anderem:
+Ein Workflow besitzt unter anderem:
 
 -   Metadaten
     
@@ -272,9 +272,9 @@ Ein Project besitzt unter anderem:
 
 ----------
 
-## 4.3 Project Draft
+## 4.3 Workflow Draft
 
-Ein Draft ist die **veränderbare Arbeitsversion** eines Projects.
+Ein Draft ist die **veränderbare Arbeitsversion** eines Workflows.
 
 Benutzer können:
 
@@ -295,14 +295,14 @@ Der Draft ist mutable.
 
 ----------
 
-## 4.4 Project Version
+## 4.4 Workflow Version
 
-Ein veröffentlichter Project-Stand ist **immutable**.
+Ein veröffentlichter Workflow-Stand ist **immutable**.
 
 Beispiel:
 
 ```text
-Project
+Workflow
 └── Versions
     ├── v1
     ├── v2
@@ -322,7 +322,7 @@ Das ist eine fundamentale Architekturentscheidung.
 
 # 5. Graph
 
-Ein Project besteht aus einem Graphen.
+Ein Workflow besteht aus einem Graphen.
 
 Der Graph enthält:
 
@@ -515,7 +515,7 @@ Trigger
    ↓
 Execution
    ↓
-Load Project Version
+Load Workflow Version
    ↓
 Validate
    ↓
@@ -571,7 +571,7 @@ Die Runtime muss unter anderem unterstützen:
 
 # 11. Trigger
 
-Ein Project wird nicht einfach nur über einen globalen „Play“-Button ausgeführt.
+Ein Workflow wird nicht einfach nur über einen globalen „Play“-Button ausgeführt.
 
 Executions entstehen durch Trigger.
 
@@ -657,9 +657,9 @@ Der persistierte Domain-Zustand bleibt maßgeblich.
 
 # 13. Credentials und Secrets
 
-Secrets dürfen niemals Bestandteil normaler Project-Konfigurationen sein.
+Secrets dürfen niemals Bestandteil normaler Workflow-Konfigurationen sein.
 
-Beispielsweise darf ein Project nicht enthalten:
+Beispielsweise darf ein Workflow nicht enthalten:
 
 ```json
 {
@@ -691,7 +691,7 @@ Secrets dürfen nicht versehentlich in:
     
 -   API Responses
     
--   Project Exports
+-   Workflow Exports
     
 -   Fehlermeldungen
     
@@ -788,7 +788,7 @@ Das Backend ist die **autoritative Quelle der Wahrheit**.
 
 Das Frontend entscheidet nicht über:
 
--   Project Validität
+-   Workflow Validität
     
 -   Graph Validität
     
@@ -841,7 +841,7 @@ Es stellt unter anderem bereit:
 
 -   Dashboard
     
--   Project Management
+-   Workflow Management
     
 -   Graph Editor
     
@@ -926,7 +926,7 @@ Eine Execution muss nachvollziehbar sein.
 Mindestens relevant sind:
 
 ```text
-Project Version
+Workflow Version
 Node Version
 Plugin Version
 Configuration Snapshot
@@ -941,8 +941,8 @@ Beispiel:
 ```text
 Execution #1842
 
-Project:      Research Assistant
-Project:      v7
+Workflow:      Research Assistant
+Workflow:      v7
 Node:         ai.llm@1.3.0
 Plugin:       web-search@2.1.0
 Engine:       0.8.0
@@ -1144,8 +1144,8 @@ Das Backend ist die autoritative Quelle für persistente und fachliche Zustände
 Beispiele:
 
 ```text
-Project State        → Backend
-Project Version      → Backend
+Workflow State        → Backend
+Workflow Version      → Backend
 Graph Validation     → Backend
 Execution State      → Backend
 Node State           → Backend
@@ -1514,9 +1514,9 @@ Login
   ↓
 Dashboard
   ↓
-Create Project
+Create Workflow
   ↓
-Open Project
+Open Workflow
   ↓
 Create Draft
   ↓
@@ -1546,11 +1546,11 @@ Logs / Metrics
   ↓
 Report
   ↓
-Export Project
+Export Workflow
   ↓
-Import Project
+Import Workflow
   ↓
-Execute Imported Project
+Execute Imported Workflow
 ```
 
 ----------
@@ -1611,7 +1611,7 @@ Reports
 Versioning
 ```
 
-Der konkrete Kundenprozess ist **nur ein Project**.
+Der konkrete Kundenprozess ist **nur ein Workflow**.
 
 Die Engine selbst bleibt allgemein.
 
@@ -1637,7 +1637,7 @@ Es ist:
 ┌───────────────────────────────────────────────┐
 │             AI DEVELOPMENT ENGINE             │
 │                                               │
-│  Projects                                     │
+│  Workflows                                     │
 │  Graphs                                       │
 │  Nodes                                        │
 │  Plugins                                      │
@@ -1698,7 +1698,7 @@ Nicht nur eine UI und nicht nur einen Agenten.
 
 LLMs, HTTP, Web Search, SMTP, Control Flow usw. werden als Nodes modelliert.
 
-### 3. Projects bestehen aus Graphen
+### 3. Workflows bestehen aus Graphen
 
 Der Graph beschreibt das AI-System.
 
@@ -1714,6 +1714,6 @@ Das Frontend visualisiert und steuert die Engine, entscheidet aber nicht über d
 
 ## Final Product Definition
 
-> **This project is a self-hosted AI development and execution engine. It allows users to visually build modular AI systems from reusable nodes, connect them into executable graphs, configure triggers and credentials, publish immutable project versions, execute them through a reliable runtime, and inspect their behavior through logs, events, metrics and reports. Developers can extend the platform with custom Python nodes and plugins.**
+> **This project is a self-hosted AI development and execution engine. It allows users to visually build modular AI systems from reusable nodes, connect them into executable graphs, configure triggers and credentials, publish immutable workflow versions, execute them through a reliable runtime, and inspect their behavior through logs, events, metrics and reports. Developers can extend the platform with custom Python nodes and plugins.**
 > 
 > **The goal is not to build one AI agent. The goal is to build the engine on which many different AI agents, workflows and automation systems can be created.**

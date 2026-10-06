@@ -22,7 +22,7 @@ There must be no hard-coded node list (also frontend `AGENTS.md` §24, which lis
 - A pre-existing flaky test (`src/app/App.test.tsx`) was found during verification and fixed.
 - There are no backend, contract or dependency changes.
 
-**Resulting state.** A user can open `/projects/:id/editor`, browse the registered nodes, see what each does (preview, inputs, outputs, required settings, capabilities, version, documentation), and add a node by button or drag. The node is saved to the draft through the existing save and autosave path. This is verified at component, E2E and full-stack level (real backend registry and PostgreSQL). The full unit suite passed 21 of 21 consecutive runs after the flaky-test fix.
+**Resulting state.** A user can open `/workflows/:id/editor`, browse the registered nodes, see what each does (preview, inputs, outputs, required settings, capabilities, version, documentation), and add a node by button or drag. The node is saved to the draft through the existing save and autosave path. This is verified at component, E2E and full-stack level (real backend registry and PostgreSQL). The full unit suite passed 21 of 21 consecutive runs after the flaky-test fix.
 
 **Acceptance criteria.** All four roadmap criteria pass with evidence (§14). All roadmap scope items, including Node Preview, are implemented.
 
@@ -124,7 +124,7 @@ The task prompt additionally asked for:
 | `frontend/src/features/editor/EditorPage.test.tsx` | Modified | `describe('Node library')`: 7 tests |
 | `frontend/src/app/App.test.tsx` | Modified | Fix the race in "boots into the dashboard inside the shell" |
 | `frontend/tests/e2e/editor.spec.ts` | Modified | Test "drags a node from the library onto the canvas" |
-| `frontend/tests/fullstack/projects.spec.ts` | Modified | Test "the node library lists the backend registry and adds to the draft" |
+| `frontend/tests/fullstack/workflows.spec.ts` | Modified | Test "the node library lists the backend registry and adds to the draft" |
 | `frontend/README.md` | Modified | "Node library" section; canvas bullet mentions drops |
 | `docs/reports/frontend/phase-08-node-library.md` | Created | This report |
 
@@ -145,7 +145,7 @@ No architectural changes were introduced during this phase. The library consumes
 
 ### 5.2 The client validates only registration and id uniqueness
 - **Decision:** `addNode` refuses unregistered types, and the reducer refuses duplicate ids. Config validity, port compatibility and required settings remain the backend's `/validate` and publish validation (root `AGENTS.md` §4).
-- **Context:** drafts accept semantically invalid content (`ProjectService.update_draft`). The backend rejects only unstorable content, plaintext secrets and duplicate node ids (`Graph.add_node`).
+- **Context:** drafts accept semantically invalid content (`WorkflowService.update_draft`). The backend rejects only unstorable content, plaintext secrets and duplicate node ids (`Graph.add_node`).
 - **Reason:** an unregistered type can never become valid, and a duplicate id would make the whole draft unsavable.
 - **Consequences:** Phase 09 owns configuring the added nodes.
 
@@ -185,7 +185,7 @@ The internal editor state type `EditorAction` gained the `add` variant. It is no
 
 ## 7. API / Contract Changes
 
-There were no contract changes. The phase reads `GET /api/v1/nodes` (`NodeCatalog { items: NodeTypeOut[] }`) and writes through the existing `PUT /api/v1/projects/{id}`, with the draft and `expected_revision`. The OpenAPI snapshot is unchanged. Icons deliberately use no contract field (§5.5).
+There were no contract changes. The phase reads `GET /api/v1/nodes` (`NodeCatalog { items: NodeTypeOut[] }`) and writes through the existing `PUT /api/v1/workflows/{id}`, with the draft and `expected_revision`. The OpenAPI snapshot is unchanged. Icons deliberately use no contract field (§5.5).
 
 ---
 
@@ -221,7 +221,7 @@ There were no contract changes. The phase reads `GET /api/v1/nodes` (`NodeCatalo
 ### Finding 1 — Drafts accept invalid nodes; only duplicate ids break a save
 - **Impact:** LOW
 - **Resolution:** FIXED (by design: guard in reducer)
-- **Notes:** `Project.replace_draft` does not validate node types or config; `Graph.add_node` rejects duplicate ids. This defined the client-side checks.
+- **Notes:** `Workflow.replace_draft` does not validate node types or config; `Graph.add_node` rejects duplicate ids. This defined the client-side checks.
 
 ### Finding 2 — The node contract has no icon field
 - **Impact:** LOW
@@ -445,9 +445,9 @@ None:
 
 ## 23. Repository / Git State
 
-- **Branch:** `main`. HEAD is `07ff1fb` ("frontend phase 07 - project draft and graph editor foundation").
+- **Branch:** `main`. HEAD is `07ff1fb` ("frontend phase 07 - workflow draft and graph editor foundation").
 - **Working tree:** uncommitted changes from this phase only.
-  - Modified: `frontend/README.md`, `frontend/src/app/App.test.tsx`, `frontend/src/components/ui/{icons.tsx,index.ts}`, `frontend/src/features/editor/{EditorPage.tsx,EditorPage.test.tsx,GraphCanvas.tsx,editorState.ts,editorState.test.ts}`, `frontend/tests/e2e/editor.spec.ts`, `frontend/tests/fullstack/projects.spec.ts`
+  - Modified: `frontend/README.md`, `frontend/src/app/App.test.tsx`, `frontend/src/components/ui/{icons.tsx,index.ts}`, `frontend/src/features/editor/{EditorPage.tsx,EditorPage.test.tsx,GraphCanvas.tsx,editorState.ts,editorState.test.ts}`, `frontend/tests/e2e/editor.spec.ts`, `frontend/tests/fullstack/workflows.spec.ts`
   - Untracked: `frontend/src/features/editor/{NodeLibrary.tsx,NodeCard.tsx}`, `docs/reports/frontend/phase-08-node-library.md`
   - Diff of tracked files: 11 files, +467 / −71
 - **Unrelated changes:** none detected. `App.test.tsx` lies outside the phase's feature, but it was changed deliberately to fix Finding 3.
@@ -492,7 +492,7 @@ None:
   - Added nodes have `config: {}` and become the sole selection (`state.selection = [id]`).
   - `catalog: Map<node_type, NodeDefinition>` with `config_schema` is available in `EditorPage`.
   - `NodeLibrary.requiredSettings` reads only top-level `required`. The inspector needs a real schema-driven form.
-- **Contracts available:** `GET /nodes` and `PUT /projects/{id}` with `expected_revision`, both unchanged.
+- **Contracts available:** `GET /nodes` and `PUT /workflows/{id}` with `expected_revision`, both unchanged.
   - Config edits should be a new reducer action, so undo, dirty tracking and autosave keep working.
   - The backend rejects plaintext secrets in config, so use credential references (`credential:<name>`).
 - **Must not be changed casually:**
@@ -501,5 +501,5 @@ None:
   - the reducer's duplicate-id guard
   - add → select behavior
   - `NodeCard` as the shared rendering of canvas and preview; keep ReactFlow-only parts behind `handles`
-- **Known constraints:** the editor loads the project once per session (Phase 07). The catalog may refresh in the background; the library handles that via `QuerySection`.
+- **Known constraints:** the editor loads the workflow once per session (Phase 07). The catalog may refresh in the background; the library handles that via `QuerySection`.
 - **Prerequisites:** none.

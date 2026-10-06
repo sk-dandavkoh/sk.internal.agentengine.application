@@ -5,7 +5,7 @@ Status: accepted (2026-10-06)
 ## Context
 
 External AI agents (Claude, Codex, Hermes, other MCP clients) should be able
-to operate the engine: discover node types, build and publish projects, run
+to operate the engine: discover node types, build and publish workflows, run
 and inspect executions, and extend the engine with plugins. The Model
 Context Protocol is the common interface these agents speak. The REST API
 already exposes the same operations to the UI. The application services
@@ -26,9 +26,9 @@ Forces:
 ## Decision
 
 1. **MCP is an interface module**, `akasha.mcp`, parallel to `akasha.api`
-   and the CLI. Tools call application services (`ProjectService`,
+   and the CLI. Tools call application services (`WorkflowService`,
    `ExecutionService`, `TriggerService`, `ReportService`,
-   `ProjectPackageService`, `PluginService`, `NodeRegistry`) and the same
+   `WorkflowPackageService`, `PluginService`, `NodeRegistry`) and the same
    `AuthorizationService`/`require_admin` checks the REST guards use. They
    reuse REST DTOs as results wherever one fits. MCP never touches
    repositories or SQL, and never calls the REST API over HTTP.
@@ -51,7 +51,7 @@ Forces:
    retryable}` with the engine's error codes, redacted. Results are capped
    (`AKASHA_MCP_MAX_RESPONSE_BYTES`); lists are paged.
 6. **Concurrency through the existing revision CAS.** Granular graph edits
-   go through the new `ProjectService.edit_draft` (read, apply one domain
+   go through the new `WorkflowService.edit_draft` (read, apply one domain
    `Graph`/draft method, `replace_draft`, save with `expected_revision`, all
    in one transaction). Plugin lifecycle calls from REST and MCP share one
    lock in the new `application.plugins.PluginService`. It moved out of
@@ -64,10 +64,10 @@ Forces:
    `AKASHA_MCP_PLUGIN_CODE=true`. New in the registry: atomic `update`
    (restores the old package on any failure) and `load_unregistered` (test
    import under a throwaway module name). Update and remove are refused
-   while projects use the plugin unless forced.
+   while workflows use the plugin unless forced.
 8. **Published versions pin plugin versions.** Publish records
    `plugin_versions` (id → exact version of each enabled plugin the draft
-   uses) on the `ProjectVersion` (migration 0014; also returned by REST).
+   uses) on the `WorkflowVersion` (migration 0014; also returned by REST).
    The runtime refuses to run a version whose pinned plugins are not
    enabled in exactly those versions (`EXECUTION_GRAPH_INVALID`). This
    lives in the domain, application and runtime layers, not in MCP.
@@ -93,13 +93,13 @@ Forces:
 ## Consequences
 
 - Agents get the same capabilities and the same limits as a user with the
-  same role. Hidden projects are hidden, admin tools are admin-only.
+  same role. Hidden workflows are hidden, admin tools are admin-only.
 - With `AKASHA_MCP_PLUGIN_CODE=true` an admin token is as powerful as
   shell access on the host. Documented; off by default.
 - After a forced plugin update, versions pinned to the old plugin version
   stop running (a visible, structured failure) until they are republished
   or the old plugin version is reinstalled.
-- REST `ProjectVersionDetail` gains `plugin_versions` (additive; the
+- REST `WorkflowVersionDetail` gains `plugin_versions` (additive; the
   OpenAPI snapshot and frontend schemas are updated).
 - Dedicated worker processes still pick up plugin changes only on restart
   (ADR 0001); unchanged.

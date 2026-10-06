@@ -67,7 +67,7 @@ The constraints come from `frontend/AGENTS.md` §59 ("Memoization nicht blind ei
 ### Frontend: server state
 
 - Log infinite query (`executionQueries.logs` in `api/queries.ts`): a refetch reuses cached full pages and requests only the tail.
-- `projectQueries.validation` gets `staleTime: INSTALLATION_STALE_TIME_MS`.
+- `workflowQueries.validation` gets `staleTime: INSTALLATION_STALE_TIME_MS`.
 
 ### Testing
 
@@ -134,7 +134,7 @@ Not applicable. No domain, schema, DTO or persistence change.
 No contract changes. The same endpoints are called with the same parameters. Only the number of calls dropped:
 
 - `GET /executions/{id}/logs` on refetch;
-- `POST /projects/{id}/validate` on window focus.
+- `POST /workflows/{id}/validate` on window focus.
 
 ## 8. Implementation Details
 
@@ -157,7 +157,7 @@ No contract changes. The same endpoints are called with the same parameters. Onl
   - `use(CheckContext)` is called only while that string is set. React 19 allows `use` to be called conditionally.
   - So a card subscribes to the frequently changing check only during a connection drag.
 - **Log `queryFn`.** It reads `client.getQueryData(queryKey)` from the query function context, then finds the page whose `pageParam` matches. A cached full page is returned without a request. "Load more" (a new `pageParam`) and first loads always request.
-- **Validation staleness.** The key includes the revision. A save changes the revision and invalidates the `projects.detail(id)` prefix, so the verdict for a new draft is always fetched.
+- **Validation staleness.** The key includes the revision. A save changes the revision and invalidates the `workflows.detail(id)` prefix, so the verdict for a new draft is always fetched.
 
 ## 9. Findings
 
@@ -216,7 +216,7 @@ No contract changes. The same endpoints are called with the same parameters. Onl
   - `GraphCanvas`: 198.4 kB (64.2 kB gzip), loaded only by graph views;
   - `queries`: 130.5 kB (37.7 kB gzip), mostly Zod;
   - `EditorPage`: 32.1 kB.
-- **Lists.** Executions, projects and reports (25 per page), versions and credentials (50 per page) and version executions (20 per page) are paginated on the server.
+- **Lists.** Executions, workflows and reports (25 per page), versions and credentials (50 per page) and version executions (20 per page) are paginated on the server.
 - **Logs and events.** Logs use cursor paging. The event timeline steps by `EVENT_STEP = 200` and live activity is capped at `MAX_ACTIVITY = 200`.
 - **WebSocket.**
   - reconcile is throttled to 1 per second;

@@ -1,5 +1,5 @@
 import { Badge, LockIcon, TextLink } from '../../components/ui'
-import type { ProjectVersionSummary } from '../../api/projects'
+import type { WorkflowVersionSummary } from '../../api/workflows'
 import { formatDateTime } from '../../lib/format'
 import { versionPath } from './paths'
 
@@ -13,7 +13,7 @@ export function ImmutableBadge() {
     )
 }
 
-/** The version new triggers run and the project shows as current. */
+/** The version new triggers run and the workflow shows as current. */
 export function LatestBadge() {
     return <Badge tone="success">Latest</Badge>
 }
@@ -29,7 +29,7 @@ export function Time({ iso }: { iso: string }) {
 export function Author({
     author,
 }: {
-    author: ProjectVersionSummary['published_by']
+    author: WorkflowVersionSummary['published_by']
 }) {
     if (author === null) return <span className="text-muted">Not recorded</span>
     // The id only when the account is gone; its title tells users apart.
@@ -40,13 +40,13 @@ export function Author({
     )
 }
 
-/** `v3`, linking to that version of the project. */
+/** `v3`, linking to that version of the workflow. */
 export function VersionLink({
-    projectId,
+    workflowId,
     version,
 }: {
-    projectId: string
+    workflowId: string
     version: number
 }) {
-    return <TextLink to={versionPath(projectId, version)}>v{version}</TextLink>
+    return <TextLink to={versionPath(workflowId, version)}>v{version}</TextLink>
 }

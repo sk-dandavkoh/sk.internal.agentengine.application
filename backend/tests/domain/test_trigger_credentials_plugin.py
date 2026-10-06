@@ -9,7 +9,6 @@ import pytest
 from akasha.domain.credentials import CredentialReference
 from akasha.domain.execution import ExecutionMetadata
 from akasha.domain.plugin import PluginMetadata
-from akasha.domain.project import Dependency
 from akasha.domain.trigger import (
     MAX_INTERVAL_SECONDS,
     MAX_PAYLOAD_DEPTH,
@@ -20,6 +19,7 @@ from akasha.domain.trigger import (
     event_problem,
     schedule_problem,
 )
+from akasha.domain.workflow import Dependency
 from akasha.errors import DomainValidationError
 
 
@@ -154,17 +154,17 @@ class TestEventProblem:
         assert problem is not None
         assert event not in problem  # config values never reach messages
 
-    def test_source_project_must_be_a_project_id(self) -> None:
+    def test_source_workflow_must_be_a_workflow_id(self) -> None:
         def problem(source: object) -> str | None:
             return event_problem(
                 Trigger.create(
                     TriggerType.EVENT,
-                    {"event": "execution.completed", "source_project_id": source},
+                    {"event": "execution.completed", "source_workflow_id": source},
                 )
             )
 
-        assert problem("proj_" + "a" * 32) is None
-        for bad in ("trig_" + "a" * 32, "proj_x", "", 7):
+        assert problem("wf_" + "a" * 32) is None
+        for bad in ("trig_" + "a" * 32, "wf_x", "", 7):
             assert problem(bad) is not None
 
     @pytest.mark.parametrize("t", [t for t in TriggerType if t != TriggerType.EVENT])

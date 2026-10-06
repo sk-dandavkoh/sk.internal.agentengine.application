@@ -1,6 +1,6 @@
-"""MCP tools over the project, execution and node application services.
+"""MCP tools over the workflow, execution and node application services.
 
-Each tool is one application-service call (or one ``ProjectService.edit_draft``
+Each tool is one application-service call (or one ``WorkflowService.edit_draft``
 around a domain ``Graph``/draft method), preceded by the authorization check
 the matching REST route gets from its guards. Results reuse the REST DTOs
 (``akasha.api.*``) wherever one fits, so MCP and REST describe the same
@@ -30,30 +30,28 @@ from akasha.api.executions import (
     LogPage,
 )
 from akasha.api.nodes import ConfigIssueOut, ConfigValidationOut, NodeTypeOut
-from akasha.api.project_schemas import (
+from akasha.api.trigger_schemas import ExecutionDetail
+from akasha.api.workflow_schemas import (
     DraftBody,
     GraphBody,
-    ImportProjectResponse,
+    ImportWorkflowResponse,
     PageInfo,
-    ProjectDetail,
-    ProjectFileOut,
-    ProjectPage,
-    ProjectSummary,
-    ProjectVersionDetail,
-    ProjectVersionPage,
     TriggerBody,
     ValidationResponse,
+    WorkflowDetail,
+    WorkflowFileOut,
+    WorkflowPage,
+    WorkflowSummary,
+    WorkflowVersionDetail,
+    WorkflowVersionPage,
     _graph_body,
     _triggers,
 )
-from akasha.api.trigger_schemas import ExecutionDetail
 from akasha.application.auth import AuthorizationService, require_admin
 from akasha.application.credentials import CredentialService
 from akasha.application.executions import ExecutionService
-from akasha.application.packages import ProjectPackageService
-from akasha.application.persistence import ProjectSort
-from akasha.application.project_package import MAX_PACKAGE_BYTES
-from akasha.application.projects import MAX_PAGE_SIZE, ProjectService
+from akasha.application.packages import WorkflowPackageService
+from akasha.application.persistence import WorkflowSort
 from akasha.application.reports import (
     ErrorReport,
     ExecutionReport,
@@ -61,12 +59,14 @@ from akasha.application.reports import (
     NodeReport,
     ReportService,
 )
+from akasha.application.workflow_package import MAX_PACKAGE_BYTES
+from akasha.application.workflows import MAX_PAGE_SIZE, WorkflowService
 from akasha.domain.execution import ExecutionStatus, LogLevel
 from akasha.domain.graph import Edge, NodeInstance, Position
 from akasha.domain.graph_validation import port_compatibility
 from akasha.domain.identity import Access
-from akasha.domain.project import Project, ProjectDraft, ProjectStatus
 from akasha.domain.trigger import Trigger, TriggerType
+from akasha.domain.workflow import Workflow, WorkflowDraft, WorkflowStatus
 from akasha.errors import AkashaError, ConfigurationError, DomainValidationError
 from akasha.mcp.server import Kit, current_identity
 from akasha.observability.logging import current_log_context
@@ -75,7 +75,7 @@ from akasha.sdk import SDK_VERSION
 
 # -- argument types -----------------------------------------------------------
 
-ProjectId = Annotated[str, Field(description="Project id (proj_...).", max_length=64)]
+WorkflowId = Annotated[str, Field(description="Workflow id (wf_...).", max_length=64)]
 ExecutionId = Annotated[
     str, Field(description="Execution id (exec_...).", max_length=64)
 ]
@@ -89,7 +89,7 @@ Revision = Annotated[
     int,
     Field(
         ge=1,
-        description="The project revision you last read (from project_get,"
+        description="The workflow revision you last read (from workflow_get,"
         " graph_get or the previous write). A newer stored revision rejects"
         " the write with CONCURRENT_MODIFICATION: re-read and retry.",
     ),
@@ -136,23 +136,23 @@ class SystemInfo(BaseModel):
     max_response_bytes: int
 
 
-class ProjectOverview(ProjectSummary):
+class WorkflowOverview(WorkflowSummary):
     node_count: int
     edge_count: int
     trigger_count: int
 
 
 class DraftOut(BaseModel):
-    project_id: str
+    workflow_id: str
     revision: int
     name: str
     description: str
     draft: DraftBody
-    files: list[ProjectFileOut]
+    files: list[WorkflowFileOut]
 
 
 class GraphOut(BaseModel):
-    project_id: str
+    workflow_id: str
     revision: int
     graph: GraphBody
 
@@ -160,15 +160,15 @@ class GraphOut(BaseModel):
 class DraftChange(BaseModel):
     """A successful draft write: pass ``revision`` to the next write."""
 
-    project_id: str
+    workflow_id: str
     revision: int
     node_id: str | None = None
     trigger_id: str | None = None
     removed_edges: int | None = None
 
 
-class ProjectValidation(ValidationResponse):
-    project_id: str
+class WorkflowValidation(ValidationResponse):
+    workflow_id: str
     revision: int
 
 
@@ -216,15 +216,15 @@ class ExecutionOverview(ExecutionDetail):
 
 
 class TriggerList(BaseModel):
-    project_id: str
+    workflow_id: str
     revision: int
     # Draft triggers; published versions carry their own copy, which is
     # what actually fires.
     triggers: list[TriggerBody]
 
 
-class ProjectPackageOut(BaseModel):
-    project_id: str
+class WorkflowPackageOut(BaseModel):
+    workflow_id: str
     version: int | None
     filename: str
     size_bytes: int
@@ -241,13 +241,13 @@ def _need[T](service: T | None, what: str) -> T:
     return service
 
 
-def _project_by(project: Project) -> DraftChange:
-    return DraftChange(project_id=project.id, revision=project.revision)
+def _workflow_by(workflow: Workflow) -> DraftChange:
+    return DraftChange(workflow_id=workflow.id, revision=workflow.revision)
 
 
-def _overview(p: Project) -> ProjectOverview:
-    return ProjectOverview(
-        **ProjectSummary.from_domain(p).model_dump(),
+def _overview(p: Workflow) -> WorkflowOverview:
+    return WorkflowOverview(
+        **WorkflowSummary.from_domain(p).model_dump(),
         node_count=len(p.draft.graph.nodes),
         edge_count=len(p.draft.graph.edges),
         trigger_count=len(p.draft.triggers),
@@ -263,7 +263,7 @@ def _edge(source: str, source_port: str, target: str, target_port: str) -> Edge:
     )
 
 
-def _trigger(draft: ProjectDraft, trigger_id: str) -> Trigger:
+def _trigger(draft: WorkflowDraft, trigger_id: str) -> Trigger:
     for trigger in draft.triggers:
         if trigger.id == trigger_id:
             return trigger
@@ -275,8 +275,8 @@ def _trigger(draft: ProjectDraft, trigger_id: str) -> Trigger:
 def register(kit: Kit) -> None:
     c = kit.container
 
-    def projects() -> ProjectService:
-        return _need(c.projects, "Project persistence")
+    def workflows() -> WorkflowService:
+        return _need(c.workflows, "Workflow persistence")
 
     def executions() -> ExecutionService:
         return _need(c.executions, "Execution persistence")
@@ -289,26 +289,26 @@ def register(kit: Kit) -> None:
 
     # Access levels as on the REST routes (api.auth.requires): reading needs
     # view access, changing edit access, deleting manage access.
-    async def project(project_id: str, need: Access = Access.VIEW) -> None:
-        await authz().require_project(current_identity(), project_id, need)
+    async def workflow(workflow_id: str, need: Access = Access.VIEW) -> None:
+        await authz().require_workflow(current_identity(), workflow_id, need)
 
     async def execution(execution_id: str, need: Access = Access.VIEW) -> None:
         await authz().require_execution(current_identity(), execution_id, need)
 
-    async def sources(project_id: str, after: Sequence[Trigger]) -> None:
+    async def sources(workflow_id: str, after: Sequence[Trigger]) -> None:
         """Event-trigger sources the caller adds must be visible to them."""
-        before = (await projects().get_project(project_id)).draft.triggers
+        before = (await workflows().get_workflow(workflow_id)).draft.triggers
         await authz().require_trigger_sources(current_identity(), before, after)
 
     async def edit(
-        project_id: str,
+        workflow_id: str,
         revision: int,
-        change: Callable[[ProjectDraft], None],
+        change: Callable[[WorkflowDraft], None],
         name: str | None = None,
-    ) -> Project:
-        await project(project_id, Access.EDIT)
-        return await projects().edit_draft(
-            project_id, expected_revision=revision, edit=change, name=name
+    ) -> Workflow:
+        await workflow(workflow_id, Access.EDIT)
+        return await workflows().edit_draft(
+            workflow_id, expected_revision=revision, edit=change, name=name
         )
 
     # -- discovery ----------------------------------------------------------
@@ -420,81 +420,81 @@ def register(kit: Kit) -> None:
             ],
         )
 
-    # -- projects -----------------------------------------------------------
+    # -- workflows -----------------------------------------------------------
 
-    @kit.tool(title="List projects", read_only=True)
-    async def project_list(
+    @kit.tool(title="List workflows", read_only=True)
+    async def workflow_list(
         query: Annotated[
             str | None, Field(max_length=200, description="Name contains (any case).")
         ] = None,
-        status: list[ProjectStatus] | None = None,
+        status: list[WorkflowStatus] | None = None,
         offset: Offset = 0,
         limit: Limit = 20,
-    ) -> ProjectPage:
-        """Projects you may see (yours; all for admins), newest first."""
-        page = await projects().list_projects(
+    ) -> WorkflowPage:
+        """Workflows you may see (yours; all for admins), newest first."""
+        page = await workflows().list_workflows(
             offset=offset,
             limit=limit,
             visible_to=AuthorizationService.visible_to(current_identity()),
             search=query,
             statuses=status or (),
-            sort=ProjectSort.CREATED,
+            sort=WorkflowSort.CREATED,
         )
-        return ProjectPage.from_page(page)
+        return WorkflowPage.from_page(page)
 
-    @kit.tool(title="Get project", read_only=True)
-    async def project_get(project_id: ProjectId) -> ProjectOverview:
-        """Project summary: name, description, status, current revision,
+    @kit.tool(title="Get workflow", read_only=True)
+    async def workflow_get(workflow_id: WorkflowId) -> WorkflowOverview:
+        """Workflow summary: name, description, status, current revision,
         latest published version (current_version, 0 = never published) and
-        draft size. The draft itself: project_draft_get / graph_get."""
-        await project(project_id)
-        return _overview(await projects().get_project(project_id))
+        draft size. The draft itself: workflow_draft_get / graph_get."""
+        await workflow(workflow_id)
+        return _overview(await workflows().get_workflow(workflow_id))
 
-    @kit.tool(title="Create project", idempotent=False)
-    async def project_create(
+    @kit.tool(title="Create workflow", idempotent=False)
+    async def workflow_create(
         name: Name, description: Description = ""
-    ) -> ProjectOverview:
-        """Create an empty project owned by you. Returns its id and revision
-        (pass to graph_node_add). Calling twice creates two projects."""
-        created = await projects().create_project(
+    ) -> WorkflowOverview:
+        """Create an empty workflow owned by you. Returns its id and revision
+        (pass to graph_node_add). Calling twice creates two workflows."""
+        created = await workflows().create_workflow(
             name, description=description, owner_id=current_identity().user.id
         )
         return _overview(created)
 
-    @kit.tool(title="Update project")
-    async def project_update(
-        project_id: ProjectId,
+    @kit.tool(title="Update workflow")
+    async def workflow_update(
+        workflow_id: WorkflowId,
         expected_revision: Revision,
         name: Name | None = None,
         description: Description | None = None,
-    ) -> ProjectOverview:
-        """Rename a project or change its description (draft metadata).
+    ) -> WorkflowOverview:
+        """Rename a workflow or change its description (draft metadata).
         Published versions keep their own description."""
 
-        def change(draft: ProjectDraft) -> None:
+        def change(draft: WorkflowDraft) -> None:
             if description is not None:
                 draft.description = description
 
-        return _overview(await edit(project_id, expected_revision, change, name))
+        return _overview(await edit(workflow_id, expected_revision, change, name))
 
-    @kit.tool(title="Delete project", destructive=True)
-    async def project_delete(project_id: ProjectId) -> DraftChange:
-        """Delete a never-published project permanently. Projects with
-        published versions cannot be deleted (PROJECT_HAS_VERSIONS). Needs
+    @kit.tool(title="Delete workflow", destructive=True)
+    async def workflow_delete(workflow_id: WorkflowId) -> DraftChange:
+        """Delete a never-published workflow permanently. Workflows with
+        published versions cannot be deleted (WORKFLOW_HAS_VERSIONS). Needs
         the owner or an admin."""
-        await project(project_id, Access.MANAGE)
-        await projects().delete_project(project_id)
-        return DraftChange(project_id=project_id, revision=0)
+        await workflow(workflow_id, Access.MANAGE)
+        await workflows().delete_workflow(workflow_id)
+        return DraftChange(workflow_id=workflow_id, revision=0)
 
-    @kit.tool(title="Get project draft", read_only=True)
-    async def project_draft_get(project_id: ProjectId) -> DraftOut:
+    @kit.tool(title="Get workflow draft", read_only=True)
+    async def workflow_draft_get(workflow_id: WorkflowId) -> DraftOut:
         """The whole mutable draft: graph (nodes with config, edges),
         triggers, declared dependencies, file list, and its revision."""
-        await project(project_id)
-        p = await projects().get_project(project_id)
-        detail = ProjectDetail.from_domain(p)
+        await workflow(workflow_id)
+        p = await workflows().get_workflow(workflow_id)
+        detail = WorkflowDetail.from_domain(p)
         return DraftOut(
-            project_id=p.id,
+            workflow_id=p.id,
             revision=p.revision,
             name=p.name,
             description=p.draft.description,
@@ -502,9 +502,9 @@ def register(kit: Kit) -> None:
             files=detail.files,
         )
 
-    @kit.tool(title="Replace project draft", destructive=True)
-    async def project_draft_update(
-        project_id: ProjectId,
+    @kit.tool(title="Replace workflow draft", destructive=True)
+    async def workflow_draft_update(
+        workflow_id: WorkflowId,
         expected_revision: Revision,
         draft: DraftBody,
         name: Name | None = None,
@@ -512,37 +512,37 @@ def register(kit: Kit) -> None:
     ) -> DraftChange:
         """Replace the whole draft (graph, triggers, dependencies) in one
         write, like the editor's save. Prefer the graph_* tools for small
-        changes. Drafts may be invalid; project_validate reports issues.
+        changes. Drafts may be invalid; workflow_validate reports issues.
         Node ids must look like node_<32 hex chars>."""
-        await project(project_id, Access.EDIT)
+        await workflow(workflow_id, Access.EDIT)
         new_draft = draft.to_domain("")
-        await sources(project_id, new_draft.triggers)
-        current = await projects().get_project(project_id)
-        updated = await projects().update_draft(
-            project_id,
+        await sources(workflow_id, new_draft.triggers)
+        current = await workflows().get_workflow(workflow_id)
+        updated = await workflows().update_draft(
+            workflow_id,
             expected_revision=expected_revision,
             name=current.name if name is None else name,
             draft=draft.to_domain(
                 current.draft.description if description is None else description
             ),
         )
-        return _project_by(updated)
+        return _workflow_by(updated)
 
     # -- graph --------------------------------------------------------------
 
     @kit.tool(title="Get graph", read_only=True)
-    async def graph_get(project_id: ProjectId) -> GraphOut:
+    async def graph_get(workflow_id: WorkflowId) -> GraphOut:
         """The draft graph: nodes (id, node_type, config, label) and edges
         (source_node_id.source_port -> target_node_id.target_port)."""
-        await project(project_id)
-        p = await projects().get_project(project_id)
+        await workflow(workflow_id)
+        p = await workflows().get_workflow(workflow_id)
         return GraphOut(
-            project_id=p.id, revision=p.revision, graph=_graph_body(p.draft.graph)
+            workflow_id=p.id, revision=p.revision, graph=_graph_body(p.draft.graph)
         )
 
     @kit.tool(title="Add graph node")
     async def graph_node_add(
-        project_id: ProjectId,
+        workflow_id: WorkflowId,
         expected_revision: Revision,
         node_type: NodeType,
         config: Config | None = None,
@@ -559,12 +559,12 @@ def register(kit: Kit) -> None:
             label=label,
             position=None if x is None or y is None else Position(x=x, y=y),
         )
-        p = await edit(project_id, expected_revision, lambda d: d.graph.add_node(node))
-        return DraftChange(project_id=p.id, revision=p.revision, node_id=node.id)
+        p = await edit(workflow_id, expected_revision, lambda d: d.graph.add_node(node))
+        return DraftChange(workflow_id=p.id, revision=p.revision, node_id=node.id)
 
     @kit.tool(title="Update graph node")
     async def graph_node_update(
-        project_id: ProjectId,
+        workflow_id: WorkflowId,
         expected_revision: Revision,
         node_id: NodeId,
         config: Annotated[
@@ -575,37 +575,40 @@ def register(kit: Kit) -> None:
     ) -> DraftChange:
         """Replace a node's config and/or label. Omitted fields stay."""
 
-        def change(draft: ProjectDraft) -> None:
+        def change(draft: WorkflowDraft) -> None:
             node = draft.graph.node(node_id)
             if config is not None:
                 node.config = dict(config)
             if label is not None:
                 node.label = label
 
-        p = await edit(project_id, expected_revision, change)
-        return DraftChange(project_id=p.id, revision=p.revision, node_id=node_id)
+        p = await edit(workflow_id, expected_revision, change)
+        return DraftChange(workflow_id=p.id, revision=p.revision, node_id=node_id)
 
     @kit.tool(title="Delete graph node", destructive=True)
     async def graph_node_delete(
-        project_id: ProjectId, expected_revision: Revision, node_id: NodeId
+        workflow_id: WorkflowId, expected_revision: Revision, node_id: NodeId
     ) -> DraftChange:
         """Remove a node and every edge touching it."""
         removed = 0
 
-        def change(draft: ProjectDraft) -> None:
+        def change(draft: WorkflowDraft) -> None:
             nonlocal removed
             before = len(draft.graph.edges)
             draft.graph.remove_node(node_id)
             removed = before - len(draft.graph.edges)
 
-        p = await edit(project_id, expected_revision, change)
+        p = await edit(workflow_id, expected_revision, change)
         return DraftChange(
-            project_id=p.id, revision=p.revision, node_id=node_id, removed_edges=removed
+            workflow_id=p.id,
+            revision=p.revision,
+            node_id=node_id,
+            removed_edges=removed,
         )
 
     @kit.tool(title="Add graph edge")
     async def graph_edge_add(
-        project_id: ProjectId,
+        workflow_id: WorkflowId,
         expected_revision: Revision,
         source_node_id: NodeId,
         source_port: PortName,
@@ -613,14 +616,14 @@ def register(kit: Kit) -> None:
         target_port: PortName,
     ) -> DraftChange:
         """Connect an output port of one node to an input port of another.
-        Port names and type compatibility are checked by project_validate."""
+        Port names and type compatibility are checked by workflow_validate."""
         e = _edge(source_node_id, source_port, target_node_id, target_port)
-        p = await edit(project_id, expected_revision, lambda d: d.graph.add_edge(e))
-        return _project_by(p)
+        p = await edit(workflow_id, expected_revision, lambda d: d.graph.add_edge(e))
+        return _workflow_by(p)
 
     @kit.tool(title="Delete graph edge", destructive=True)
     async def graph_edge_delete(
-        project_id: ProjectId,
+        workflow_id: WorkflowId,
         expected_revision: Revision,
         source_node_id: NodeId,
         source_port: PortName,
@@ -629,70 +632,70 @@ def register(kit: Kit) -> None:
     ) -> DraftChange:
         """Remove one edge (identified by its four endpoints)."""
         e = _edge(source_node_id, source_port, target_node_id, target_port)
-        p = await edit(project_id, expected_revision, lambda d: d.graph.remove_edge(e))
-        return _project_by(p)
+        p = await edit(workflow_id, expected_revision, lambda d: d.graph.remove_edge(e))
+        return _workflow_by(p)
 
     # -- validation and publishing -------------------------------------------
 
-    @kit.tool(title="Validate project", read_only=True)
-    async def project_validate(
-        project_id: ProjectId, expected_revision: Revision | None = None
-    ) -> ProjectValidation:
+    @kit.tool(title="Validate workflow", read_only=True)
+    async def workflow_validate(
+        workflow_id: WorkflowId, expected_revision: Revision | None = None
+    ) -> WorkflowValidation:
         """Validate the draft exactly as publish will: graph structure, port
         types, required inputs, node configs, dependencies, triggers. Each
         issue names its node/port/edge/trigger. Valid => publishable."""
-        await project(project_id)
-        svc = projects()
-        result = await svc.validate_project(
-            project_id, expected_revision=expected_revision
+        await workflow(workflow_id)
+        svc = workflows()
+        result = await svc.validate_workflow(
+            workflow_id, expected_revision=expected_revision
         )
-        p = await svc.get_project(project_id)
-        return ProjectValidation(
-            project_id=project_id,
+        p = await svc.get_workflow(workflow_id)
+        return WorkflowValidation(
+            workflow_id=workflow_id,
             revision=p.revision,
             valid=result.ok,
             issues=ValidationResponse.from_domain(result).issues,
         )
 
-    @kit.tool(title="Publish project")
-    async def project_publish(
-        project_id: ProjectId, expected_revision: Revision | None = None
-    ) -> ProjectVersionDetail:
+    @kit.tool(title="Publish workflow")
+    async def workflow_publish(
+        workflow_id: WorkflowId, expected_revision: Revision | None = None
+    ) -> WorkflowVersionDetail:
         """Freeze the draft as the next immutable version (validated first;
-        PROJECT_VALIDATION_FAILED lists the issues). Pass the revision you
+        WORKFLOW_VALIDATION_FAILED lists the issues). Pass the revision you
         validated so a newer draft is not published by mistake. The version
         pins the plugin versions it uses (plugin_versions)."""
-        await project(project_id, Access.EDIT)
+        await workflow(workflow_id, Access.EDIT)
         identity = current_identity()
-        version = await projects().publish_project(
-            project_id,
+        version = await workflows().publish_workflow(
+            workflow_id,
             expected_revision=expected_revision,
             published_by=identity.user.id,
         )
         names = {identity.user.id: identity.user.username}
-        return ProjectVersionDetail.from_domain(version, names)
+        return WorkflowVersionDetail.from_domain(version, names)
 
-    @kit.tool(title="List project versions", read_only=True)
-    async def project_versions_list(
-        project_id: ProjectId, offset: Offset = 0, limit: Limit = 20
-    ) -> ProjectVersionPage:
-        """Published versions of a project, oldest first."""
-        await project(project_id)
-        svc = projects()
-        page = await svc.list_versions(project_id, offset=offset, limit=limit)
+    @kit.tool(title="List workflow versions", read_only=True)
+    async def workflow_versions_list(
+        workflow_id: WorkflowId, offset: Offset = 0, limit: Limit = 20
+    ) -> WorkflowVersionPage:
+        """Published versions of a workflow, oldest first."""
+        await workflow(workflow_id)
+        svc = workflows()
+        page = await svc.list_versions(workflow_id, offset=offset, limit=limit)
         names = await svc.usernames([v.published_by for v in page.items])
-        return ProjectVersionPage.from_page(page, names)
+        return WorkflowVersionPage.from_page(page, names)
 
-    @kit.tool(title="Get project version", read_only=True)
-    async def project_version_get(
-        project_id: ProjectId, version: Annotated[int, Field(ge=1)]
-    ) -> ProjectVersionDetail:
+    @kit.tool(title="Get workflow version", read_only=True)
+    async def workflow_version_get(
+        workflow_id: WorkflowId, version: Annotated[int, Field(ge=1)]
+    ) -> WorkflowVersionDetail:
         """One immutable published version: its graph, triggers,
         dependencies and pinned plugin versions."""
-        await project(project_id)
-        svc = projects()
-        found = await svc.get_version(project_id, version)
-        return ProjectVersionDetail.from_domain(
+        await workflow(workflow_id)
+        svc = workflows()
+        found = await svc.get_version(workflow_id, version)
+        return WorkflowVersionDetail.from_domain(
             found, await svc.usernames([found.published_by])
         )
 
@@ -700,7 +703,7 @@ def register(kit: Kit) -> None:
 
     @kit.tool(title="Start execution")
     async def execution_start(
-        project_id: ProjectId,
+        workflow_id: WorkflowId,
         version: Annotated[
             int | None,
             Field(ge=1, description="Published version; default: the latest."),
@@ -714,16 +717,16 @@ def register(kit: Kit) -> None:
         with the execution id in status QUEUED; poll execution_get until a
         terminal status (completed, failed, cancelled, timeout). Each call
         starts a new run."""
-        await project(project_id, Access.EDIT)
+        await workflow(workflow_id, Access.EDIT)
         if version is None:
-            version = (await projects().get_project(project_id)).current_version
+            version = (await workflows().get_workflow(workflow_id)).current_version
             if version == 0:
                 raise DomainValidationError(
-                    "The project has no published version; publish it first.",
-                    details={"project_id": project_id},
+                    "The workflow has no published version; publish it first.",
+                    details={"workflow_id": workflow_id},
                 )
         started = await _need(c.triggers, "Execution persistence").fire_manual(
-            project_id,
+            workflow_id,
             version,
             input=input,
             correlation_id=_correlation_id(),
@@ -735,21 +738,21 @@ def register(kit: Kit) -> None:
 
     @kit.tool(title="List executions", read_only=True)
     async def execution_list(
-        project_id: Annotated[
-            str | None, Field(max_length=64, description="Only this project's runs.")
+        workflow_id: Annotated[
+            str | None, Field(max_length=64, description="Only this workflow's runs.")
         ] = None,
         version: Annotated[int | None, Field(ge=1)] = None,
         status: list[ExecutionStatus] | None = None,
         offset: Offset = 0,
         limit: Limit = 20,
     ) -> ExecutionPage:
-        """Executions newest first: of one project (optionally one version),
-        or across the projects you may see (optionally by status)."""
+        """Executions newest first: of one workflow (optionally one version),
+        or across the workflows you may see (optionally by status)."""
         svc = executions()
-        if project_id is not None:
-            await project(project_id)
+        if workflow_id is not None:
+            await workflow(workflow_id)
             page = await svc.list_executions(
-                project_id, version=version, offset=offset, limit=limit
+                workflow_id, version=version, offset=offset, limit=limit
             )
         else:
             page = await svc.list_recent(
@@ -873,7 +876,7 @@ def register(kit: Kit) -> None:
     @kit.tool(title="Get execution report", read_only=True)
     async def report_get(execution_id: ExecutionId) -> ExecutionReport:
         """The complete, redacted execution report (the same document the
-        REST API exports): project, execution, every node with outputs,
+        REST API exports): workflow, execution, every node with outputs,
         metrics and the event timeline. Large; prefer execution_get."""
         await execution(execution_id)
         return await reports().execution_report(execution_id)
@@ -881,18 +884,18 @@ def register(kit: Kit) -> None:
     # -- triggers ------------------------------------------------------------
 
     @kit.tool(title="List triggers", read_only=True)
-    async def trigger_list(project_id: ProjectId) -> TriggerList:
+    async def trigger_list(workflow_id: WorkflowId) -> TriggerList:
         """The draft's triggers (manual, api, cron, interval, webhook,
-        event). They take effect when the project is published."""
-        await project(project_id)
-        p = await projects().get_project(project_id)
+        event). They take effect when the workflow is published."""
+        await workflow(workflow_id)
+        p = await workflows().get_workflow(workflow_id)
         return TriggerList(
-            project_id=p.id, revision=p.revision, triggers=_triggers(p.draft.triggers)
+            workflow_id=p.id, revision=p.revision, triggers=_triggers(p.draft.triggers)
         )
 
     @kit.tool(title="Create trigger")
     async def trigger_create(
-        project_id: ProjectId,
+        workflow_id: WorkflowId,
         expected_revision: Revision,
         trigger_type: TriggerType,
         config: Annotated[
@@ -908,16 +911,16 @@ def register(kit: Kit) -> None:
         """Add a trigger to the draft. Publish to activate it."""
         trigger = Trigger.create(trigger_type, dict(config or {}))
         trigger.enabled = enabled
-        await project(project_id, Access.EDIT)
-        await sources(project_id, [trigger])
+        await workflow(workflow_id, Access.EDIT)
+        await sources(workflow_id, [trigger])
         p = await edit(
-            project_id, expected_revision, lambda d: d.triggers.append(trigger)
+            workflow_id, expected_revision, lambda d: d.triggers.append(trigger)
         )
-        return DraftChange(project_id=p.id, revision=p.revision, trigger_id=trigger.id)
+        return DraftChange(workflow_id=p.id, revision=p.revision, trigger_id=trigger.id)
 
     @kit.tool(title="Update trigger")
     async def trigger_update(
-        project_id: ProjectId,
+        workflow_id: WorkflowId,
         expected_revision: Revision,
         trigger_id: Annotated[str, Field(max_length=64)],
         config: dict[str, JsonValue] | None = None,
@@ -928,13 +931,13 @@ def register(kit: Kit) -> None:
         """Replace a draft trigger's config and/or enable or disable it.
         Publish to apply the change."""
         if config is not None:
-            await project(project_id, Access.EDIT)
-            current = (await projects().get_project(project_id)).draft
+            await workflow(workflow_id, Access.EDIT)
+            current = (await workflows().get_workflow(workflow_id)).draft
             old = _trigger(current, trigger_id)
             new = Trigger(id=old.id, trigger_type=old.trigger_type, config=dict(config))
-            await sources(project_id, [new])
+            await sources(workflow_id, [new])
 
-        def change(draft: ProjectDraft) -> None:
+        def change(draft: WorkflowDraft) -> None:
             old = _trigger(draft, trigger_id)
             new = Trigger(
                 id=old.id,
@@ -944,63 +947,63 @@ def register(kit: Kit) -> None:
             )
             draft.triggers[draft.triggers.index(old)] = new
 
-        p = await edit(project_id, expected_revision, change)
-        return DraftChange(project_id=p.id, revision=p.revision, trigger_id=trigger_id)
+        p = await edit(workflow_id, expected_revision, change)
+        return DraftChange(workflow_id=p.id, revision=p.revision, trigger_id=trigger_id)
 
     @kit.tool(title="Delete trigger", destructive=True)
     async def trigger_delete(
-        project_id: ProjectId,
+        workflow_id: WorkflowId,
         expected_revision: Revision,
         trigger_id: Annotated[str, Field(max_length=64)],
     ) -> DraftChange:
         """Remove a trigger from the draft. Publish to apply."""
         p = await edit(
-            project_id,
+            workflow_id,
             expected_revision,
             lambda d: d.triggers.remove(_trigger(d, trigger_id)),
         )
-        return DraftChange(project_id=p.id, revision=p.revision, trigger_id=trigger_id)
+        return DraftChange(workflow_id=p.id, revision=p.revision, trigger_id=trigger_id)
 
     # -- import / export -------------------------------------------------------
 
-    @kit.tool(title="Export project", read_only=True)
-    async def project_export(
-        project_id: ProjectId,
+    @kit.tool(title="Export workflow", read_only=True)
+    async def workflow_export(
+        workflow_id: WorkflowId,
         version: Annotated[
             int | None, Field(ge=1, description="Published version; default: draft.")
         ] = None,
-    ) -> ProjectPackageOut:
-        """The project package (.akasha.zip, base64): graph, triggers,
+    ) -> WorkflowPackageOut:
+        """The workflow package (.akasha.zip, base64): graph, triggers,
         dependencies and files, never secrets. Import it with
-        project_import."""
-        await project(project_id)
-        packages: ProjectPackageService = _need(c.packages, "Project persistence")
-        data = await packages.export_project(project_id, version=version)
+        workflow_import."""
+        await workflow(workflow_id)
+        packages: WorkflowPackageService = _need(c.packages, "Workflow persistence")
+        data = await packages.export_workflow(workflow_id, version=version)
         suffix = "draft" if version is None else f"v{version}"
-        return ProjectPackageOut(
-            project_id=project_id,
+        return WorkflowPackageOut(
+            workflow_id=workflow_id,
             version=version,
-            filename=f"{project_id}-{suffix}.akasha.zip",
+            filename=f"{workflow_id}-{suffix}.akasha.zip",
             size_bytes=len(data),
             sha256=hashlib.sha256(data).hexdigest(),
             package_base64=base64.b64encode(data).decode("ascii"),
         )
 
-    @kit.tool(title="Import project")
-    async def project_import(
+    @kit.tool(title="Import workflow")
+    async def workflow_import(
         package_base64: Annotated[
-            str, Field(description="A project package (.akasha.zip), base64.")
+            str, Field(description="A workflow package (.akasha.zip), base64.")
         ],
-    ) -> ImportProjectResponse:
-        """Create a new draft project owned by you from a project package.
+    ) -> ImportWorkflowResponse:
+        """Create a new draft workflow owned by you from a workflow package.
         Returns it with its validation result and the credential references
-        this installation lacks. Each call creates a new project."""
+        this installation lacks. Each call creates a new workflow."""
         data = decode_base64(package_base64, MAX_PACKAGE_BYTES)
-        packages: ProjectPackageService = _need(c.packages, "Project persistence")
-        result = await packages.import_project(
+        packages: WorkflowPackageService = _need(c.packages, "Workflow persistence")
+        result = await packages.import_workflow(
             data, owner_id=current_identity().user.id
         )
-        return ImportProjectResponse.from_domain(result)
+        return ImportWorkflowResponse.from_domain(result)
 
     # -- credentials (metadata only) -------------------------------------------
 

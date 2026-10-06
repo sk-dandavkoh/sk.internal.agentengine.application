@@ -34,7 +34,7 @@ ROADMAP_NODES = {
     "core.web_search",
     "core.smtp",
     "core.llm",
-    # Phase 27: needed by the example projects (vision §58).
+    # Phase 27: needed by the example workflows (vision §58).
     "core.set",
     "core.pick",
     # Agents (ADR 0005): the tool loop and the tools it needs.

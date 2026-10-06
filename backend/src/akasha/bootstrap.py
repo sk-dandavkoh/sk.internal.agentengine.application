@@ -22,12 +22,12 @@ from akasha.application.credentials import CredentialService
 from akasha.application.events import EventPublisher
 from akasha.application.executions import ExecutionService
 from akasha.application.monitoring import MonitoringService
-from akasha.application.packages import ProjectPackageService
+from akasha.application.packages import WorkflowPackageService
 from akasha.application.plugins import PluginService
-from akasha.application.projects import ProjectService
 from akasha.application.reports import ReportService
 from akasha.application.sharing import SharingService
 from akasha.application.triggers import TriggerRegistry, TriggerService
+from akasha.application.workflows import WorkflowService
 from akasha.config import Settings
 from akasha.domain.ai import LLMClient
 from akasha.infrastructure.database import Database, normalize_async_url
@@ -66,13 +66,13 @@ class Container:
     # Installed plugins; their nodes live in ``nodes`` like any other.
     plugins: PluginRegistry | None = None
     # The plugin lifecycle REST and MCP share (one lock per process);
-    # derived from ``plugins`` and ``projects`` unless given.
+    # derived from ``plugins`` and ``workflows`` unless given.
     plugin_service: PluginService | None = None
     database: Database | None = None
-    projects: ProjectService | None = None
-    packages: ProjectPackageService | None = None
+    workflows: WorkflowService | None = None
+    packages: WorkflowPackageService | None = None
     executions: ExecutionService | None = None
-    # The runtime workers hand jobs to; the CLI's ``project run`` uses it
+    # The runtime workers hand jobs to; the CLI's ``workflow run`` uses it
     # directly.
     runtime: ExecutionRuntime | None = None
     # Needs the database and AKASHA_REDIS_URL (Phase 22).
@@ -106,7 +106,7 @@ class Container:
 
     def __post_init__(self) -> None:
         if self.plugin_service is None and self.plugins is not None:
-            self.plugin_service = PluginService(self.plugins, self.projects)
+            self.plugin_service = PluginService(self.plugins, self.workflows)
 
     async def start(self) -> None:
         """Start owned background work: the in-process trigger scheduler and,
@@ -155,7 +155,7 @@ def create_container(settings: Settings) -> Container:
     """Wire infrastructure from configuration.
 
     A missing ``database_url`` yields a container *without* a database or
-    trigger services: the engine still boots, project/trigger endpoints answer
+    trigger services: the engine still boots, workflow/trigger endpoints answer
     ``CONFIGURATION_ERROR``, and readiness has nothing to check. Tests inject
     their own container.
     """
@@ -181,14 +181,14 @@ def create_container(settings: Settings) -> Container:
     metrics = EngineMetrics()
     plugin_versions = MappingProxyType({}) if plugins is None else plugins.versions
     plugin_nodes = MappingProxyType({}) if plugins is None else plugins.node_plugins
-    projects = ProjectService(
+    workflows = WorkflowService(
         uow,
         nodes.definitions,
         events,
         plugins=plugin_versions,
         plugin_nodes=plugin_nodes,
     )
-    packages = ProjectPackageService(
+    packages = WorkflowPackageService(
         uow, nodes.definitions, events, plugins=plugin_versions
     )
     redis_url = settings.redis_url
@@ -269,7 +269,7 @@ def create_container(settings: Settings) -> Container:
         events=events,
         metrics=metrics,
         database=database,
-        projects=projects,
+        workflows=workflows,
         packages=packages,
         executions=executions,
         runtime=runtime,

@@ -1,6 +1,6 @@
 """Domain layer: meaning and invariants of the Engine.
 
-Contains Project, ProjectDraft, ProjectVersion, Graph, NodeInstance, Edge,
+Contains Workflow, WorkflowDraft, WorkflowVersion, Graph, NodeInstance, Edge,
 Trigger, Execution, NodeExecution, CredentialReference, PluginMetadata, the
 Node contract (NodeDefinition, NodeMetadata, NodeInput, NodeOutput,
 NodeConfigSchema, NodeCapabilities, NodeExecutionContext, NodeResult,

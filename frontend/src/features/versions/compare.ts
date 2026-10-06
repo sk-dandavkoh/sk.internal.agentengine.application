@@ -1,4 +1,4 @@
-import type { ProjectVersion } from '../../api/projects'
+import type { WorkflowVersion } from '../../api/workflows'
 
 /** Keys that appear in only one side, and keys on both whose value differs. */
 export interface Changes {
@@ -9,7 +9,7 @@ export interface Changes {
 
 /** What a diff compares: a published version, or the draft's contents. */
 export type Snapshot = Pick<
-    ProjectVersion,
+    WorkflowVersion,
     'graph' | 'triggers' | 'dependencies' | 'files'
 >
 

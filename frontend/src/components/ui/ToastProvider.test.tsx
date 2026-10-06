@@ -41,26 +41,26 @@ describe('ToastProvider', () => {
         const region = renderToasts()
         expect(region).toHaveAttribute('aria-live', 'polite')
 
-        notify({ tone: 'success', title: 'Project saved' })
+        notify({ tone: 'success', title: 'Workflow saved' })
 
         expect(within(region).getByRole('status')).toHaveTextContent(
-            'Success: Project saved',
+            'Success: Workflow saved',
         )
     })
 
     it('auto-dismisses success after 5 s', () => {
         const region = renderToasts()
-        notify({ tone: 'success', title: 'Project saved' })
+        notify({ tone: 'success', title: 'Workflow saved' })
 
         act(() => {
             vi.advanceTimersByTime(4999)
         })
-        expect(within(region).getByText('Project saved')).toBeInTheDocument()
+        expect(within(region).getByText('Workflow saved')).toBeInTheDocument()
         act(() => {
             vi.advanceTimersByTime(1)
         })
         expect(
-            within(region).queryByText('Project saved'),
+            within(region).queryByText('Workflow saved'),
         ).not.toBeInTheDocument()
     })
 

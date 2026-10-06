@@ -1,10 +1,10 @@
-"""Users, sessions and project ownership.
+"""Users, sessions and workflow ownership.
 
 Revision ID: 0008_auth
-Revises: 0007_project_files
+Revises: 0007_workflow_files
 Create Date: 2026-09-30
 
-Phase 20: local accounts and server-side sessions. Existing projects get no
+Phase 20: local accounts and server-side sessions. Existing workflows get no
 owner (NULL), which makes them admin-only: upgrading never widens access.
 """
 
@@ -14,7 +14,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "0008_auth"
-down_revision: str | None = "0007_project_files"
+down_revision: str | None = "0007_workflow_files"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
@@ -44,21 +44,21 @@ def upgrade() -> None:
     )
     op.create_index("ix_sessions_user_id", "sessions", ["user_id"])
     op.create_index("ix_sessions_expires_at", "sessions", ["expires_at"])
-    op.add_column("projects", sa.Column("owner_id", sa.String(), nullable=True))
+    op.add_column("workflows", sa.Column("owner_id", sa.String(), nullable=True))
     op.create_foreign_key(
-        "fk_projects_owner_id",
-        "projects",
+        "fk_workflows_owner_id",
+        "workflows",
         "users",
         ["owner_id"],
         ["id"],
         ondelete="RESTRICT",
     )
-    op.create_index("ix_projects_owner_id", "projects", ["owner_id"])
+    op.create_index("ix_workflows_owner_id", "workflows", ["owner_id"])
 
 
 def downgrade() -> None:
-    op.drop_index("ix_projects_owner_id", table_name="projects")
-    op.drop_constraint("fk_projects_owner_id", "projects", type_="foreignkey")
-    op.drop_column("projects", "owner_id")
+    op.drop_index("ix_workflows_owner_id", table_name="workflows")
+    op.drop_constraint("fk_workflows_owner_id", "workflows", type_="foreignkey")
+    op.drop_column("workflows", "owner_id")
     op.drop_table("sessions")
     op.drop_table("users")

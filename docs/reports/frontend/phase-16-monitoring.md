@@ -82,7 +82,7 @@ Roadmap §22:
 ### Backend / Persistence
 - `SqlAlchemyExecutionRepository.sample_executions`: narrow rows (status, timestamps, `error.code`, `error.kind`) for `created_at ∈ [since, until)`, owner-filtered through the existing `_owned()`, `ORDER BY created_at, id`.
 - `SqlAlchemyExecutionRepository.sample_node_executions`:
-  - joins `node_executions → executions → project_versions`;
+  - joins `node_executions → executions → workflow_versions`;
   - resolves `node_type` with `jsonb_path_query_first(graph, '$.nodes[*] ? (@.id == $id).node_type', jsonb_build_object('id', node_id)) #>> '{}'`;
   - reads `jsonb_array_length(failures)` and `outputs['metadata']`;
   - `ORDER BY execution id, node_id`, a stable order so float cost sums are reproducible.
@@ -154,7 +154,7 @@ No files were deleted. No dependencies were added.
 
 **Context.** The UI needs windowed numbers across all processes, including tokens and cost.
 
-**Chosen approach.** A read-only projection over the `executions` / `node_executions` / `project_versions` tables (`MonitoringService`), served at `/api/v1/monitoring/summary`.
+**Chosen approach.** A read-only projection over the `executions` / `node_executions` / `workflow_versions` tables (`MonitoringService`), served at `/api/v1/monitoring/summary`.
 
 **Alternatives considered.**
 - Parse `/metrics` in the browser. Rejected:
@@ -227,7 +227,7 @@ No files were deleted. No dependencies were added.
 - 422 request validation error for a missing or unparseable `since`.
 - 500 `CONFIGURATION_ERROR` when the container has no `MonitoringService`.
 
-**Visibility.** `AuthorizationService.owner_filter`: members see only their projects' runs, admins see all.
+**Visibility.** `AuthorizationService.owner_filter`: members see only their workflows' runs, admins see all.
 
 **Compatibility.** Additive; no existing endpoint changed.
 
@@ -457,9 +457,9 @@ Roadmap scope items, checked individually:
 
 - **Authentication / authorization:**
   - the route sits on the protected router (session required);
-  - visibility uses the same `owner_filter` as the cross-project execution listing;
+  - visibility uses the same `owner_filter` as the cross-workflow execution listing;
   - tested for members and anonymous callers.
-- **Data exposure:** only counts, statuses, error codes and kinds, timings, node types, tokens and costs. No error messages, ids, inputs, outputs or project names (asserted).
+- **Data exposure:** only counts, statuses, error codes and kinds, timings, node types, tokens and costs. No error messages, ids, inputs, outputs or workflow names (asserted).
 - **Input validation:**
   - window rules are enforced server-side (`check_window`) and mirrored client-side for UX only;
   - unknown `range` values fall back to the default;

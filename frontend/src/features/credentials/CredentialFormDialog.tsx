@@ -130,7 +130,7 @@ export function CredentialFormDialog({
                             maxLength={64}
                             autoComplete="off"
                             spellCheck={false}
-                            description="Lowercase letters, digits, '.', '_' or '-'. Projects reference it as credential:<name>; it cannot be changed later."
+                            description="Lowercase letters, digits, '.', '_' or '-'. Workflows reference it as credential:<name>; it cannot be changed later."
                             error={fields.name}
                             data-autofocus
                         />

@@ -12,8 +12,8 @@ from akasha.domain.execution import ExecutionError
 from akasha.domain.graph import Edge, Graph, NodeInstance
 from akasha.domain.node import NodeErrorKind
 from akasha.domain.primitives import is_storable, validate_name
-from akasha.domain.project import Dependency, Project, ProjectDraft
 from akasha.domain.trigger import Trigger, TriggerType
+from akasha.domain.workflow import Dependency, Workflow, WorkflowDraft
 from akasha.errors import DomainValidationError
 
 UNSTORABLE: list[Any] = [
@@ -62,19 +62,19 @@ def test_names_and_descriptions_reject_nul() -> None:
     with pytest.raises(DomainValidationError, match="surrogates"):
         validate_name("a\ud800b")
     with pytest.raises(DomainValidationError, match="NUL"):
-        Project.create("p", description="d\0")
+        Workflow.create("p", description="d\0")
     with pytest.raises(DomainValidationError, match="NUL"):
         Credential(name="crm", kind=CredentialKind.GENERIC, description="d\0")
 
 
-def _draft(**overrides: Any) -> ProjectDraft:
+def _draft(**overrides: Any) -> WorkflowDraft:
     graph = Graph()
     a = NodeInstance(id="node_" + "a" * 32, node_type="t.a", config={"x": 1})
     b = NodeInstance(id="node_" + "b" * 32, node_type="t.b")
     graph.add_node(a)
     graph.add_node(b)
     graph.add_edge(Edge(a.id, "out", b.id, "in"))
-    draft = ProjectDraft(
+    draft = WorkflowDraft(
         graph=graph,
         triggers=[Trigger(id="trig_" + "c" * 32, trigger_type=TriggerType.MANUAL)],
         dependencies=[Dependency("node", "t.a")],
@@ -120,19 +120,19 @@ def _draft(**overrides: Any) -> ProjectDraft:
     ],
 )
 def test_replace_draft_names_unstorable_locations(mutate: Any, path: str) -> None:
-    project = Project.create("p")
+    workflow = Workflow.create("p")
     draft = _draft()
     mutate(draft)
     with pytest.raises(DomainValidationError, match="NaN, Infinity or NUL") as info:
-        project.replace_draft(draft, name="p")
+        workflow.replace_draft(draft, name="p")
     assert info.value.details == {"paths": [path]}
-    assert project.draft.graph.nodes == {}  # unchanged
+    assert workflow.draft.graph.nodes == {}  # unchanged
 
 
 def test_valid_draft_is_accepted() -> None:
-    project = Project.create("p")
-    project.replace_draft(_draft(), name="p")
-    assert len(project.draft.graph.nodes) == 2
+    workflow = Workflow.create("p")
+    workflow.replace_draft(_draft(), name="p")
+    assert len(workflow.draft.graph.nodes) == 2
 
 
 def test_execution_errors_replace_nul_instead_of_failing() -> None:

@@ -3,8 +3,8 @@ import { useState } from 'react'
 import { useParams } from 'react-router'
 import { useApiClient } from '../../api/context'
 import { ApiError } from '../../api/errors'
-import type { Project, ProjectVersionSummary } from '../../api/projects'
-import { projectQueries } from '../../api/queries'
+import type { Workflow, WorkflowVersionSummary } from '../../api/workflows'
+import { workflowQueries } from '../../api/queries'
 import { QuerySection } from '../../components/QuerySection'
 import {
     Button,
@@ -25,16 +25,16 @@ import {
 } from './shared'
 
 const PAGE_SIZE = 50
-const projectPath = (id: string) => `/projects/${encodeURIComponent(id)}`
+const workflowPath = (id: string) => `/workflows/${encodeURIComponent(id)}`
 
-/** The one mutable state of a project, kept apart from its versions. */
-function DraftCard({ project }: { project: Project }) {
+/** The one mutable state of a workflow, kept apart from its versions. */
+function DraftCard({ workflow }: { workflow: Workflow }) {
     return (
         <Card
             title="Draft"
             description="The editable working copy. Publishing freezes it as the next version; editing it never changes a published version."
             actions={
-                <TextLink to={`${projectPath(project.id)}/editor`}>
+                <TextLink to={`${workflowPath(workflow.id)}/editor`}>
                     Open draft in editor
                 </TextLink>
             }
@@ -42,12 +42,12 @@ function DraftCard({ project }: { project: Project }) {
             <dl className="flex flex-wrap gap-x-8 gap-y-2 text-sm">
                 <div>
                     <dt className="text-muted">Revision</dt>
-                    <dd>{project.revision}</dd>
+                    <dd>{workflow.revision}</dd>
                 </div>
                 <div>
                     <dt className="text-muted">Last updated</dt>
                     <dd>
-                        <Time iso={project.updated_at} />
+                        <Time iso={workflow.updated_at} />
                     </dd>
                 </div>
             </dl>
@@ -55,23 +55,23 @@ function DraftCard({ project }: { project: Project }) {
     )
 }
 
-function VersionList({ project }: { project: Project }) {
+function VersionList({ workflow }: { workflow: Workflow }) {
     const [offset, setOffset] = useState(0)
     const query = useQuery({
-        ...projectQueries.versions(useApiClient(), project.id, {
+        ...workflowQueries.versions(useApiClient(), workflow.id, {
             offset,
             limit: PAGE_SIZE,
         }),
         placeholderData: keepPreviousData,
     })
-    const columns: TableColumn<ProjectVersionSummary>[] = [
+    const columns: TableColumn<WorkflowVersionSummary>[] = [
         {
             key: 'version',
             header: 'Version',
             cell: (v) => (
                 <span className="flex items-center gap-2">
-                    <VersionLink projectId={project.id} version={v.version} />
-                    {v.version === project.current_version && <LatestBadge />}
+                    <VersionLink workflowId={workflow.id} version={v.version} />
+                    {v.version === workflow.current_version && <LatestBadge />}
                 </span>
             ),
         },
@@ -159,27 +159,27 @@ function VersionList({ project }: { project: Project }) {
     )
 }
 
-export function ProjectNotFound() {
+export function WorkflowNotFound() {
     return (
         <ErrorState
-            title="Project not found"
+            title="Workflow not found"
             titleAs="h1"
             description="It does not exist, was deleted, or you do not have access to it."
-            action={<TextLink to="/projects">Back to all projects</TextLink>}
+            action={<TextLink to="/workflows">Back to all workflows</TextLink>}
         />
     )
 }
 
 export function VersionsPage() {
-    const { projectId = '' } = useParams()
-    const query = useQuery(projectQueries.detail(useApiClient(), projectId))
+    const { workflowId = '' } = useParams()
+    const query = useQuery(workflowQueries.detail(useApiClient(), workflowId))
 
     if (
         query.data === undefined &&
         query.error instanceof ApiError &&
         query.error.kind === 'not_found'
     )
-        return <ProjectNotFound />
+        return <WorkflowNotFound />
     return (
         <>
             <PageHeader
@@ -187,16 +187,16 @@ export function VersionsPage() {
                     query.data ? `Versions of ${query.data.name}` : 'Versions'
                 }
                 description={
-                    <TextLink to={projectPath(projectId)}>
-                        Back to project
+                    <TextLink to={workflowPath(workflowId)}>
+                        Back to workflow
                     </TextLink>
                 }
             />
-            <QuerySection query={query} subject="the project">
-                {(project) => (
+            <QuerySection query={query} subject="the workflow">
+                {(workflow) => (
                     <div className="flex flex-col gap-6">
-                        <DraftCard project={project} />
-                        <VersionList project={project} />
+                        <DraftCard workflow={workflow} />
+                        <VersionList workflow={workflow} />
                     </div>
                 )}
             </QuerySection>

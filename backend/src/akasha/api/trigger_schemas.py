@@ -18,7 +18,7 @@ class ExecutionDetail(BaseModel):
     and what execution listings contain. Node-level detail is the report."""
 
     id: str
-    project_id: str
+    workflow_id: str
     version: int
     status: ExecutionStatus
     trigger_type: TriggerType
@@ -35,8 +35,8 @@ class ExecutionDetail(BaseModel):
     def from_domain(cls, execution: Execution) -> "ExecutionDetail":
         return cls(
             id=execution.id,
-            project_id=execution.project_id,
-            version=execution.project_version.version,
+            workflow_id=execution.workflow_id,
+            version=execution.workflow_version.version,
             status=execution.status,
             trigger_type=execution.metadata.trigger_type,
             trigger_id=execution.metadata.trigger_id,
@@ -50,18 +50,18 @@ class ExecutionDetail(BaseModel):
 
 class ExecutionListItem(ExecutionDetail):
     """An execution in a listing: the canonical representation plus its
-    project's current name, joined in the same query. Single-execution
+    workflow's current name, joined in the same query. Single-execution
     responses omit it; the public webhook response must not disclose it."""
 
-    project_name: str
+    workflow_name: str
 
     @classmethod
     def from_summary(cls, summary: ExecutionSummary) -> "ExecutionListItem":
         return cls(
             id=summary.id,
-            project_id=summary.project_id,
-            project_name=summary.project_name,
-            version=summary.project_version,
+            workflow_id=summary.workflow_id,
+            workflow_name=summary.workflow_name,
+            version=summary.workflow_version,
             status=summary.status,
             trigger_type=summary.metadata.trigger_type,
             trigger_id=summary.metadata.trigger_id,

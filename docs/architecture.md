@@ -35,9 +35,9 @@ The architecture is intentionally designed so that the system can start as a sin
 The fundamental execution chain is:
 
 ```text
-Project
+Workflow
    ↓
-Project Version
+Workflow Version
    ↓
 Graph
    ↓
@@ -56,7 +56,7 @@ The fundamental product relationship is:
 
 ```text
 Engine
- ├── Projects
+ ├── Workflows
  │    ├── Draft
  │    └── Published Versions
  │         └── Graph
@@ -81,7 +81,7 @@ Engine
 
 The Engine is the product.
 
-Projects are executable artifacts managed by the Engine.
+Workflows are executable artifacts managed by the Engine.
 
 ----------
 
@@ -91,9 +91,9 @@ Projects are executable artifacts managed by the Engine.
 
 The backend is authoritative for:
 
--   Projects
+-   Workflows
     
--   Project Versions
+-   Workflow Versions
     
 -   Graph validity
     
@@ -131,14 +131,14 @@ Every important operation must be available through backend services and/or the 
 Examples:
 
 ```text
-Create Project
-Validate Project
-Publish Project
-Run Project
+Create Workflow
+Validate Workflow
+Publish Workflow
+Run Workflow
 Cancel Execution
 Inspect Execution
-Import Project
-Export Project
+Import Workflow
+Export Workflow
 Install Plugin
 Register Node
 ```
@@ -232,7 +232,7 @@ The same schema should be usable by:
     
 -   plugin validation
     
--   project import/export
+-   workflow import/export
     
 -   runtime validation
     
@@ -337,21 +337,21 @@ actions share a target with different legal sources. Rules (Phase 07):
 
 ## 3.7 Immutable Published Versions
 
-A Project Draft is mutable.
+A Workflow Draft is mutable.
 
-A published Project Version is immutable.
+A published Workflow Version is immutable.
 
-Execution always references a specific Project Version.
+Execution always references a specific Workflow Version.
 
 ```text
-Project
+Workflow
   └── Draft
         ↓ publish
-  Project Version 1
+  Workflow Version 1
         ↓
   Execution A
 
-Project Version 2
+Workflow Version 2
         ↓
   Execution B
 ```
@@ -362,7 +362,7 @@ Changing the Draft must never change an existing execution.
 
 ## 3.8 Explicit Dependencies
 
-Projects must declare dependencies where applicable.
+Workflows must declare dependencies where applicable.
 
 Examples:
 
@@ -370,7 +370,7 @@ Examples:
 Engine version
 Node versions
 Plugin versions
-Project schema version
+Workflow schema version
 SDK version
 ```
 
@@ -394,7 +394,7 @@ Dependencies must be validated during:
 │                         Frontend                             │
 │                                                              │
 │  React / Vite / Tailwind                                     │
-│  ├── Project Management                                      │
+│  ├── Workflow Management                                      │
 │  ├── Graph Editor                                            │
 │  ├── Node Library                                            │
 │  ├── Node Inspector                                          │
@@ -420,7 +420,7 @@ Dependencies must be validated during:
 ┌────────────────────────────▼─────────────────────────────────┐
 │                    Application Layer                          │
 │                                                              │
-│  Project Services                                            │
+│  Workflow Services                                            │
 │  Execution Services                                          │
 │  Trigger Services                                            │
 │  Node Services                                               │
@@ -433,8 +433,8 @@ Dependencies must be validated during:
 ┌────────────────────────────▼─────────────────────────────────┐
 │                       Domain Layer                            │
 │                                                              │
-│  Project                                                     │
-│  Project Version                                             │
+│  Workflow                                                     │
+│  Workflow Version                                             │
 │  Graph                                                        │
 │  Node                                                         │
 │  Node Definition                                              │
@@ -532,14 +532,14 @@ It must not contain:
 
 ----------
 
-## 6.1 Project
+## 6.1 Workflow
 
-A Project represents a user-defined automation or agent system.
+A Workflow represents a user-defined automation or agent system.
 
 Conceptually:
 
 ```text
-Project
+Workflow
 ├── id
 ├── name
 ├── description
@@ -551,13 +551,13 @@ Project
 └── timestamps
 ```
 
-A Project is the long-lived identity.
+A Workflow is the long-lived identity.
 
-A Project Version is the immutable executable snapshot.
+A Workflow Version is the immutable executable snapshot.
 
 ----------
 
-## 6.2 Project Draft
+## 6.2 Workflow Draft
 
 The Draft represents the currently editable state.
 
@@ -586,16 +586,16 @@ Execution
 
 ----------
 
-## 6.3 Project Version
+## 6.3 Workflow Version
 
-A Project Version is immutable.
+A Workflow Version is immutable.
 
 It contains the complete configuration required to reproduce the graph definition.
 
 It should include:
 
 ```text
-project_id
+workflow_id
 version
 schema_version
 engine_compatibility
@@ -613,7 +613,7 @@ The runtime must never silently resolve mutable Draft state while executing a pu
 
 # 7. Graph Model
 
-A Project graph consists of:
+A Workflow graph consists of:
 
 ```text
 Nodes
@@ -642,7 +642,7 @@ Example:
 
 ## 7.1 Node Identity
 
-Every node instance has a unique identifier within a Project Version.
+Every node instance has a unique identifier within a Workflow Version.
 
 Example:
 
@@ -673,7 +673,7 @@ control.if
 
 ### Node Instance
 
-Represents one configured occurrence inside a project.
+Represents one configured occurrence inside a workflow.
 
 ```text
 Node Definition:
@@ -762,8 +762,8 @@ The context may provide:
 node configuration
 input values
 execution ID
-project ID
-project version
+workflow ID
+workflow version
 logger
 metrics
 credentials
@@ -796,7 +796,7 @@ The Execution Runtime is the core of the Engine.
 
 Its responsibilities include:
 
-1.  load Project Version
+1.  load Workflow Version
     
 2.  validate executable graph
     
@@ -1123,8 +1123,8 @@ event_id
 event_type
 timestamp
 execution_id
-project_id
-project_version_id
+workflow_id
+workflow_version_id
 node_id
 payload
 ```
@@ -1158,14 +1158,14 @@ Implementation (Phase 11):
   structurally never enter an event. `schema_version` versions payloads.
 - The `Execution` aggregate records its own lifecycle events inside the
   transition methods (`pending_events` / `pull_events`); no caller can
-  change state without the event. `project.published` is recorded by
-  `ProjectService.publish_project`; `project.exported` and
-  `project.imported` (audit, Phase 18) by `ProjectPackageService`.
+  change state without the event. `workflow.published` is recorded by
+  `WorkflowService.publish_workflow`; `workflow.exported` and
+  `workflow.imported` (audit, Phase 18) by `WorkflowPackageService`.
 - Persistence: `EventRepository` (`events` table, append-only, idempotent
   on `event_id`). Events are appended in the *same transaction* as the
   state change they describe: never state without events, never events
   without state. `position` totally orders the events of one execution or
-  project; across unrelated streams it only approximates commit order.
+  workflow; across unrelated streams it only approximates commit order.
 - Delivery: `EventPublisher` fans out in-process *after* commit,
   at-most-once, with per-subscriber error and timeout isolation. A broken
   consumer can never fail or roll back a use case. Consumers that must not
@@ -1193,15 +1193,15 @@ The application layer coordinates use cases.
 Examples:
 
 ```text
-CreateProject
-UpdateProjectDraft
-ValidateProject
-PublishProject
-RunProject
+CreateWorkflow
+UpdateWorkflowDraft
+ValidateWorkflow
+PublishWorkflow
+RunWorkflow
 CancelExecution
 RetryExecution
-ImportProject
-ExportProject
+ImportWorkflow
+ExportWorkflow
 InstallPlugin
 RegisterNode
 CreateCredential
@@ -1254,7 +1254,7 @@ Public API endpoints must be versioned.
 Example:
 
 ```text
-/api/v1/projects
+/api/v1/workflows
 /api/v1/nodes
 /api/v1/executions
 /api/v1/triggers
@@ -1269,14 +1269,14 @@ Implemented in V1 (Phase 27 closed the gaps the frontend needs):
 
 ```text
 /api/v1/auth, /api/v1/users                      local accounts, sessions
-/api/v1/projects[/{id}[/validate|/publish|/duplicate|/export|/versions]], /import
-/api/v1/projects?q=&status=&sort=                 search (name), status filter, sort
-/api/v1/projects/{id}/executions?version=        execution history (paginated), optionally of one version
-/api/v1/projects/{id}/versions/{n}/execute       manual run
-/api/v1/projects/{id}/versions/{n}/restore       copy a version into the draft (expected_revision)
-/api/v1/projects/{id}/triggers/{tid}/invoke      manual/API triggers
+/api/v1/workflows[/{id}[/validate|/publish|/duplicate|/export|/versions]], /import
+/api/v1/workflows?q=&status=&sort=                 search (name), status filter, sort
+/api/v1/workflows/{id}/executions?version=        execution history (paginated), optionally of one version
+/api/v1/workflows/{id}/versions/{n}/execute       manual run
+/api/v1/workflows/{id}/versions/{n}/restore       copy a version into the draft (expected_revision)
+/api/v1/workflows/{id}/triggers/{tid}/invoke      manual/API triggers
 /api/v1/webhooks/{id}/{tid}                      signed webhooks (public)
-/api/v1/executions?status=                       across the caller's projects, newest first
+/api/v1/executions?status=                       across the caller's workflows, newest first
 /api/v1/executions/status-counts                 executions per status (same visibility)
 /api/v1/executions/{id}[/events|/cancel]         state, event history, cancel
 /api/v1/executions/{id}/logs?node_id=&level=&q=   node log lines (paginated, §52)
@@ -1294,7 +1294,7 @@ Implemented in V1 (Phase 27 closed the gaps the frontend needs):
 the draft revision the client shows. A different stored revision is a 409
 `CONCURRENT_MODIFICATION`, so a validation result never describes, and a
 publish never freezes, a draft the user has not seen. Publishing advances
-the draft revision (the project row is saved); clients reload the draft
+the draft revision (the workflow row is saved); clients reload the draft
 afterwards.
 
 A published version records its author: `published_by` is the id of the
@@ -1312,21 +1312,21 @@ state machine. Cancelling a run owned by a live worker answers 202 with the
 execution still `RUNNING`; it becomes `CANCELLED` at the worker's next
 check.
 
-Execution listings (`/executions`, `/projects/{id}/executions`) return
-`ExecutionListItem`: the execution plus `project_name`, the project's
-current name, joined in the listing query (versions RESTRICT project
+Execution listings (`/executions`, `/workflows/{id}/executions`) return
+`ExecutionListItem`: the execution plus `workflow_name`, the workflow's
+current name, joined in the listing query (versions RESTRICT workflow
 deletion, so the row always exists). Single-execution responses omit it:
-they are built from the domain aggregate, which has no project name, and
+they are built from the domain aggregate, which has no workflow name, and
 the public webhook response must not disclose it.
 
-Versions are never edited, but they can be copied (`ProjectVersion.to_draft`):
-`POST .../versions/{n}/restore` replaces the project's draft with the copy
+Versions are never edited, but they can be copied (`WorkflowVersion.to_draft`):
+`POST .../versions/{n}/restore` replaces the workflow's draft with the copy
 (guarded by `expected_revision` like any draft write; publishing it makes a
 new version), and `POST .../duplicate` with `{"version": n}` starts a new,
-unpublished project from it.
+unpublished workflow from it.
 
 Plugin management over HTTP (ADR 0001, admin only): enable, disable and
-remove (`DELETE ?force=`, blocked with `PLUGIN_IN_USE` while projects need
+remove (`DELETE ?force=`, blocked with `PLUGIN_IN_USE` while workflows need
 the plugin) always. Upload install (`POST /api/v1/plugins`, `application/zip`)
 only with `AKASHA_PLUGINS_HTTP_INSTALL=true`, otherwise 403
 `PLUGIN_INSTALL_DISABLED`; the list's `install_enabled` tells clients
@@ -1388,7 +1388,7 @@ Implemented (frontend Phase 14, `backend/src/akasha/api/live.py`):
   when its `Origin` host equals `Host` or `X-Forwarded-Host`, which blocks
   cross-site WebSocket hijacking. The same rules as HTTP apply:
   a valid session (else close 4401; a missing token too) and access to the
-  execution's project (else 4404, the same answer for unknown and hidden
+  execution's workflow (else 4404, the same answer for unknown and hidden
   executions). The session is re-checked every poll, so logout, expiry or
   a disabled user ends the stream (4401). Malformed first frame: 4400;
   internal or configuration error: 1011. Any other close is transient.
@@ -1432,8 +1432,8 @@ PostgreSQL stores durable structured state.
 Examples:
 
 ```text
-projects
-project_versions
+workflows
+workflow_versions
 nodes
 triggers
 executions
@@ -1482,7 +1482,7 @@ generated files
 reports
 artifacts
 large execution outputs
-project assets
+workflow assets
 ```
 
 The storage implementation must be abstracted.
@@ -1504,7 +1504,7 @@ Infrastructure repositories should hide persistence details from the application
 Example:
 
 ```python
-class ProjectRepository:
+class WorkflowRepository:
     async def get(...)
     async def save(...)
     async def delete(...)
@@ -1517,11 +1517,11 @@ Infrastructure provides the implementation.
 Example:
 
 ```text
-ProjectRepository
+WorkflowRepository
       ↑
       │ interface
       │
-PostgresProjectRepository
+PostgresWorkflowRepository
 ```
 
 ----------
@@ -1533,7 +1533,7 @@ Transactions must be explicit around state transitions.
 Examples:
 
 ```text
-Publish Project Version
+Publish Workflow Version
 Create Execution
 Transition Execution State
 Persist Node Result
@@ -1727,9 +1727,9 @@ Only explicitly exposed values may be accessible.
 
 # 32. Secrets and Credentials
 
-Secrets must be separated from Project configuration.
+Secrets must be separated from Workflow configuration.
 
-Project configuration stores references:
+Workflow configuration stores references:
 
 ```text
 credential_ref = "credential_123"
@@ -1749,7 +1749,7 @@ Secrets must:
     
 -   never appear in normal API responses
     
--   never appear in exported Projects
+-   never appear in exported Workflows
     
 -   never appear in reports
     
@@ -1761,8 +1761,8 @@ Credential access must happen through a dedicated service.
 Implementation (Phase 13):
 
 - **Reference format.** `credential:<name>`; the name (`[a-z0-9][a-z0-9._-]{0,63}`)
-  is the credential's immutable identity. Rotation never touches projects, and
-  an imported project resolves against a same-named credential on the target.
+  is the credential's immutable identity. Rotation never touches workflows, and
+  an imported workflow resolves against a same-named credential on the target.
 - **Storage.** `CredentialService` (`akasha.application.credentials`) encrypts
   with AES-256-GCM (`akasha.security.crypto`, `cryptography` package) before
   any repository call. The credential name is bound as associated data, so a
@@ -1772,7 +1772,7 @@ Implementation (Phase 13):
   Back the key up separately from the database (§110).
 - **API.** `/api/v1/credentials` (create, list, get, patch, delete). Values
   are write-only (`SecretStr`); no endpoint returns plaintext.
-- **Project config.** `Project.replace_draft` rejects secret material
+- **Workflow config.** `Workflow.replace_draft` rejects secret material
   (`PLAINTEXT_SECRET`, locations only). A string under a sensitive key must be
   a reference, and no string may be credential-shaped. Graph validation
   reports the same rule for data stored earlier, so it can be neither
@@ -1950,9 +1950,9 @@ Implementation (Phase 17, `backend/src/akasha/plugins/`, guide in
   dependencies, provided nodes, documentation) before any code is
   imported. Plugin node ids must be namespaced `<plugin id>.<name>`.
 - `domain.plugin.compatibility_issues` checks engine version, `SDK_VERSION`
-  and dependencies with the project dependency rules
+  and dependencies with the workflow dependency rules
   (`validate_dependencies`). Given the enabled plugins, those rules now
-  also check project `Dependency(kind="plugin")` at validate/publish. The
+  also check workflow `Dependency(kind="plugin")` at validate/publish. The
   runtime omits plugins on purpose: a run needs node types, and a disabled
   plugin's nodes are no longer registered.
 - `PluginRegistry` runs the lifecycle. It registers plugin nodes through
@@ -1964,15 +1964,15 @@ Implementation (Phase 17, `backend/src/akasha/plugins/`, guide in
 - Trust boundary: `_load` is the only place plugin code runs, in-process
   (trusted code, §65). A future isolated loader would register proxy
   factories there; nothing else would change.
-- Not blocked: disabling or removing a plugin whose nodes Projects use.
+- Not blocked: disabling or removing a plugin whose nodes Workflows use.
   Their validate/publish/run fail with structured `UNKNOWN_NODE_TYPE` /
   `MISSING_DEPENDENCY` until it is back. The operator path, `akasha
-  plugin remove`, blocks removal while projects need the plugin (§58).
+  plugin remove`, blocks removal while workflows need the plugin (§58).
 - Update (ADR 0006): `PluginRegistry.update` replaces an installed
   package with a new version of the same id, atomically (the old package
   is restored and re-activated on any failure). `PluginService` (shared by
   REST and MCP, one lifecycle lock per process) blocks update and removal
-  while projects use the plugin, unless forced. Published versions stay
+  while workflows use the plugin, unless forced. Published versions stay
   pinned to the plugin version they were published with (§144).
 - Changes apply to the current process. Other processes see them after a
   restart (workers, Phase 22). The CLI (Phase 21) and the admin API
@@ -2031,13 +2031,13 @@ plugin_name.node_name
 Implementation (Phase 09, `backend/src/akasha/nodes/registry.py`): one
 `NodeRegistry` class provides register (contract check + factory check),
 unregister, get, `list_nodes` (sorted), `resolve(node_id, constraint)` and
-two live read-only views: `definitions` (for `ProjectService`) and
+two live read-only views: `definitions` (for `WorkflowService`) and
 `catalog` (for `ExecutionRuntime`), so publish-time and run-time validation
 use the same node set. Duplicate ids are rejected
 (`NODE_ALREADY_REGISTERED`); unknown ids raise `NODE_NOT_FOUND`.
 
 - One version per node type id: `NodeInstance` references a type id only.
-  Compatibility is expressed by project `Dependency(kind="node")`
+  Compatibility is expressed by workflow `Dependency(kind="node")`
   constraints (`*` or comma-separated `>= <= > < ==` clauses), checked at
   validate/publish and before every run (`MISSING_DEPENDENCY`,
   `INCOMPATIBLE_DEPENDENCY`, `INVALID_DEPENDENCY`).
@@ -2080,7 +2080,7 @@ frontend/
 ├── src/
 │   ├── app/
 │   ├── features/
-│   │   ├── projects/
+│   │   ├── workflows/
 │   │   ├── editor/
 │   │   ├── nodes/
 │   │   ├── executions/
@@ -2113,7 +2113,7 @@ Realtime State
 Server state includes:
 
 ```text
-projects
+workflows
 versions
 executions
 nodes
@@ -2234,12 +2234,12 @@ Manually duplicated API types should be minimized.
 
 ----------
 
-# 43. Project Editing Flow
+# 43. Workflow Editing Flow
 
 Recommended flow:
 
 ```text
-Load Project
+Load Workflow
      ↓
 Load Draft
      ↓
@@ -2253,7 +2253,7 @@ Show validation state
      ↓
 Publish
      ↓
-Immutable Project Version
+Immutable Workflow Version
 ```
 
 The frontend may optimistically update editor state, but persistence remains backend controlled.
@@ -2271,7 +2271,7 @@ API Validation
         ↓
 Domain Validation
         ↓
-Project Graph Validation
+Workflow Graph Validation
         ↓
 Runtime Validation
 ```
@@ -2396,7 +2396,7 @@ Timeouts must be configurable at multiple levels:
 
 ```text
 Engine default
-Project
+Workflow
 Node
 Execution
 ```
@@ -2495,8 +2495,8 @@ At minimum:
 request_id
 execution_id
 node_execution_id
-project_id
-project_version_id
+workflow_id
+workflow_version_id
 ```
 
 Where appropriate:
@@ -2536,7 +2536,7 @@ Implementation (Phase 12):
   - Triggers: the request id becomes the execution's `correlation_id`.
     Scheduler-fired executions get a fresh `corr_…` id.
   - Runtime: `execution_id` for the run; each node task gets
-    `execution_id`, `project_id`, `correlation_id`, `node_id`,
+    `execution_id`, `workflow_id`, `correlation_id`, `node_id`,
     `node_execution_id`, `node_type`.
 - Execution observer (`observe_execution`): called right after each
   execution save commits, with the events that save persisted. It emits one
@@ -2546,8 +2546,8 @@ Implementation (Phase 12):
   `error_kind`, `error_message`, `error_node_id`. Failures log at WARNING.
   Durations come from domain timestamps, so the injected clock controls
   them. The runtime has no other lifecycle logging.
-- `project_version_id` from the list above is not a log field: versions are
-  identified by `(project_id, project_version)` everywhere (Phase 11 §6).
+- `workflow_version_id` from the list above is not a log field: versions are
+  identified by `(workflow_id, workflow_version)` everywhere (Phase 11 §6).
   `trace_id`/`span_id` are not implemented (no tracing backend yet).
 
 Node log history (frontend Phase 15, `akasha.runtime.node_logs`):
@@ -2582,7 +2582,7 @@ Node log history (frontend Phase 15, `akasha.runtime.node_logs`):
   like the API). `create_app` itself never configures logging, so
   in-process callers (tests) keep their handlers; other CLI commands log
   WARNING (INFO with `-v`) to stderr, which also bounds what an in-process
-  `akasha project run` stores; no retention policy yet, lines live as
+  `akasha workflow run` stores; no retention policy yet, lines live as
   long as their execution (deleted with it, `ON DELETE CASCADE`).
 
 ----------
@@ -2592,8 +2592,8 @@ Node log history (frontend Phase 15, `akasha.runtime.node_logs`):
 An Execution stores the immutable reference to:
 
 ```text
-project
-project version
+workflow
+workflow version
 trigger
 runtime metadata
 configuration snapshot metadata
@@ -2621,8 +2621,8 @@ Large payloads should be stored through the artifact/storage subsystem when appr
 
 Implementation (Phase 08, migration `0003_executions`):
 
-- `executions`: one row per execution; `(project_id, project_version)` is a
-  foreign key to `project_versions` (`RESTRICT`), so a version with
+- `executions`: one row per execution; `(workflow_id, workflow_version)` is a
+  foreign key to `workflow_versions` (`RESTRICT`), so a version with
   executions cannot be removed. Metadata, retry/timeout policies, error and
   cancellation are JSONB documents. `revision` is the CAS token.
 - `node_executions`: one row per node of the pinned graph (unique
@@ -2650,8 +2650,8 @@ in JSONB, NUL characters, or unpaired UTF-16 surrogates in either JSONB or
 text. JSON parsing accepts all of them. `domain.primitives.is_storable` is
 the one rule, applied where each kind of data is written:
 
-- User data is rejected with 422 `DOMAIN_VALIDATION_ERROR`: project
-  create/PUT (`Project.replace_draft` names the locations), credential
+- User data is rejected with 422 `DOMAIN_VALIDATION_ERROR`: workflow
+  create/PUT (`Workflow.replace_draft` names the locations), credential
   descriptions, execution input and package import.
 - Node data is recorded, never fatal: node outputs become the stub, and
   error messages have the characters replaced (`storable_text`).
@@ -2669,8 +2669,8 @@ It should display:
 
 ```text
 Execution status
-Project
-Project version
+Workflow
+Workflow version
 Trigger
 Start time
 End time
@@ -2714,11 +2714,11 @@ Report generation should not directly depend on the frontend.
 Implementation (Phase 19):
 
 - **Service.** `ReportService.execution_report` (`akasha.application.reports`)
-  loads the Execution aggregate, its project and its event log in one unit of
+  loads the Execution aggregate, its workflow and its event log in one unit of
   work; `build_report` is a pure function over that state. HTTP:
   `GET /api/v1/reports/executions/{execution_id}`.
 - **Canonical source.** Every status, timing, error, output and metric comes
-  from the Execution aggregate and its pinned ProjectVersion. Events are
+  from the Execution aggregate and its pinned WorkflowVersion. Events are
   attached as a timeline and are never read to derive a field. They are
   read before the aggregate, so the timeline can never run ahead of the state.
 - **Token usage and cost.** Taken from each completed node's `metadata`
@@ -2746,14 +2746,14 @@ Implementation (Phase 19):
 
 # 56. Import / Export Architecture
 
-Projects must have a portable representation.
+Workflows must have a portable representation.
 
 Example:
 
 ```text
-project-package/
+workflow-package/
 ├── manifest.json
-├── project.json
+├── workflow.json
 ├── nodes/
 ├── prompts/
 ├── resources/
@@ -2767,31 +2767,31 @@ The package must contain enough information to validate compatibility.
 
 ----------
 
-# 57. Project Package Manifest
+# 57. Workflow Package Manifest
 
 The manifest should contain information such as:
 
 ```json
 {
   "format_version": "1",
-  "project_schema_version": "1",
+  "workflow_schema_version": "1",
   "engine_compatibility": ">=1.0.0",
-  "project_version": "1.0.0",
+  "workflow_version": "1.0.0",
   "dependencies": {}
 }
 ```
 
 The exact schema may evolve.
 
-Implementation (Phase 18; the format guide is `docs/project-format.md`):
+Implementation (Phase 18; the format guide is `docs/workflow-format.md`):
 
-- The package is a ZIP archive holding `manifest.json`, `project.json` and the
-  project files under `docs/`, `prompts/`, `resources/` and `assets/`. There
+- The package is a ZIP archive holding `manifest.json`, `workflow.json` and the
+  workflow files under `docs/`, `prompts/`, `resources/` and `assets/`. There
   is no `nodes/` directory: node configuration (prompt templates included) is
-  part of the graph in `project.json`. Plugin code is never packaged;
+  part of the graph in `workflow.json`. Plugin code is never packaged;
   plugins are installed separately (§36).
-- The manifest carries `format_version`, `project_schema_version`,
-  `engine_version`, `engine_compatibility`, `source_project_version` and
+- The manifest carries `format_version`, `workflow_schema_version`,
+  `engine_version`, `engine_compatibility`, `source_workflow_version` and
   `requires`. `requires` lists the node types used, with their versions at
   export, and the credential names referenced. The manifest also holds an
   inventory with a SHA-256 for every entry.
@@ -2800,25 +2800,25 @@ Implementation (Phase 18; the format guide is `docs/project-format.md`):
     own release line, and the importer checks it against its own version;
   - node types are checked with SemVer (same major, at least the exported
     version);
-  - plugin needs are declared project dependencies. The previous example's
-    `project_version` and `dependencies` became `source_project_version`
+  - plugin needs are declared workflow dependencies. The previous example's
+    `workflow_version` and `dependencies` became `source_workflow_version`
     and `requires`.
-- **Project files** are a new part of the project: `ProjectDraft.files`,
-  path → bytes, snapshotted into `ProjectVersion.files`. They are stored as
-  `{path: base64}` JSONB (migration `0007_project_files`) and capped at 100
+- **Workflow files** are a new part of the workflow: `WorkflowDraft.files`,
+  path → bytes, snapshotted into `WorkflowVersion.files`. They are stored as
+  `{path: base64}` JSONB (migration `0007_workflow_files`) and capped at 100
   files, 1 MiB each and 4 MiB in total. Nothing in the runtime reads them
   yet. The draft API keeps them unchanged; only import sets them.
-- `application/project_package.py` holds the format: strict Pydantic
+- `application/workflow_package.py` holds the format: strict Pydantic
   schemas plus `read_package` / `write_package`. Reading is the trust
   boundary, and nothing is extracted to disk. `application/packages.py`
-  holds the use cases (`ProjectPackageService`):
+  holds the use cases (`WorkflowPackageService`):
   - export is deterministic, and it refuses (never strips) secret material;
-  - import is all-or-nothing and creates a new, unpublished project;
+  - import is all-or-nothing and creates a new, unpublished workflow;
   - import rejects unsupported versions and unmet requirements;
   - import reports other graph issues and the credentials that are missing.
-- API: `GET /api/v1/projects/{id}/export[?version=N]` and
-  `POST /api/v1/projects/import` (an `application/zip` body, max 16 MiB,
-  capped while streaming). Both live on the projects router, so the Phase 20
+- API: `GET /api/v1/workflows/{id}/export[?version=N]` and
+  `POST /api/v1/workflows/import` (an `application/zip` body, max 16 MiB,
+  capped while streaming). Both live on the workflows router, so the Phase 20
   router-level authentication covers them.
 
 ----------
@@ -2830,11 +2830,11 @@ The CLI should reuse backend application services where possible.
 Example:
 
 ```text
-agent-engine project validate
-agent-engine project import
-agent-engine project export
-agent-engine project run
-agent-engine project publish
+agent-engine workflow validate
+agent-engine workflow import
+agent-engine workflow export
+agent-engine workflow run
+agent-engine workflow publish
 
 agent-engine node list
 agent-engine node validate
@@ -2851,31 +2851,31 @@ CLI commands must not duplicate core business logic.
 
 Implementation (Phase 21, `backend/src/akasha/cli.py`, stdlib `argparse`):
 
-- `akasha project create|list|validate|publish|run|import|export`,
+- `akasha workflow create|list|validate|publish|run|import|export`,
   `node list|validate|test`, `plugin list|install|remove`,
   `execution get|cancel`, `backup`, `restore`, and `akasha serve` for the
   HTTP server. Each command calls the service the API uses
-  (`ProjectService`, `ProjectPackageService`, `TriggerService.fire_manual`,
+  (`WorkflowService`, `WorkflowPackageService`, `TriggerService.fire_manual`,
   `ExecutionService`, `NodeRegistry`, `PluginRegistry`,
   `akasha.sdk.testing.run_node`). `tests/test_architecture.py` forbids
   SQLAlchemy/FastAPI imports in it.
-- `project run` creates a manual execution *without* dispatching it and
+- `workflow run` creates a manual execution *without* dispatching it and
   runs it in-process on the container's `ExecutionRuntime` (the same
   registry, credentials, events and metrics as the rest of the container).
   `akasha worker` runs a dedicated worker process (§72).
   Ctrl-C calls `ExecutionRuntime.cancel`: the run ends CANCELLED, not
   orphaned RUNNING.
 - `plugin remove` goes through `application.plugins.remove_plugin`: it is
-  blocked with `PLUGIN_IN_USE` while a project's draft or any published
+  blocked with `PLUGIN_IN_USE` while a workflow's draft or any published
   version uses the plugin's node types or declares a dependency on it
   (§143 safe blocking). `--force` is the explicit confirmation.
 - Trust model: the CLI runs on the host with the engine's `AKASHA_*`
   configuration, so it acts with operator authority and has no login.
-  Projects it creates or imports have no owner (admin-only in the API).
+  Workflows it creates or imports have no owner (admin-only in the API).
 - Output: results to stdout (text, or `--json` using the API DTOs where
   they exist), errors and logs to stderr, redacted. Exit codes: 0 ok,
   1 failed, 2 usage, 70 internal error.
-- Not provided: draft editing, project deletion, execution listing,
+- Not provided: draft editing, workflow deletion, execution listing,
   plugin enable/disable, user and credential management (API only).
   HTTP removal uses the same `remove_plugin` (ADR 0001).
   `node test` has no credentials: secrets never go on a command line.
@@ -2896,8 +2896,8 @@ MCP client ─> /mcp (bearer session → Identity) ─> MCP SDK ─> tool
   the API process at `/mcp`. Not part of the OpenAPI document.
 - Same sessions, same authorization, same application services and error
   codes as REST. Tools hold no business rules: graph edits are domain
-  `Graph`/draft methods applied through `ProjectService.edit_draft`, guarded
-  by the project revision.
+  `Graph`/draft methods applied through `WorkflowService.edit_draft`, guarded
+  by the workflow revision.
 - Plugin tools use the shared `application.plugins.PluginService`. Running
   or installing plugin code needs an admin and `AKASHA_MCP_PLUGIN_CODE`.
 - `tests/test_architecture.py` keeps SQLAlchemy out of it, like the CLI.
@@ -3012,46 +3012,46 @@ Avoid hard-coding assumptions that every installation has exactly one unrestrict
 Implementation (Phase 20):
 
 - Two roles. `admin` manages the installation: users, credentials, every
-  project, `/metrics`. `member` works on the projects they own and on
-  those shared with them (see "Project sharing" below).
-- `projects.owner_id` is set at creation and at import, to the caller. It
+  workflow, `/metrics`. `member` works on the workflows they own and on
+  those shared with them (see "Workflow sharing" below).
+- `workflows.owner_id` is set at creation and at import, to the caller. It
   changes only through an ownership transfer (ADR 0008). Executions, versions, triggers, exports and reports are
-  reachable exactly when their project is. Projects without an owner
+  reachable exactly when their workflow is. Workflows without an owner
   (created before 0008, or later by operator tooling) are admin-only, so
   the upgrade never widens access.
 - Enforcement is default-deny at the router. Every `/api/v1` route needs a
   session, except `GET`/`POST /auth/setup`, `POST /auth/login` and the webhook
-  route. A path parameter named `project_id` or `execution_id` triggers the
+  route. A path parameter named `workflow_id` or `execution_id` triggers the
   access check (`authorize_path`), so a new route under those names is
   covered automatically. The credentials and users routers additionally
   require an admin. A test walks the OpenAPI document and asserts every
   non-public route answers 401 without a session.
-- Project sharing (ADR 0008, migration 0017, `application/sharing.py`):
-  - The owner or an admin can share a project with other users as
+- Workflow sharing (ADR 0008, migration 0017, `application/sharing.py`):
+  - The owner or an admin can share a workflow with other users as
     `viewer` (read, export, duplicate, validate) or `editor` (also
     change the draft and triggers, restore, publish, run, cancel).
   - Only the owner and admins share or delete it.
-  - `project_access()` maps a user to `MANAGE` (admin, owner), `EDIT`,
+  - `workflow_access()` maps a user to `MANAGE` (admin, owner), `EDIT`,
     `VIEW` or none. Routes declare the level they need with `requires()`
     (OpenAPI `x-akasha-access`); undeclared routes need view for `GET`
     and edit otherwise.
-  - Listings include shared projects (`visible_to`).
-  - API: `GET /projects/{id}/members` (owner, members, the caller's
-    `access`), plus `PUT` and `DELETE /projects/{id}/members/{username}`.
-  - Ownership transfer: `PUT /projects/{id}/owner` (manage). The new
+  - Listings include shared workflows (`visible_to`).
+  - API: `GET /workflows/{id}/members` (owner, members, the caller's
+    `access`), plus `PUT` and `DELETE /workflows/{id}/members/{username}`.
+  - Ownership transfer: `PUT /workflows/{id}/owner` (manage). The new
     owner must be an enabled user; the previous owner stays on as an
     editor.
-  - Leaving: `DELETE /projects/{id}/membership` (any access). The owner
+  - Leaving: `DELETE /workflows/{id}/membership` (any access). The owner
     cannot leave; they transfer ownership first.
   - Event-trigger sources a caller adds must be visible to the caller
     (`TRIGGER_SOURCE_NOT_FOUND`).
   - Membership changes apply from the member's next request.
 - A resource the caller cannot reach at all answers 404
-  (`PROJECT_NOT_FOUND` / `EXECUTION_NOT_FOUND`), never 403, so ids cannot
+  (`WORKFLOW_NOT_FOUND` / `EXECUTION_NOT_FOUND`), never 403, so ids cannot
   be probed for existence. 403 is for role checks and for too little
-  project access (a member who can view but not edit).
+  workflow access (a member who can view but not edit).
 - Credentials are installation-scoped and admin-managed. Any member's
-  project may reference any credential by name (`credential:<name>`),
+  workflow may reference any credential by name (`credential:<name>`),
   because the runtime resolves by name. A member can therefore *use* a
   credential through a node without ever reading it through the API.
   Per-credential grants need owner-aware resolution in the runtime; that is
@@ -3074,9 +3074,9 @@ login
 credential created
 credential changed
 credential deleted
-project published
-project imported
-project exported
+workflow published
+workflow imported
+workflow exported
 plugin installed
 plugin removed
 execution started
@@ -3173,7 +3173,7 @@ Paths must be validated.
 Path traversal must be prevented.
 
 Implementation (ADR 0005, `security/paths.py`, `nodes/files.py`): the
-operator sets `AKASHA_WORKSPACE_DIR`; each project gets its own
+operator sets `AKASHA_WORKSPACE_DIR`; each workflow gets its own
 subdirectory, created on first use. Every path (node input, model tool
 argument, `core.command` working directory) must stay inside it: absolute
 paths, `..` segments, backslashes and NUL bytes are refused
@@ -3212,7 +3212,7 @@ Configuration should be separated into:
 Engine configuration
 Installation configuration
 Environment configuration
-Project configuration
+Workflow configuration
 Node configuration
 Credential configuration
 ```
@@ -3463,7 +3463,7 @@ Concurrency limits should exist at multiple levels where useful:
 
 ```text
 global
-project
+workflow
 execution
 node type
 provider
@@ -3477,7 +3477,7 @@ maximum concurrent nodes
 maximum provider requests
 ```
 
-This prevents a single Project from exhausting system resources.
+This prevents a single Workflow from exhausting system resources.
 
 ----------
 
@@ -3508,7 +3508,7 @@ Each cap is enforced by the layer that owns the resource:
 | node duration (per attempt) | 900 s | admission + `execute_node` | request rejected (422); at run time node `NODE_TIMEOUT` |
 | attempts (retries + 1) | 5 | admission | request rejected (422) |
 | graph nodes / depth (longest path) | 500 / 100 | admission | request rejected (422) |
-| unfinished executions per project | 100 | admission (project row locked) | request rejected (429 `EXECUTION_CAPACITY_EXCEEDED`) |
+| unfinished executions per workflow | 100 | admission (workflow row locked) | request rejected (429 `EXECUTION_CAPACITY_EXCEEDED`) |
 | nodes in flight per execution | 8 | runtime scheduler | waits for a slot |
 | executions per worker | 4 (`AKASHA_WORKER_CONCURRENCY`) | worker | job waits in the queue |
 | node output (UTF-8 JSON bytes) | 1 MiB | runtime, before the output is stored | node `NODE_OUTPUT_TOO_LARGE` (PERMANENT) |
@@ -3537,8 +3537,8 @@ Each cap is enforced by the layer that owns the resource:
   size, depth and attempts bound that number. Iteration and nesting limits
   belong to those constructs when they are introduced (§130/§131).
 - Artifacts: there is no artifact store yet. Node outputs are the stored
-  results and are capped above. Project files are capped by the domain
-  (`MAX_PROJECT_FILE_BYTES` etc., Phase 18).
+  results and are capped above. Workflow files are capped by the domain
+  (`MAX_WORKFLOW_FILE_BYTES` etc., Phase 18).
 
 ----------
 
@@ -3568,7 +3568,7 @@ The system should maximize reproducibility by recording:
 
 ```text
 Engine version
-Project version
+Workflow version
 Node versions
 Plugin versions
 configuration
@@ -3647,9 +3647,9 @@ JSONL
 binary artifacts
 ```
 
-Internal Python object serialization must not be used as a portable Project format.
+Internal Python object serialization must not be used as a portable Workflow format.
 
-Project packages must use stable, documented schemas.
+Workflow packages must use stable, documented schemas.
 
 ----------
 
@@ -3660,8 +3660,8 @@ The following versions must be tracked independently:
 ```text
 API Version
 Engine Version
-Project Schema Version
-Project Version
+Workflow Schema Version
+Workflow Version
 Node Version
 Plugin Version
 SDK Version
@@ -3679,13 +3679,13 @@ Migration categories:
 
 ```text
 Database migration
-Project schema migration
+Workflow schema migration
 API migration
 Plugin migration
 Node configuration migration
 ```
 
-Project imports should support migration when a compatible migration path exists.
+Workflow imports should support migration when a compatible migration path exists.
 
 ----------
 
@@ -3698,7 +3698,7 @@ The Engine must reject unsupported versions rather than silently interpreting in
 Example:
 
 ```text
-Unsupported project schema version
+Unsupported workflow schema version
 ```
 
 must result in a structured compatibility error.
@@ -3790,9 +3790,9 @@ Built-in and plugin Nodes should use the same contract test mechanism.
 
 ----------
 
-# 88. Example Projects as Regression Tests
+# 88. Example Workflows as Regression Tests
 
-Example Projects are executable architecture tests.
+Example Workflows are executable architecture tests.
 
 At minimum:
 
@@ -3805,10 +3805,10 @@ Lead Generation
 
 Each should be importable and executable.
 
-Breaking an example project should be treated as a significant regression.
+Breaking an example workflow should be treated as a significant regression.
 
-They live in `backend/examples/projects/*.json` (the `project.json` shape
-of a Project Package). `backend/tests/integration/test_e2e_examples.py`
+They live in `backend/examples/workflows/*.json` (the `workflow.json` shape
+of a Workflow Package). `backend/tests/integration/test_e2e_examples.py`
 runs each one through the production composition root: HTTP API →
 validate → publish → trigger (manual invoke; cron on an injected clock) →
 Redis queue → worker → runtime → report → export → import → run again.
@@ -3820,7 +3820,7 @@ Redis queue → worker → runtime → report → export → import → run agai
 Frontend tests should cover:
 
 ```text
-project loading
+workflow loading
 graph rendering
 node configuration
 connections
@@ -3840,7 +3840,7 @@ The graph editor should have dedicated interaction tests.
 A minimal E2E test should perform:
 
 ```text
-Create Project
+Create Workflow
     ↓
 Add Nodes
     ↓
@@ -3892,7 +3892,7 @@ Trigger delivery
 Webhook processing
 Execution creation
 Plugin installation
-Project import
+Workflow import
 ```
 
 External side-effecting Nodes should expose or document idempotency capabilities where appropriate.
@@ -3949,7 +3949,7 @@ Domain/application events represent meaningful Engine behavior:
 
 ```text
 ExecutionCompleted
-ProjectPublished
+WorkflowPublished
 NodeFailed
 ```
 
@@ -4062,7 +4062,7 @@ Infrastructure dependencies should be injected.
 Examples:
 
 ```text
-ProjectRepository
+WorkflowRepository
 ExecutionRepository
 EventPublisher
 CredentialService
@@ -4120,7 +4120,7 @@ Example:
 ```text
 Engine Defaults
       ↓
-Project Defaults
+Workflow Defaults
       ↓
 Node Configuration
       ↓
@@ -4129,7 +4129,7 @@ Execution Input
 
 Secret references are resolved only at runtime.
 
-The resolved secret must not be written back into the Project configuration.
+The resolved secret must not be written back into the Workflow configuration.
 
 ----------
 
@@ -4142,7 +4142,7 @@ Conceptually:
 ```text
 ExecutionContext
 ├── execution
-├── project
+├── workflow
 ├── node
 ├── inputs
 ├── variables
@@ -4173,7 +4173,7 @@ A Node should not arbitrarily mutate:
 
 ```text
 other node state
-project definitions
+workflow definitions
 execution state
 database records
 ```
@@ -4246,7 +4246,7 @@ API endpoints must define reasonable payload limits.
 Particularly:
 
 ```text
-project import
+workflow import
 file upload
 execution input
 large outputs
@@ -4259,7 +4259,7 @@ Implementation (Phase 25): `RequestSizeLimit` (`api/app.py`) caps every
 request body at `AKASHA_API_MAX_REQUEST_BYTES` (default 20 MiB), counted
 while streaming, so no route can be made to buffer an unbounded body.
 Routes with smaller caps enforce theirs on top, also while streaming:
-webhooks (`AKASHA_WEBHOOK_MAX_PAYLOAD_BYTES`) and project packages (16 MiB).
+webhooks (`AKASHA_WEBHOOK_MAX_PAYLOAD_BYTES`) and workflow packages (16 MiB).
 Over the cap: 413 `PAYLOAD_TOO_LARGE`.
 
 ----------
@@ -4280,7 +4280,7 @@ Rate limits must be configurable.
 
 Implementation status (Phase 25): logins and password changes are
 throttled per username (Phase 20). Webhooks require a valid signature and
-their executions count against the per-project active-execution limit
+their executions count against the per-workflow active-execution limit
 (Phase 24); there is no request-rate limit yet. Request rates are left to the
 reverse proxy in front of the engine (deployment, Phase 26).
 
@@ -4329,8 +4329,8 @@ A backup should cover:
 
 ```text
 PostgreSQL
-Project data
-Project versions
+Workflow data
+Workflow versions
 Credentials
 Plugin metadata
 Artifacts
@@ -4360,7 +4360,7 @@ Restore should validate:
 Engine compatibility
 schema versions
 plugin compatibility
-project compatibility
+workflow compatibility
 storage availability
 credential encryption compatibility
 ```
@@ -4467,7 +4467,7 @@ counters: those are per process, reset on restart and carry no tokens or
 cost, so the UI could not sum them without misleading aggregation.
 
 - Population: executions **created** in `[since, until)` (timezone-aware,
-  at most 31 days), limited to the caller's projects (admins: all), and
+  at most 31 days), limited to the caller's workflows (admins: all), and
   their node executions. Indexed by `ix_executions_created_at`
   (migration 0013).
 - Returns: status counts (every status), duration stats per *terminal*
@@ -4567,7 +4567,7 @@ Large collections must be paginated.
 Examples:
 
 ```text
-projects
+workflows
 executions
 events
 logs
@@ -4604,7 +4604,7 @@ Deletion of historical data must respect audit and compliance requirements where
 The primary application structure should expose:
 
 ```text
-Projects
+Workflows
 Executions
 Monitoring
 Reports
@@ -4614,7 +4614,7 @@ Plugins
 Settings
 ```
 
-Project-specific navigation should expose:
+Workflow-specific navigation should expose:
 
 ```text
 Overview
@@ -4649,9 +4649,9 @@ Explicit save/publish operations must remain available.
 
 Undo/redo belongs to the frontend editor state.
 
-It must not be implemented by creating backend Project Versions for every editor action.
+It must not be implemented by creating backend Workflow Versions for every editor action.
 
-Project Versions represent meaningful published states.
+Workflow Versions represent meaningful published states.
 
 ----------
 
@@ -4665,12 +4665,12 @@ The distinction is:
 
 ```text
 Autosave = persist Draft
-Publish = create immutable Project Version
+Publish = create immutable Workflow Version
 ```
 
 ----------
 
-# 124. Project Version Lifecycle
+# 124. Workflow Version Lifecycle
 
 ```text
 Draft
@@ -4682,7 +4682,7 @@ Draft
   └── publish
           │
           ▼
-    Project Version
+    Workflow Version
           │
           ├── execute
           ├── inspect
@@ -4695,11 +4695,11 @@ Published versions are immutable.
 
 # 125. Trigger Lifecycle
 
-Triggers are configured on the Project Draft and published alongside it; the published Project Version carries an immutable copy with stable trigger ids.
+Triggers are configured on the Workflow Draft and published alongside it; the published Workflow Version carries an immutable copy with stable trigger ids.
 
-A trigger always resolves to the **latest published version** of its project: publishing a new version retires the previous version's triggers. A trigger must never ambiguously execute "whatever happens to be the current Draft" — drafts never fire.
+A trigger always resolves to the **latest published version** of its workflow: publishing a new version retires the previous version's triggers. A trigger must never ambiguously execute "whatever happens to be the current Draft" — drafts never fire.
 
-Trigger ids are unique within a project, not globally; webhook and invoke URLs therefore carry the project id. Uniqueness and schedule rules (cron syntax, deterministic and able to fire; interval between 1 second and 1 year) are validation issues that block publishing — not construction errors — so drafts stored under older rules stay loadable and fixable.
+Trigger ids are unique within a workflow, not globally; webhook and invoke URLs therefore carry the workflow id. Uniqueness and schedule rules (cron syntax, deterministic and able to fire; interval between 1 second and 1 year) are validation issues that block publishing — not construction errors — so drafts stored under older rules stay loadable and fixable.
 
 Scheduled (cron/interval) triggers have no catch-up of missed runs: after downtime the next boundary is computed forward from *now*.
 
@@ -4710,8 +4710,8 @@ Scheduled (cron/interval) triggers have no catch-up of missed runs: after downti
 Manual execution should allow:
 
 ```text
-select Project
-select Project Version
+select Workflow
+select Workflow Version
 provide input
 start execution
 ```
@@ -4747,7 +4747,7 @@ Implementation (Phase 25), authentication:
 - A WEBHOOK trigger names its signing secret in its config:
   `{"secret_credential": "credential:<name>"}`. Publishing without one is
   the validation issue `WEBHOOK_SECRET_REQUIRED`; a plaintext value is
-  `PLAINTEXT_SECRET`. Projects stay secret-free and portable.
+  `PLAINTEXT_SECRET`. Workflows stay secret-free and portable.
 - Callers send `X-Akasha-Signature: sha256=<hex>`, the HMAC-SHA256 of the raw
   request body under the credential's value. The body is read with its cap
   first, then verified (constant-time) before it is parsed.
@@ -4770,12 +4770,12 @@ They must not have their own separate execution implementation.
 
 # 129. Event Trigger Execution
 
-Internal events may trigger Projects.
+Internal events may trigger Workflows.
 
 Example:
 
 ```text
-project.execution.completed
+workflow.execution.completed
         ↓
 matching event trigger
         ↓
@@ -4787,9 +4787,9 @@ Event-triggered execution must include safeguards against accidental infinite lo
 Implementation (frontend Phase 18):
 
 - An EVENT trigger's config is `{"event": "<type>"}` plus an optional
-  `"source_project_id"` (default: its own project). Triggerable types are
+  `"source_workflow_id"` (default: its own workflow). Triggerable types are
   `execution.completed`, `execution.failed`, `execution.cancelled`,
-  `execution.timed_out` and `project.published`. Any other value, or a
+  `execution.timed_out` and `workflow.published`. Any other value, or a
   malformed source id, is the validation issue `INVALID_TRIGGER_EVENT`.
 - `EventTriggerDispatcher` (`runtime/event_triggers.py`) runs next to the
   cron scheduler (`AKASHA_SCHEDULER_ENABLED`, one replica). It reads the
@@ -4798,13 +4798,13 @@ Implementation (frontend Phase 18):
   or 60 s pass: identity positions are assigned at insert, not at commit.
 - No catch-up: the first tick anchors at the end of the log. Each event
   fires a trigger at most once; a failed fire is logged, not retried.
-- The execution input is `{"event": {type, event_id, project_id,
-  project_version, execution_id, occurred_at, data}}`, only the event's own
+- The execution input is `{"event": {type, event_id, workflow_id,
+  workflow_version, execution_id, occurred_at, data}}`, only the event's own
   closed, secret-free fields. The source's correlation id is kept.
-- A source project other than the trigger's own must be accessible to the
-  trigger project's owner by the API's rule (`may_access_project`): an
-  admin any project, a member only their own; a disabled owner none.
-  Ownerless operator projects may chain among themselves. Checked at fire
+- A source workflow other than the trigger's own must be accessible to the
+  trigger workflow's owner by the API's rule (`may_access_workflow`): an
+  admin any workflow, a member only their own; a disabled owner none.
+  Ownerless operator workflows may chain among themselves. Checked at fire
   time; otherwise the fire is refused (`event_trigger_source_denied`).
 - Loop protection: executions record `trigger_depth` (source depth + 1).
   Fires beyond `AKASHA_LIMIT_EVENT_TRIGGER_DEPTH` (default 8) are refused
@@ -4933,7 +4933,7 @@ Avoid implementing separate duplicate tool infrastructures for Agents.
 
 Implementation (ADR 0005): the Tool Registry *is* the Node Registry.
 `core.agent` receives the registry's live catalog; a tool entry is
-`{name, description?, node_type, config}`. The project author fixes the
+`{name, description?, node_type, config}`. The workflow author fixes the
 config; the model supplies only the node's input ports, offered as a JSON
 Schema derived from the port declarations (BINARY/FILE/ARTIFACT/
 SECRET_REFERENCE ports cannot be model-supplied; such nodes are rejected).
@@ -4978,7 +4978,7 @@ At minimum:
 ```text
 execution state
 node execution state
-project version
+workflow version
 timestamps
 retry state
 ```
@@ -5093,7 +5093,7 @@ Failed installation must leave the system in a consistent state.
 
 # 143. Plugin Removal
 
-A plugin must not be removed if active Projects depend on it without explicit handling.
+A plugin must not be removed if active Workflows depend on it without explicit handling.
 
 Possible strategies:
 
@@ -5108,7 +5108,7 @@ Version 1 should prefer safe blocking over destructive removal.
 
 ----------
 
-# 144. Project Dependency Resolution
+# 144. Workflow Dependency Resolution
 
 Before execution, the Engine must verify:
 
@@ -5122,7 +5122,7 @@ required provider configuration exists
 
 Missing dependencies produce structured errors.
 
-Plugin versions are pinned at publish (ADR 0006): a `ProjectVersion`
+Plugin versions are pinned at publish (ADR 0006): a `WorkflowVersion`
 records `plugin_versions`, the exact version of every enabled plugin the
 draft uses (owner of a used node type, or a declared plugin dependency).
 `runtime.plan.load_plan` re-checks them before every run, against the
@@ -5140,9 +5140,9 @@ Compatibility should eventually be represented as:
 ```text
 Engine
   ↕
-Project Schema
+Workflow Schema
   ↕
-Project
+Workflow
   ↕
 Plugin
   ↕
@@ -5163,8 +5163,8 @@ backend skeleton phase and used by every endpoint since:
 
 ```json
 {
-  "code": "PROJECT_VALIDATION_FAILED",
-  "message": "The project contains validation errors.",
+  "code": "WORKFLOW_VALIDATION_FAILED",
+  "message": "The workflow contains validation errors.",
   "details": {
     "issues": [
       {
@@ -5250,7 +5250,7 @@ docs/
 ├── domain-model.md
 ├── node-system.md
 ├── execution-engine.md
-├── project-format.md
+├── workflow-format.md
 ├── plugin-system.md
 ├── sdk.md
 ├── api.md
@@ -5281,7 +5281,7 @@ ADR-004 Execution Runtime
 ADR-005 Node Contract
 ADR-006 Plugin Architecture
 ADR-007 Provider Abstraction
-ADR-008 Project Versioning
+ADR-008 Workflow Versioning
 ADR-009 Event Architecture
 ```
 
@@ -5302,9 +5302,9 @@ The following must remain true:
 
 1.  Backend is authoritative.
     
-2.  Published Project Versions are immutable.
+2.  Published Workflow Versions are immutable.
     
-3.  Executions reference immutable Project Versions.
+3.  Executions reference immutable Workflow Versions.
     
 4.  Domain logic does not depend on infrastructure.
     
@@ -5312,7 +5312,7 @@ The following must remain true:
     
 6.  Node configuration is schema driven.
     
-7.  Secrets are never stored inside normal Project configuration.
+7.  Secrets are never stored inside normal Workflow configuration.
     
 8.  Secrets are never logged.
     
@@ -5336,7 +5336,7 @@ The following must remain true:
     
 18.  Python Nodes are trusted code in Version 1.
     
-19.  Projects are portable without secrets.
+19.  Workflows are portable without secrets.
     
 20.  The architecture must permit future worker/process isolation.
     
@@ -5442,7 +5442,7 @@ Worker executes
 Never:
 
 ```text
-store API key in project JSON
+store API key in workflow JSON
 log API key
 return API key in API response
 export API key
@@ -5459,7 +5459,7 @@ Never use:
 eval(user_expression)
 ```
 
-or equivalent unrestricted execution mechanisms for Project expressions.
+or equivalent unrestricted execution mechanisms for Workflow expressions.
 
 ----------
 
@@ -5499,7 +5499,7 @@ Application Service
    ↓
 Create Execution
    ↓
-Resolve Project Version
+Resolve Workflow Version
    ↓
 Validate Dependencies
    ↓
@@ -5534,10 +5534,10 @@ Frontend receives live update
 
 ----------
 
-# 155. Reference Project Lifecycle
+# 155. Reference Workflow Lifecycle
 
 ```text
-Create Project
+Create Workflow
       ↓
 Edit Draft
       ↓
@@ -5551,7 +5551,7 @@ Validate
       ↓
 Publish
       ↓
-Project Version
+Workflow Version
       ↓
 Configure Trigger
       ↓
@@ -5579,7 +5579,7 @@ Validate Definition
    ↓
 Available in Node Library
    ↓
-Add to Project
+Add to Workflow
    ↓
 Configure
    ↓
@@ -5617,7 +5617,7 @@ Load
       ↓
 Node Registry
       ↓
-Project Usage
+Workflow Usage
       ↓
 Runtime
 ```
@@ -5780,7 +5780,7 @@ Architecture implementation should proceed in this order:
 ```text
 1. Domain Model
 2. Node Contract
-3. Project Graph Model
+3. Workflow Graph Model
 4. Validation
 5. Persistence Interfaces
 6. PostgreSQL Persistence
@@ -5793,7 +5793,7 @@ Architecture implementation should proceed in this order:
 13. API
 14. Python SDK
 15. Plugin System
-16. Frontend Project Management
+16. Frontend Workflow Management
 17. Frontend Graph Editor
 18. Execution Monitoring
 19. Reports
@@ -5825,13 +5825,13 @@ Node registered
         ↓
 Node appears in Frontend
         ↓
-User adds Node to Project
+User adds Node to Workflow
         ↓
 Schema-driven configuration
         ↓
-Project validation
+Workflow validation
         ↓
-Project published
+Workflow published
         ↓
 Trigger starts Execution
         ↓
@@ -5851,7 +5851,7 @@ Execution can be inspected
         ↓
 Logs / tokens / costs are available
         ↓
-Project Version can be exported
+Workflow Version can be exported
 ```
 
 No special-case path should be required for custom Nodes.
@@ -5868,11 +5868,11 @@ The Engine should remain understandable as this system:
                  └────────┬─────────┘
                           │
                  ┌────────▼─────────┐
-                 │     Project      │
+                 │     Workflow      │
                  └────────┬─────────┘
                           │
                  ┌────────▼─────────┐
-                 │ Project Version  │
+                 │ Workflow Version  │
                  └────────┬─────────┘
                           │
                  ┌────────▼─────────┐

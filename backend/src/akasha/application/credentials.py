@@ -15,7 +15,7 @@ import logging
 from dataclasses import replace
 
 from akasha.application.persistence import UnitOfWork
-from akasha.application.projects import Page, UowFactory, check_page, to_page
+from akasha.application.workflows import Page, UowFactory, check_page, to_page
 from akasha.domain.credentials import (
     Credential,
     CredentialKind,
@@ -92,7 +92,7 @@ class CredentialService:
         value: Secret | None = None,
     ) -> Credential:
         """Change the description and/or rotate the value. Name and kind are
-        fixed: the name is what projects reference."""
+        fixed: the name is what workflows reference."""
         async with self._uow() as uow:
             credential = await _load(uow, name)
             if description is not None:
@@ -107,7 +107,7 @@ class CredentialService:
         return credential
 
     async def delete(self, name: str) -> None:
-        """Projects still referencing the name fail at resolution time with
+        """Workflows still referencing the name fail at resolution time with
         CREDENTIAL_NOT_FOUND; recreating the name repairs them."""
         async with self._uow() as uow:
             credential = await _load(uow, name)

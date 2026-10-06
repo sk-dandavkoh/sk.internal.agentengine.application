@@ -5,7 +5,7 @@
 **Supposed to achieve.** Roadmap §25 (Phase 21) asks for "operational and
 developer CLI access". It names these commands:
 
-- `project create | validate | publish | run | import | export`
+- `workflow create | validate | publish | run | import | export`
 - `node list | validate | test`
 - `plugin list | install | remove`
 - `execution get | cancel`
@@ -26,11 +26,11 @@ The session request added tests for:
 
 - **The CLI:** a stdlib `argparse` CLI in `backend/src/akasha/cli.py`,
   exposed as the `akasha` console script and `python -m akasha`. It has
-  every roadmap command, plus `project list` and `akasha serve`.
+  every roadmap command, plus `workflow list` and `akasha serve`.
 - **Service reuse:** each command calls an existing application service,
   registry, runtime or SDK helper. No command holds a domain rule.
 - **Three supporting pieces:**
-  - a plugin-removal use case that blocks removal while projects need the
+  - a plugin-removal use case that blocks removal while workflows need the
     plugin (architecture §143), in `application/plugins.py`, backed by a
     new repository query;
   - an application-level backup/restore module,
@@ -44,7 +44,7 @@ The session request added tests for:
 **Resulting system state.**
 
 - An operator can manage the engine without the frontend or the HTTP API:
-  - projects: create, list, validate, publish, run, import, export;
+  - workflows: create, list, validate, publish, run, import, export;
   - node types: list, validate, test;
   - plugins: list, install, remove;
   - executions: inspect, cancel;
@@ -56,7 +56,7 @@ frontend" is satisfied (see §14). The limitations in §20 do not block the
 phase:
 
 - no CLI login, by design;
-- `project run` executes in the CLI process until Phase 22;
+- `workflow run` executes in the CLI process until Phase 22;
 - restore needs the same schema revision;
 - backups are built in memory.
 
@@ -106,7 +106,7 @@ phase:
   command accepts `--json`.
 - **`serve`:** runs the HTTP server through the existing `akasha.main.main`
   (uvicorn).
-- **`project`:**
+- **`workflow`:**
   - `create NAME [--description]`
   - `list [--offset --limit]`
   - `validate ID`
@@ -136,20 +136,20 @@ phase:
 ### Application
 
 - `application/plugins.py`:
-  `remove_plugin(registry, projects, plugin_id, *, force=False)`. It raises
-  `PluginInUseError` with `details.projects` when projects need the plugin
+  `remove_plugin(registry, workflows, plugin_id, *, force=False)`. It raises
+  `PluginInUseError` with `details.workflows` when workflows need the plugin
   and `force` is false. It logs `plugin_removed_in_use` when forced.
-- `ProjectService.projects_using_plugin(plugin_id, node_types)`.
-- `ProjectRepository.using_plugin(plugin_id, node_types)`, a new protocol
+- `WorkflowService.workflows_using_plugin(plugin_id, node_types)`.
+- `WorkflowRepository.using_plugin(plugin_id, node_types)`, a new protocol
   method in `application/persistence.py`.
 
 ### Persistence / Infrastructure
 
-- `SqlAlchemyProjectRepository.using_plugin` uses one static SQL query
+- `SqlAlchemyWorkflowRepository.using_plugin` uses one static SQL query
   (`_USING_PLUGIN`). It checks `jsonb_array_elements` over the
-  `projects.draft_graph->'nodes'` and `projects.draft_dependencies` columns,
-  and over the `project_versions.graph->'nodes'` and
-  `project_versions.dependencies` columns of every version. It returns ids
+  `workflows.draft_graph->'nodes'` and `workflows.draft_dependencies` columns,
+  and over the `workflow_versions.graph->'nodes'` and
+  `workflow_versions.dependencies` columns of every version. It returns ids
   ordered by `p.id`.
 - `infrastructure/backup.py`: `create_backup`, `restore_backup`, the
   `BackupSummary` dataclass, and three new errors: `BackupInvalidError`,
@@ -188,17 +188,17 @@ phase:
 |---|---|---|
 | `backend/src/akasha/cli.py` | Created (666 lines) | The CLI: parser, command adapters, output and error handling, entry point |
 | `backend/src/akasha/infrastructure/backup.py` | Created (301 lines) | Logical backup/restore of the database (§110/§111) |
-| `backend/src/akasha/application/plugins.py` | Created (47 lines) | `remove_plugin` use case with project-usage blocking (§143) |
-| `backend/src/akasha/application/persistence.py` | Modified | `ProjectRepository.using_plugin` protocol method |
-| `backend/src/akasha/application/projects.py` | Modified | `ProjectService.projects_using_plugin` |
-| `backend/src/akasha/infrastructure/persistence.py` | Modified | `_USING_PLUGIN` SQL and `SqlAlchemyProjectRepository.using_plugin` |
+| `backend/src/akasha/application/plugins.py` | Created (47 lines) | `remove_plugin` use case with workflow-usage blocking (§143) |
+| `backend/src/akasha/application/persistence.py` | Modified | `WorkflowRepository.using_plugin` protocol method |
+| `backend/src/akasha/application/workflows.py` | Modified | `WorkflowService.workflows_using_plugin` |
+| `backend/src/akasha/infrastructure/persistence.py` | Modified | `_USING_PLUGIN` SQL and `SqlAlchemyWorkflowRepository.using_plugin` |
 | `backend/src/akasha/bootstrap.py` | Modified | `Container.runtime`; one shared `CredentialService` for the container and the runtime; stale "Phase 21/22" comments updated |
 | `backend/src/akasha/observability/logging.py` | Modified | `stream` parameter so the CLI can log to stderr |
 | `backend/src/akasha/__main__.py` | Modified | `python -m akasha` now runs `akasha.cli.main` |
 | `backend/pyproject.toml` | Modified | Console script `akasha = "akasha.cli:main"` (was `akasha.main:main`); per-file ruff ignore of `T201` for `src/akasha/cli.py`, with a reason comment |
 | `backend/tests/test_cli.py` | Created | 36 unit tests |
 | `backend/tests/integration/test_cli.py` | Created | 14 integration tests (counting parametrized cases) |
-| `backend/tests/application/test_trigger_service.py` | Modified | `FakeProjects` implements the new protocol method |
+| `backend/tests/application/test_trigger_service.py` | Modified | `FakeWorkflows` implements the new protocol method |
 | `backend/tests/test_architecture.py` | Modified | `cli` import rule; scanner covers single-file layers |
 | `backend/README.md` | Modified | `akasha serve`, CLI section, layout |
 | `docs/architecture.md` | Modified | Implementation notes in §36, §58, §110 and §111 |
@@ -223,8 +223,8 @@ phase:
   Plugin install/remove and backup/restore deliberately have no HTTP
   endpoint (§36: an install endpoint would be remote code execution).
 - **Chosen approach:** in-process services. JSON output reuses the API DTOs
-  (`ProjectSummary`, `ProjectPage`, `ValidationResponse`,
-  `ProjectVersionSummary`, `ImportProjectResponse`) so both surfaces print
+  (`WorkflowSummary`, `WorkflowPage`, `ValidationResponse`,
+  `WorkflowVersionSummary`, `ImportWorkflowResponse`) so both surfaces print
   the same shapes.
 - **Alternatives considered:** an HTTP client of `/api/v1` with a session
   token. Rejected: it could not cover plugins or backup, and it would need
@@ -243,9 +243,9 @@ phase:
 - **Context:** Phase 20 authenticates HTTP sessions. The CLI runs on the
   host with `AKASHA_DATABASE_URL` and `AKASHA_CREDENTIAL_ENCRYPTION_KEY`.
   Anyone holding these can already read and write the database directly.
-- **Chosen approach:** operator (admin-equivalent) authority. Projects
+- **Chosen approach:** operator (admin-equivalent) authority. Workflows
   created or imported by the CLI get `owner_id = None`, which the API
-  already treats as admin-only (see the `projects.owner_id` column comment).
+  already treats as admin-only (see the `workflows.owner_id` column comment).
 - **Alternatives considered:** requiring a username and password and
   checking them through `AuthenticationService`. Rejected: it gives no
   protection against someone who holds the database URL, and a password
@@ -256,7 +256,7 @@ phase:
 
 ### 5.3 Plugin removal blocks by default
 
-- **Decision:** `plugin remove` refuses while any project's draft or any
+- **Decision:** `plugin remove` refuses while any workflow's draft or any
   published version uses one of the plugin's node types, or declares a
   `Dependency(kind="plugin", name=<id>)`. `--force` is the explicit
   confirmation.
@@ -264,9 +264,9 @@ phase:
   (the §36 note).
 - **Chosen approach:** a use-case function in the application layer
   (`remove_plugin`) over a repository query. `PluginRegistry.remove` itself
-  is unchanged and still does not look at projects.
+  is unchanged and still does not look at workflows.
 - **Alternatives considered:**
-  - Loading every project and version into memory to scan it. Rejected:
+  - Loading every workflow and version into memory to scan it. Rejected:
     unbounded memory use.
   - Putting the check in `PluginRegistry`. Rejected: the `plugins` layer
     must not import the application or infrastructure layers.
@@ -311,7 +311,7 @@ phase:
 - **Decision:** `Container.runtime` exists and shares the node registry,
   credential service, event publisher and metrics.
 - **Context:** `bootstrap.py` comments planned this for "Phase 21/22".
-  `project run` and `execution cancel` need it.
+  `workflow run` and `execution cancel` need it.
 - **Consequences:**
   - The API process now also builds an `ExecutionRuntime` object. It is
     cheap and nothing in the API calls it.
@@ -326,9 +326,9 @@ phase:
   transitions.
 - **Database:** no new tables, columns, indexes or constraints, and no
   migration.
-- **Repository interface:** `ProjectRepository.using_plugin(plugin_id,
+- **Repository interface:** `WorkflowRepository.using_plugin(plugin_id,
   node_types) -> Sequence[str]` is new. Every implementation must provide
-  it; `FakeProjects` in `tests/application/test_trigger_service.py` was
+  it; `FakeWorkflows` in `tests/application/test_trigger_service.py` was
   updated.
 - **New error types:**
 
@@ -339,7 +339,7 @@ phase:
   | `RestoreTargetNotEmptyError` | `RESTORE_TARGET_NOT_EMPTY` | 409 | `infrastructure.backup` |
 
   The existing `PluginInUseError` (`PLUGIN_IN_USE`) is now also raised with
-  `details = {"plugin_id", "projects": [ids]}`.
+  `details = {"plugin_id", "workflows": [ids]}`.
 - **New persisted artifact, backup format v1:**
   - Content: gzip-compressed JSON with keys `format` (`"akasha-backup"`),
     `format_version` (`1`), `engine_version`, `schema_revision` (Alembic
@@ -369,21 +369,21 @@ phase:
 
   | Command | Shape |
   |---|---|
-  | `project create` | `ProjectSummary` |
-  | `project list` | `ProjectPage` |
-  | `project validate` | `ValidationResponse` |
-  | `project publish` | `ProjectVersionSummary` |
-  | `project import` | `ImportProjectResponse` |
-  | `project export` | `{path, bytes}` |
-  | `project run`, `execution get`, `execution cancel` | CLI execution view (below) |
+  | `workflow create` | `WorkflowSummary` |
+  | `workflow list` | `WorkflowPage` |
+  | `workflow validate` | `ValidationResponse` |
+  | `workflow publish` | `WorkflowVersionSummary` |
+  | `workflow import` | `ImportWorkflowResponse` |
+  | `workflow export` | `{path, bytes}` |
+  | `workflow run`, `execution get`, `execution cancel` | CLI execution view (below) |
   | `node list`, `node validate` | `{node_id, version, name, category, description, inputs[], outputs[]}` |
   | `node test` | always JSON: `{outputs, events, metrics}` |
   | `plugin list`, `plugin install` | `{plugin_id, state, version, nodes, error}` |
-  | `plugin remove` | `{plugin_id, affected_projects}` |
+  | `plugin remove` | `{plugin_id, affected_workflows}` |
   | `backup` | `{path, bytes, schema_revision, engine_version, created_at, rows}` |
   | `restore` | `BackupSummary` fields |
 
-  The CLI execution view is `{id, project_id, version, status,
+  The CLI execution view is `{id, workflow_id, version, status,
   trigger_type, correlation_id, created_at, started_at, finished_at, error,
   nodes[{node_id, label, status, attempt, outputs}]}`. It is a CLI-only
   shape, because the API's `ExecutionDetail` has no error or node data.
@@ -394,7 +394,7 @@ phase:
   - `FILE_ERROR`: an `OSError` with a filename;
   - `INTERNAL_ERROR`: anything else.
 - **Internal contracts:**
-  - `ProjectRepository.using_plugin`;
+  - `WorkflowRepository.using_plugin`;
   - `Container.runtime`;
   - `configure_logging(..., stream=)`;
   - `create_backup` / `restore_backup`;
@@ -435,12 +435,12 @@ phase:
 - This is how database-less and plugin-less installations fail: exit 1,
   and nothing is guessed.
 
-### `project run`
+### `workflow run`
 
-- **Version:** `--version`, or `ProjectService.get_project(id).current_version`.
+- **Version:** `--version`, or `WorkflowService.get_workflow(id).current_version`.
   Version 0 (unpublished) surfaces as the service's
-  `PROJECT_VERSION_NOT_FOUND`.
-- **Queue:** `TriggerService.fire_manual(project_id, version, input=...)`
+  `WORKFLOW_VERSION_NOT_FOUND`.
+- **Queue:** `TriggerService.fire_manual(workflow_id, version, input=...)`
   creates a QUEUED execution with MANUAL metadata and a generated
   correlation id.
 - **Run:** `runtime.run(execution.id)` runs it to a terminal state in this
@@ -488,7 +488,7 @@ phase:
 - `remove_plugin` reads `registry.get(id).metadata`. For a `FAILED` plugin
   with an unreadable manifest the metadata is `None`, so only the
   plugin-dependency check applies.
-- It then queries `projects_using_plugin` and either raises
+- It then queries `workflows_using_plugin` and either raises
   `PluginInUseError` or calls `PluginRegistry.remove`.
 
 ### `backup` (`create_backup`)
@@ -547,7 +547,7 @@ phase:
   what it queues itself. API-queued executions still wait for Phase 22.
 - **Notes:** `api/triggers.py` documents this: "The execution is recorded
   as QUEUED. Running it is the worker's job (Phase 22)". The CLI is now the
-  only built-in path that executes a project end to end outside tests.
+  only built-in path that executes a workflow end to end outside tests.
 
 ### Finding: there is no migration command for operators
 
@@ -633,7 +633,7 @@ test ran.
 | A refused database connection would be reported as `FILE_ERROR` | The first draft mapped every `OSError` to a file error; `ConnectionRefusedError` is an `OSError` | Only an `OSError` with a `filename` is a file error; others are internal (exit 70) | `test_unreachable_database_is_an_internal_error_without_secrets` | `cli.main` |
 | A restore with a constraint-violating row surfaced as `INTERNAL_ERROR` | `IntegrityError` escaped `restore_backup` | Map `IntegrityError` / `DataError` to `BACKUP_INVALID`; the transaction rollback keeps the database unchanged | `test_restore_rejects_incompatible_backups_without_changes[bad_status]` | `backup.py` |
 | CLI logging would evict pytest's log handlers | `configure_logging` clears the root handlers | Skip it when `environment == "test"`, as `create_app` does | the whole test suite (caplog-based tests still pass) | `cli.main` |
-| The signal-handler setup raised in a non-main thread | `add_signal_handler` raises `RuntimeError` there | Suppress `RuntimeError` as well as `NotImplementedError` | integration tests run the CLI in a thread | `project_run` |
+| The signal-handler setup raised in a non-main thread | `add_signal_handler` raises `RuntimeError` there | Suppress `RuntimeError` as well as `NotImplementedError` | integration tests run the CLI in a thread | `workflow_run` |
 | Lint findings in the new code | `print` in the CLI (T201), blocking `Path.write_bytes` in async (ASYNC240), f-string SQL builder (S608) | T201 ignored for `cli.py` with a reason; file I/O through `asyncio.to_thread`; the SQL rewritten as one static literal | `ruff check` | `cli.py`, `persistence.py` |
 | mypy error in table rendering | Header row and data rows had different tuple types | `_table(rows, header)` | `mypy` | `cli.py` |
 
@@ -641,7 +641,7 @@ Test-authoring mistakes, fixed in the tests:
 
 - a wrong expected port type (`any` instead of `json`);
 - a plugin test publishing an empty graph, which is invalid;
-- restore tests running the echo project without its required input.
+- restore tests running the echo workflow without its required input.
 
 The implementation was correct in each case.
 
@@ -713,47 +713,47 @@ These run on real PostgreSQL `postgres:17.2`. Each command runs
 configured through environment variables. Arrangement and assertions use the
 application services on the test loop.
 
-- **`test_project_lifecycle`:**
+- **`test_workflow_lifecycle`:**
   - `create --json` gives `owner_id = None`;
   - validate → `valid`;
   - publish → version 1;
-  - the project appears in `list`;
+  - the workflow appears in `list`;
   - `run --input` → `completed`, with per-node statuses keyed by label;
   - `execution get`;
   - export version 1 → import → a new id, and the validation passes.
 - **`test_invalid_draft_fails_validate_and_publish`:** exit 1,
-  `PROJECT_VALIDATION_FAILED`, `current_version` still 0.
+  `WORKFLOW_VALIDATION_FAILED`, `current_version` still 0.
 - **`test_publish_with_stale_revision_conflicts`:**
   `CONCURRENT_MODIFICATION`.
 - **`test_run_failures`:**
-  - a missing project → `PROJECT_NOT_FOUND`;
-  - an unpublished project → `PROJECT_VERSION_NOT_FOUND`;
+  - a missing workflow → `WORKFLOW_NOT_FOUND`;
+  - an unpublished workflow → `WORKFLOW_VERSION_NOT_FOUND`;
   - `core.http` to loopback, blocked by the default network policy → status
     `failed`, exit 1.
 - **`test_execution_cancel`:**
   - a queued execution → `cancelled`, reason persisted;
   - cancelling again → `INVALID_STATE_TRANSITION`;
   - an unknown id → `EXECUTION_NOT_FOUND`.
-- **`test_plugin_remove_is_blocked_while_projects_need_it`:**
+- **`test_plugin_remove_is_blocked_while_workflows_need_it`:**
   - blocked by draft usage, and by a published version that declares a
     plugin dependency while its current draft does not;
-  - an unrelated project is not listed;
-  - `details.projects` is exact and sorted;
-  - `--force` removes the plugin and reports the affected projects.
+  - an unrelated workflow is not listed;
+  - `details.workflows` is exact and sorted;
+  - `--force` removes the plugin and reports the affected workflows.
 - **`test_unused_plugin_is_removed`:** removal succeeds; a second removal
   gives `PLUGIN_NOT_FOUND`.
 - **`test_backup_destroy_restore_run`** (AGENTS §100):
   - arrange: an admin with a session, an encrypted credential, and a
-    published project that has been run;
+    published workflow that has been run;
   - backup: file mode 0600, `sessions` not in the counts, the secret not in
     the decompressed file; a second backup to the same file →
     `FILE_ERROR`;
   - restore into the live database → `RESTORE_TARGET_NOT_EMPTY`;
-  - `truncate_all`, then restore → the project, version, execution and
+  - `truncate_all`, then restore → the workflow, version, execution and
     event history (ids, types, times, order) are equal;
   - the credential decrypts to the original value;
   - the admin can log in, and the old session is rejected;
-  - the restored project runs again, so the event identity continues;
+  - the restored workflow runs again, so the event identity continues;
   - `--replace` returns exactly to the backed-up state, and the new
     execution is gone.
 - **`test_restore_rejects_incompatible_backups_without_changes`** (4
@@ -769,7 +769,7 @@ application services on the test loop.
   - a wrong key and a missing key → `BACKUP_INCOMPATIBLE`;
   - a missing file → `FILE_ERROR`.
 - **`test_ctrl_c_cancels_the_run_cooperatively`:**
-  - a real `python -m akasha project run` subprocess on a
+  - a real `python -m akasha workflow run` subprocess on a
     `core.delay(3600)` graph;
   - the test waits for the persisted `running` status, then sends SIGINT;
   - result: exit 1, "cancelled" on stdout, and a persisted `cancelled`
@@ -791,10 +791,10 @@ an injected violation (§9).
 ### E2E / manual
 
 A manual smoke script (scratchpad, not committed) ran text-mode commands
-against a throwaway `postgres:17.2` container: `project list`, `validate`,
+against a throwaway `postgres:17.2` container: `workflow list`, `validate`,
 `publish`, a successful `run`, a failing `run`, `execution get`,
 `execution cancel` (terminal), `backup`, `restore` (refused), `restore
---replace`, and `project import` of a non-package. The output was reviewed
+--replace`, and `workflow import` of a non-package. The output was reviewed
 for readability. It was not automated beyond the integration tests.
 
 ### Security Tests: PASS
@@ -838,27 +838,27 @@ the session's testing list.
 
 | Acceptance Criterion | Status | Evidence |
 |---|---|---|
-| Core Engine operations can be performed without the frontend | PASS | `test_project_lifecycle` runs create → validate → publish → run → inspect → export → import through the CLI alone; plugins, executions and backup/restore are covered by their own integration tests |
-| `project create` | PASS | `test_project_lifecycle` |
-| `project validate` | PASS | `test_project_lifecycle`, `test_invalid_draft_fails_validate_and_publish` |
-| `project publish` | PASS | the same two tests plus `test_publish_with_stale_revision_conflicts` |
-| `project run` | PASS | `test_project_lifecycle`, `test_run_failures`, `test_ctrl_c_cancels_the_run_cooperatively` |
-| `project import` | PASS | `test_project_lifecycle`; garbage input gives `PROJECT_PACKAGE_INVALID` (manual smoke) |
-| `project export` | PASS | `test_project_lifecycle` |
+| Core Engine operations can be performed without the frontend | PASS | `test_workflow_lifecycle` runs create → validate → publish → run → inspect → export → import through the CLI alone; plugins, executions and backup/restore are covered by their own integration tests |
+| `workflow create` | PASS | `test_workflow_lifecycle` |
+| `workflow validate` | PASS | `test_workflow_lifecycle`, `test_invalid_draft_fails_validate_and_publish` |
+| `workflow publish` | PASS | the same two tests plus `test_publish_with_stale_revision_conflicts` |
+| `workflow run` | PASS | `test_workflow_lifecycle`, `test_run_failures`, `test_ctrl_c_cancels_the_run_cooperatively` |
+| `workflow import` | PASS | `test_workflow_lifecycle`; garbage input gives `WORKFLOW_PACKAGE_INVALID` (manual smoke) |
+| `workflow export` | PASS | `test_workflow_lifecycle` |
 | `node list` | PASS | `test_node_list` |
 | `node validate` | PASS | `test_node_validate`, `test_node_validate_rejects_bad_targets` |
 | `node test` | PASS | `test_node_test_runs_the_node`, `test_node_test_registered_node`, `test_node_test_failures` |
 | `plugin list` | PASS | `test_plugin_install_and_list`, integration plugin tests |
 | `plugin install` | PASS | `test_plugin_install_and_list`, `test_plugin_install_rejects_invalid_package` |
-| `plugin remove` | PASS | `test_plugin_remove_is_blocked_while_projects_need_it`, `test_unused_plugin_is_removed`, `test_plugin_remove_needs_the_database` |
-| `execution get` | PASS | `test_project_lifecycle`, `test_execution_cancel` |
+| `plugin remove` | PASS | `test_plugin_remove_is_blocked_while_workflows_need_it`, `test_unused_plugin_is_removed`, `test_plugin_remove_needs_the_database` |
+| `execution get` | PASS | `test_workflow_lifecycle`, `test_execution_cancel` |
 | `execution cancel` | PASS | `test_execution_cancel`; cooperative cancel of a running execution through `test_ctrl_c_cancels_the_run_cooperatively` |
 | `backup` | PASS | `test_backup_destroy_restore_run` |
 | `restore` | PASS | `test_backup_destroy_restore_run`, `test_restore_rejects_incompatible_backups_without_changes`, `test_restore_checks_file_and_key` |
 | Reuse application services; no duplicated domain logic | PASS | §3/§8 map each command to its service; `cli.py` has no SQLAlchemy/FastAPI imports (enforced by the architecture test); the one new rule (plugin-usage blocking) lives in `application/plugins.py` |
 | Roadmap tests: "Test representative commands" | PASS | Every command has at least one success test and one failure test |
 | Session: command parsing | PASS | `test_usage_errors_exit_2` (9 cases), `test_version_and_help` |
-| Session: validation | PASS | JSON option validation; project, node, config and backup validation tests |
+| Session: validation | PASS | JSON option validation; workflow, node, config and backup validation tests |
 | Session: success paths | PASS | the integration tests above |
 | Session: failure paths | PASS | see §12 |
 | Session: authentication where applicable | PARTIAL (by design) | The CLI has no login (§5.2); the tests verify the configuration gate (no database or plugin directory → refusal) and that restored accounts can log in while old sessions are rejected. A CLI login was judged not applicable; this does not block the phase |
@@ -873,7 +873,7 @@ the session's testing list.
 - **Authentication and authorization:** the CLI has no login (§5.2).
   - Its authority equals holding the `AKASHA_*` configuration: the database
     URL and the encryption key.
-  - CLI-created projects are ownerless, so the API shows them to admins
+  - CLI-created workflows are ownerless, so the API shows them to admins
     only.
   - This is documented in `cli.py`, the README and architecture §58.
 - **Secrets on the command line:**
@@ -906,11 +906,11 @@ the session's testing list.
 - **Plugin and node code execution:**
   - `plugin install` and `node validate/test module:Class` run Python code
     in the CLI process, under the existing trusted-code model (§65).
-  - `plugin remove` is now blocked while projects need the plugin.
+  - `plugin remove` is now blocked while workflows need the plugin.
 - **SQL:** the new `_USING_PLUGIN` query is a static literal with bound
   parameters. The `TRUNCATE` statement is built only from `metadata` table
   names.
-- **SSRF:** unchanged. `project run` uses the same `NetworkPolicy`; a
+- **SSRF:** unchanged. `workflow run` uses the same `NetworkPolicy`; a
   loopback `core.http` destination is blocked (tested in
   `test_run_failures`).
 
@@ -928,10 +928,10 @@ the session's testing list.
 - **Restore:** decrypts every stored credential once, to validate the key.
   The cost is linear in the number of credentials.
 - **Plugin usage query:** one SQL statement using `jsonb_array_elements`
-  over every project draft and every published version. No JSONB index
-  exists, so it is a full scan of `projects` and `project_versions`. This
+  over every workflow draft and every published version. No JSONB index
+  exists, so it is a full scan of `workflows` and `workflow_versions`. This
   is acceptable for a rare operator action; not measured.
-- **`project run`:** uses the runtime's default `max_concurrency=8`.
+- **`workflow run`:** uses the runtime's default `max_concurrency=8`.
 - **Process startup:** each CLI invocation builds a full container,
   including loading installed plugins, and creates a pool that is disposed
   at exit. Not measured.
@@ -943,7 +943,7 @@ the session's testing list.
 | File | Reason | Content |
 |---|---|---|
 | `backend/README.md` | Changed entry point; new CLI | `uv run akasha serve`; a CLI section with a command table, trust model, backup contents and exclusions, and exit codes; `cli.py` in the layout tree |
-| `docs/architecture.md` §58 | CLI implementation notes | commands, service mapping, `project run` behaviour, plugin removal guard, trust model, output and exit codes, what is not provided |
+| `docs/architecture.md` §58 | CLI implementation notes | commands, service mapping, `workflow run` behaviour, plugin removal guard, trust model, output and exit codes, what is not provided |
 | `docs/architecture.md` §110 | Backup implementation | format, snapshot isolation, what is and is not included, file mode, in-memory limitation |
 | `docs/architecture.md` §111 | Restore implementation | validation order, schema-revision rule, one-transaction load, `--replace` semantics, rollback guarantee |
 | `docs/architecture.md` §36 | Stale deferral | "left for import/export and CLI" replaced by a reference to the new guard |
@@ -953,7 +953,7 @@ Documentation that should be updated later:
 
 - **Phase 26 operations docs:** a migration procedure (§9) and backup
   handling.
-- **Phase 22:** when workers exist, the "`project run` runs in-process"
+- **Phase 22:** when workers exist, the "`workflow run` runs in-process"
   statements in the README and §58.
 
 ---
@@ -969,10 +969,10 @@ Documentation that should be updated later:
     printing is the CLI's interface.
 - **Environment variables:** none new. The CLI reads the existing
   `AKASHA_*` settings. Each command needs:
-  - `AKASHA_DATABASE_URL`: project, execution, backup and restore
+  - `AKASHA_DATABASE_URL`: workflow, execution, backup and restore
     commands, and `plugin remove`;
   - `AKASHA_PLUGINS_DIR`: plugin commands;
-  - `AKASHA_CREDENTIAL_ENCRYPTION_KEY`: `project run` for nodes that
+  - `AKASHA_CREDENTIAL_ENCRYPTION_KEY`: `workflow run` for nodes that
     resolve credentials, and restoring a backup that holds credentials.
 - **Database:** no migration. Restore runs the existing migrations.
 - **Docker:** no image or compose changes.
@@ -994,8 +994,8 @@ None of these items affects the completion of this phase.
 | Streaming or size-bounded backup/restore | Not needed at current scale; marked `ponytail:` | Phase 24 / 26 | — |
 | Operator migration command (`db migrate`) | Not in the Phase 21 scope; restore migrates as needed | Phase 26 | — |
 | `plugin enable` / `disable` commands, and a usage guard for disable | Not in the roadmap command list | Unassigned | — |
-| CLI for users and credentials, draft editing, project deletion, execution listing | Not in the roadmap command list; available through the API | Unassigned | — |
-| Assigning an owner to CLI-created or imported projects | Needs a username lookup; ownerless (admin-only) is safe | Unassigned | — |
+| CLI for users and credentials, draft editing, workflow deletion, execution listing | Not in the roadmap command list; available through the API | Unassigned | — |
+| Assigning an owner to CLI-created or imported workflows | Needs a username lookup; ownerless (admin-only) is safe | Unassigned | — |
 | Richer execution DTO in the API (error and node states) | API contract change outside this phase | Frontend/API phase | — |
 
 ---
@@ -1004,7 +1004,7 @@ None of these items affects the completion of this phase.
 
 - **No CLI authentication.** Access to the CLI and its configuration is
   access to the installation (§5.2).
-- **`project run` executes inside the CLI process.**
+- **`workflow run` executes inside the CLI process.**
   - A killed process (SIGKILL, host crash) leaves the execution RUNNING
     until Phase 23 recovery exists.
   - On Windows, or outside the main thread, Ctrl-C is not cooperative.
@@ -1025,9 +1025,9 @@ None of these items affects the completion of this phase.
   that were enabled at backup time to be enabled now. A plugin that was
   disabled at backup time is not recorded.
 - **`plugin remove` needs the database** even on an installation without
-  projects.
+  workflows.
 - **`node test` has no credentials.** Nodes that resolve credentials fail.
-- **Platform-specific query.** `ProjectRepository.using_plugin` is
+- **Platform-specific query.** `WorkflowRepository.using_plugin` is
   PostgreSQL-specific, like the rest of the persistence layer.
 - **Changed server command.** `akasha` without arguments no longer starts
   the server.
@@ -1050,7 +1050,7 @@ None of these items affects the completion of this phase.
 - **The CLI is an in-process operator tool, not an API client** (§5.1). The
   API DTOs are reused for JSON output so both surfaces print the same
   shapes.
-- **No login; operator authority; CLI-created projects are ownerless**
+- **No login; operator authority; CLI-created workflows are ownerless**
   (§5.2).
 - **Plugin removal is blocked by any usage in a draft or published
   version**, with `--force` as the override (§5.3). The rule lives in
@@ -1079,7 +1079,7 @@ None of these items affects the completion of this phase.
   - `backend/pyproject.toml`
   - `backend/src/akasha/__main__.py`
   - `backend/src/akasha/application/persistence.py`
-  - `backend/src/akasha/application/projects.py`
+  - `backend/src/akasha/application/workflows.py`
   - `backend/src/akasha/bootstrap.py`
   - `backend/src/akasha/infrastructure/persistence.py`
   - `backend/src/akasha/observability/logging.py`
@@ -1107,12 +1107,12 @@ None of these items affects the completion of this phase.
 ### Implemented
 
 - **All roadmap commands:**
-  - `project create | validate | publish | run | import | export`
+  - `workflow create | validate | publish | run | import | export`
   - `node list | validate | test`
   - `plugin list | install | remove`
   - `execution get | cancel`
   - `backup`, `restore`
-- **Also added:** `project list` and `akasha serve`.
+- **Also added:** `workflow list` and `akasha serve`.
 - **Supporting pieces:**
   - the plugin-removal usage guard;
   - logical backup/restore;
@@ -1163,10 +1163,10 @@ None of these items affects the completion of this phase.
     produce QUEUED executions.
   - `ExecutionRuntime.run` and `ExecutionRuntime.cancel` are the only
     execution drivers.
-  - `akasha project run` is the reference consumer: queue, then run
+  - `akasha workflow run` is the reference consumer: queue, then run
     in-process.
 - **When workers arrive:**
-  - Decide whether `project run` keeps running in-process, perhaps as a
+  - Decide whether `workflow run` keeps running in-process, perhaps as a
     `--local` mode, or only enqueues and follows the execution.
   - Update README and §58 either way.
   - `execution cancel` from the CLI must then signal the owning worker
@@ -1176,7 +1176,7 @@ None of these items affects the completion of this phase.
   - the `--json` shapes, which reuse the API DTOs;
   - the backup `format_version: 1` layout (bump it for any change);
   - `akasha serve`;
-  - `ProjectRepository.using_plugin` semantics (draft plus all versions);
+  - `WorkflowRepository.using_plugin` semantics (draft plus all versions);
   - the rule that `cli.py` must not import SQLAlchemy or FastAPI.
 - **Constraints:**
   - Restore requires an equal schema revision, so any new migration makes

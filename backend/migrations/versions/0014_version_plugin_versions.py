@@ -1,4 +1,4 @@
-"""Pin the plugin versions a project version was published against.
+"""Pin the plugin versions a workflow version was published against.
 
 Revision ID: 0014_version_plugin_versions
 Revises: 0013_executions_created_at_index
@@ -25,7 +25,7 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     op.add_column(
-        "project_versions",
+        "workflow_versions",
         sa.Column(
             "plugin_versions",
             postgresql.JSONB(),
@@ -36,4 +36,4 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_column("project_versions", "plugin_versions")
+    op.drop_column("workflow_versions", "plugin_versions")

@@ -3,7 +3,7 @@
     install → register → publish (plugin + node dependencies) → execute
     → disable (publish and runs fail, structured) → enable → remove
 
-Plugin nodes reach ProjectService and ExecutionRuntime through the ordinary
+Plugin nodes reach WorkflowService and ExecutionRuntime through the ordinary
 NodeRegistry views; neither knows the node came from a plugin.
 """
 
@@ -12,15 +12,15 @@ from pathlib import Path
 import pytest
 
 from akasha.application.executions import ExecutionService
-from akasha.application.projects import (
-    ProjectService,
-    ProjectValidationFailedError,
+from akasha.application.workflows import (
     UowFactory,
+    WorkflowService,
+    WorkflowValidationFailedError,
 )
 from akasha.domain.execution import ExecutionStatus
 from akasha.domain.graph import Edge, Graph, NodeInstance
 from akasha.domain.graph_validation import ValidationCode
-from akasha.domain.project import Dependency, ProjectDraft
+from akasha.domain.workflow import Dependency, WorkflowDraft
 from akasha.nodes.builtins import create_builtin_registry
 from akasha.plugins.registry import PluginRegistry
 from akasha.runtime.runtime import ExecutionRuntime
@@ -42,7 +42,7 @@ async def test_sample_plugin_lifecycle_through_the_engine(
     graph.add_node(source)
     graph.add_node(slug)
     graph.add_edge(Edge(source.id, "value", slug.id, "text"))
-    draft = ProjectDraft(
+    draft = WorkflowDraft(
         graph=graph,
         dependencies=[
             Dependency("plugin", "text_tools", ">=1.0.0,<2.0.0"),
@@ -50,12 +50,12 @@ async def test_sample_plugin_lifecycle_through_the_engine(
         ],
     )
 
-    projects = ProjectService(uow, nodes.definitions, plugins=plugins.versions)
-    project = await projects.create_project("slugs")
-    await projects.update_draft(
-        project.id, expected_revision=project.revision, name="slugs", draft=draft
+    workflows = WorkflowService(uow, nodes.definitions, plugins=plugins.versions)
+    workflow = await workflows.create_workflow("slugs")
+    await workflows.update_draft(
+        workflow.id, expected_revision=workflow.revision, name="slugs", draft=draft
     )
-    version = await projects.publish_project(project.id)
+    version = await workflows.publish_workflow(workflow.id)
 
     executions = ExecutionService(uow)
     # As bootstrap wires it: published versions pin plugin versions.
@@ -63,7 +63,7 @@ async def test_sample_plugin_lifecycle_through_the_engine(
 
     async def run() -> tuple[ExecutionStatus, object]:
         queued = await executions.create_execution(
-            project.id,
+            workflow.id,
             version.version,
             input={"title": "Plugins, Without Core Changes!"},
         )
@@ -76,8 +76,8 @@ async def test_sample_plugin_lifecycle_through_the_engine(
     )
 
     plugins.disable("text_tools")
-    with pytest.raises(ProjectValidationFailedError) as info:
-        await projects.publish_project(project.id)
+    with pytest.raises(WorkflowValidationFailedError) as info:
+        await workflows.publish_workflow(workflow.id)
     codes = {i.code for i in info.value.result.issues}
     assert {
         ValidationCode.UNKNOWN_NODE_TYPE,

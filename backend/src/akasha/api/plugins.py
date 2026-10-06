@@ -7,7 +7,7 @@
 - POST   /plugins/{id}/enable     activate (compatibility re-checked)
 - POST   /plugins/{id}/disable    deactivate; blocked while enabled plugins
                                   depend on it
-- DELETE /plugins/{id}?force=     remove; blocked while projects use it
+- DELETE /plugins/{id}?force=     remove; blocked while workflows use it
                                   unless ``force`` (same use case as the CLI)
 
 Every operation is ``application.plugins.PluginService`` (shared with the
@@ -21,8 +21,8 @@ from typing import Annotated, Any
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from pydantic import BaseModel
 
-from akasha.api.project_schemas import DependencyBody, _dependencies
 from akasha.api.schemas import ErrorResponse, PayloadTooLargeError, read_limited_body
+from akasha.api.workflow_schemas import DependencyBody, _dependencies
 from akasha.application.plugins import PluginService
 from akasha.bootstrap import Container
 from akasha.errors import AkashaError, ConfigurationError
@@ -85,8 +85,8 @@ class PluginList(BaseModel):
 
 class RemovePluginResponse(BaseModel):
     plugin_id: str
-    # Projects that used the plugin; non-empty only for a forced removal.
-    affected_projects: list[str]
+    # Workflows that used the plugin; non-empty only for a forced removal.
+    affected_workflows: list[str]
 
 
 def _container(request: Request) -> Container:
@@ -177,10 +177,10 @@ def create_plugins_router() -> APIRouter:
         plugin_id: str,
         request: Request,
         force: Annotated[
-            bool, Query(description="Remove even though projects use it")
+            bool, Query(description="Remove even though workflows use it")
         ] = False,
     ) -> RemovePluginResponse:
         users = await _service(request).remove(plugin_id, force=force)
-        return RemovePluginResponse(plugin_id=plugin_id, affected_projects=list(users))
+        return RemovePluginResponse(plugin_id=plugin_id, affected_workflows=list(users))
 
     return router

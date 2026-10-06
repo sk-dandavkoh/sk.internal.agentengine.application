@@ -9,7 +9,7 @@ export const timestamp = z.iso.datetime({ offset: true })
 export const jsonObject = z.record(z.string(), z.json())
 export type JsonObject = z.infer<typeof jsonObject>
 
-// backend api/project_schemas.py PageInfo
+// backend api/workflow_schemas.py PageInfo
 export const pageInfoSchema = z.object({
     offset: z.number().int(),
     limit: z.number().int(),
