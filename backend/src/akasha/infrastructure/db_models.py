@@ -44,6 +44,8 @@ users = Table(
     Column("password_hash", String, nullable=False),
     Column("role", String, nullable=False),
     Column("disabled", Boolean, nullable=False, server_default="false"),
+    Column("display_name", String, nullable=True),
+    Column("last_login_at", DateTime(timezone=True), nullable=True),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("updated_at", DateTime(timezone=True), nullable=False),
     CheckConstraint("role IN ('admin','member')", name="ck_users_role"),

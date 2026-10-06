@@ -27,10 +27,12 @@ export const pending = () => new Promise<Reply>(() => undefined)
 export const testUser = {
     id: 'u_admin',
     username: 'ada',
+    display_name: null,
     role: 'admin',
     disabled: false,
     created_at: '2026-10-01T08:00:00Z',
     updated_at: '2026-10-01T08:00:00Z',
+    last_login_at: null,
 }
 export const testSession = {
     expires_at: '2026-10-05T20:00:00Z',

@@ -15,6 +15,7 @@ import * as plugins from './plugins'
 import * as projects from './projects'
 import * as reports from './reports'
 import * as system from './system'
+import * as users from './users'
 import {
     ApiClient,
     DEFAULT_BASE_URL,
@@ -305,6 +306,20 @@ void plugins.enablePlugin(recorder, 'acme')
 void plugins.disablePlugin(recorder, 'acme')
 void plugins.removePlugin(recorder, 'acme', { force: true })
 void system.getSystemStatus(recorder)
+void users.listUsers(recorder, { q: 'a', role: 'admin', status: 'active' })
+void users.getUser(recorder, 'u')
+void users.createUser(recorder, {
+    username: 'u',
+    password: 'p',
+    role: 'member',
+    display_name: 'U',
+})
+void users.updateUser(recorder, 'u', {
+    display_name: 'U',
+    role: 'admin',
+    disabled: true,
+    password: 'p',
+})
 const modules: Record<string, unknown>[] = [
     auth,
     projects,
@@ -315,6 +330,7 @@ const modules: Record<string, unknown>[] = [
     credentials,
     plugins,
     system,
+    users,
 ]
 const serviceFunctions = modules.flatMap((module) =>
     Object.values(module).filter((v) => typeof v === 'function'),

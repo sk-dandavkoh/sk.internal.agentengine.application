@@ -22,6 +22,7 @@ _USERNAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{2,63}$")
 # a request from making the server hash megabytes.
 MIN_PASSWORD_LENGTH = 12
 MAX_PASSWORD_LENGTH = 256
+MAX_DISPLAY_NAME_LENGTH = 100
 
 
 class Role(StrEnum):
@@ -50,6 +51,19 @@ def validate_password(password: str) -> str:
     return password
 
 
+def validate_display_name(name: str | None) -> str | None:
+    """A free-text name for people, not an identifier: blank means none."""
+    if name is None or not name.strip():
+        return None
+    name = name.strip()
+    if len(name) > MAX_DISPLAY_NAME_LENGTH or not name.isprintable():
+        raise DomainValidationError(
+            f"display name must be at most {MAX_DISPLAY_NAME_LENGTH} printable"
+            " characters"
+        )
+    return name
+
+
 @dataclass(eq=False)
 class User(Entity):
     """A local account. The password hash is not part of the entity: it is
@@ -59,16 +73,27 @@ class User(Entity):
     username: str
     role: Role = Role.MEMBER
     disabled: bool = False
+    display_name: str | None = None
+    last_login_at: datetime | None = None
     timestamps: Timestamps = field(default_factory=Timestamps)
 
     def __post_init__(self) -> None:
         self.id = validate_id(self.id)
         validate_username(self.username)
         self.role = Role(self.role)
+        self.display_name = validate_display_name(self.display_name)
 
     @classmethod
-    def create(cls, username: str, *, role: Role = Role.MEMBER) -> "User":
-        return cls(id=new_id("user"), username=username, role=role)
+    def create(
+        cls,
+        username: str,
+        *,
+        role: Role = Role.MEMBER,
+        display_name: str | None = None,
+    ) -> "User":
+        return cls(
+            id=new_id("user"), username=username, role=role, display_name=display_name
+        )
 
     @property
     def is_admin(self) -> bool:

@@ -605,30 +605,65 @@ async def test_password_reset_revokes_sessions(env: Env) -> None:
     assert (await login(env, "alice", new)).status_code == 200
 
 
-async def test_last_active_admin_cannot_be_disabled(env: Env) -> None:
+async def test_admins_cannot_lock_themselves_out(env: Env) -> None:
+    """Not even with a second admin around: another admin has to do it.
+    This check comes first, so it covers the sole admin too."""
     admin = await env.admin()
-    admin_id = await user_id(env, admin, "admin")
-    url = f"/api/v1/users/{admin_id}"
-    response = await env.client.patch(url, json={"disabled": True}, headers=admin)
-    assert_error(response, 409, "LAST_ADMIN")
-
     await env.kit.member_headers(admin, "second", role=Role.ADMIN)
-    response = await env.client.patch(url, json={"disabled": True}, headers=admin)
+    url = f"/api/v1/users/{await user_id(env, admin, 'admin')}"
+    for body in ({"disabled": True}, {"role": "member"}, {"password": "x" * 20}):
+        response = await env.client.patch(url, json=body, headers=admin)
+        assert_error(response, 409, "OWN_ACCOUNT")
+    assert (await me(env, admin)).json()["role"] == "admin"  # session intact
+    # Harmless changes to one's own account are fine.
+    response = await env.client.patch(
+        url, json={"display_name": "Me", "role": "admin"}, headers=admin
+    )
+    assert response.status_code == 200 and response.json()["display_name"] == "Me"
+
+
+async def test_another_admin_can_disable_an_admin(env: Env) -> None:
+    admin = await env.admin()
+    second = await env.kit.member_headers(admin, "second", role=Role.ADMIN)
+    url = f"/api/v1/users/{await user_id(env, admin, 'admin')}"
+    response = await env.client.patch(url, json={"disabled": True}, headers=second)
     assert response.status_code == 200
     assert_error(await me(env, admin), 401, "AUTHENTICATION_REQUIRED")
 
 
-async def test_admins_disabling_each_other_concurrently_keep_one(
-    env: Env, database: Database
+async def test_role_changes_apply_to_live_sessions(env: Env) -> None:
+    """Sessions are re-read per request: no re-login needed either way."""
+    admin = await env.admin()
+    alice = await env.member(admin, "alice")
+    url = f"/api/v1/users/{await user_id(env, admin, 'alice')}"
+    users = "/api/v1/users"
+    assert_error(await env.client.get(users, headers=alice), 403, "PERMISSION_DENIED")
+    promoted = await env.client.patch(url, json={"role": "admin"}, headers=admin)
+    assert promoted.status_code == 200 and promoted.json()["role"] == "admin"
+    assert (await env.client.get(users, headers=alice)).status_code == 200
+    await env.client.patch(url, json={"role": "member"}, headers=admin)
+    assert_error(await env.client.get(users, headers=alice), 403, "PERMISSION_DENIED")
+
+
+@pytest.mark.parametrize(
+    ("change", "refused"),
+    [({"disabled": True}, 401), ({"role": "member"}, 403)],
+)
+async def test_admins_removing_each_other_concurrently_keep_one(
+    env: Env, database: Database, change: dict[str, Any], refused: int
 ) -> None:
+    """The last-admin guard under a race: the request that runs second
+    either finds its caller already removed (401/403) or the other admin
+    gone and refuses (409 LAST_ADMIN)."""
     a = await env.admin("a-admin")
     b = await env.kit.member_headers(a, "b-admin", role=Role.ADMIN)
     a_id, b_id = await user_id(env, a, "a-admin"), await user_id(env, a, "b-admin")
     results = await asyncio.gather(
-        env.client.patch(f"/api/v1/users/{b_id}", json={"disabled": True}, headers=a),
-        env.client.patch(f"/api/v1/users/{a_id}", json={"disabled": True}, headers=b),
+        env.client.patch(f"/api/v1/users/{b_id}", json=change, headers=a),
+        env.client.patch(f"/api/v1/users/{a_id}", json=change, headers=b),
     )
-    assert sorted(r.status_code for r in results) in ([200, 409], [200, 401])
+    codes = sorted(r.status_code for r in results)
+    assert codes in ([200, 409], sorted([200, refused])), [r.text for r in results]
     active = await row(
         database,
         "SELECT count(*) FROM users WHERE role = 'admin' AND NOT disabled",
@@ -638,10 +673,169 @@ async def test_admins_disabling_each_other_concurrently_keep_one(
 
 async def test_unknown_user_is_404(env: Env) -> None:
     admin = await env.admin()
-    response = await env.client.patch(
-        f"/api/v1/users/user_{'0' * 32}", json={"disabled": True}, headers=admin
-    )
+    url = f"/api/v1/users/user_{'0' * 32}"
+    response = await env.client.patch(url, json={"disabled": True}, headers=admin)
     assert_error(response, 404, "USER_NOT_FOUND")
+    assert_error(await env.client.get(url, headers=admin), 404, "USER_NOT_FOUND")
+
+
+async def test_admin_edits_profile_and_role(env: Env) -> None:
+    admin = await env.admin()
+    created = await env.client.post(
+        "/api/v1/users",
+        json={"username": "bob", "password": PASSWORD, "display_name": " Bob B "},
+        headers=admin,
+    )
+    assert created.status_code == 201, created.text
+    bob = created.json()
+    assert bob["display_name"] == "Bob B" and bob["role"] == "member"
+    assert bob["last_login_at"] is None
+    url = f"/api/v1/users/{bob['id']}"
+    updated = await env.client.patch(
+        url, json={"display_name": "Robert", "role": "admin"}, headers=admin
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["display_name"] == "Robert"
+    assert updated.json()["role"] == "admin"
+    assert updated.json()["username"] == "bob"
+    cleared = await env.client.patch(url, json={"display_name": ""}, headers=admin)
+    assert cleared.json()["display_name"] is None
+    assert cleared.json()["role"] == "admin"  # omitted: unchanged
+    detail = await env.client.get(url, headers=admin)
+    assert detail.status_code == 200 and detail.json() == cleared.json()
+
+
+async def test_usernames_are_immutable(env: Env) -> None:
+    admin = await env.admin()
+    await env.member(admin, "alice")
+    url = f"/api/v1/users/{await user_id(env, admin, 'alice')}"
+    await env.client.patch(url, json={"username": "mallory"}, headers=admin)
+    assert (await env.client.get(url, headers=admin)).json()["username"] == "alice"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"role": "owner"},
+        {"display_name": "x" * 101},
+        {"display_name": "line\nbreak"},
+        {"password": "short"},
+        {"disabled": "maybe"},
+    ],
+)
+async def test_invalid_user_updates_are_422(env: Env, body: dict[str, Any]) -> None:
+    admin = await env.admin()
+    await env.member(admin, "alice")
+    url = f"/api/v1/users/{await user_id(env, admin, 'alice')}"
+    response = await env.client.patch(url, json=body, headers=admin)
+    assert response.status_code == 422, response.text
+    assert "Traceback" not in response.text
+
+
+async def test_login_records_last_login(env: Env) -> None:
+    admin = await env.admin()
+    await env.member(admin, "alice")
+    url = f"/api/v1/users/{await user_id(env, admin, 'alice')}"
+    env.clock.now += timedelta(minutes=5)
+    assert (await login(env, "alice")).status_code == 200
+    detail = await env.client.get(url, headers=admin)
+    recorded = datetime.fromisoformat(detail.json()["last_login_at"])
+    assert recorded == env.clock.now
+    # A failed attempt is not a login.
+    env.clock.now += timedelta(minutes=5)
+    assert (await login(env, "alice", "wrong password!")).status_code == 401
+    again = await env.client.get(url, headers=admin)
+    assert datetime.fromisoformat(again.json()["last_login_at"]) == recorded
+
+
+async def test_user_list_searches_filters_and_pages(env: Env) -> None:
+    admin = await env.admin()
+    for name in ("alice", "albert", "bob", "carol_x"):
+        await env.member(admin, name)
+    await env.client.patch(
+        f"/api/v1/users/{await user_id(env, admin, 'bob')}",
+        json={"disabled": True, "display_name": "Alfred Bob"},
+        headers=admin,
+    )
+
+    async def names(**query: Any) -> list[str]:
+        response = await env.client.get("/api/v1/users", params=query, headers=admin)
+        assert response.status_code == 200, response.text
+        return [u["username"] for u in response.json()["items"]]
+
+    assert await names(q="AL") == ["albert", "alice", "bob"]  # display name too
+    assert await names(q="_") == ["carol_x"]  # a literal, not a LIKE wildcard
+    assert await names(q="%") == []
+    assert await names(role="admin") == ["admin"]
+    assert await names(status="disabled") == ["bob"]
+    assert await names(status="active", role="member") == ["albert", "alice", "carol_x"]
+    first = await env.client.get("/api/v1/users", params={"limit": 2}, headers=admin)
+    assert first.json()["page"] == {"offset": 0, "limit": 2, "has_more": True}
+    assert await names(offset=4, limit=2) == ["carol_x"]
+    bad = await env.client.get("/api/v1/users", params={"status": "x"}, headers=admin)
+    assert bad.status_code == 422
+
+
+async def test_user_responses_carry_no_credential_material(env: Env) -> None:
+    admin = await env.admin()
+    created = await env.client.post(
+        "/api/v1/users",
+        json={"username": "alice", "password": PASSWORD},
+        headers=admin,
+    )
+    url = f"/api/v1/users/{created.json()['id']}"
+    reset = await env.client.patch(
+        url, json={"password": "a brand new password"}, headers=admin
+    )
+    detail = await env.client.get(url, headers=admin)
+    listed = await env.client.get("/api/v1/users", headers=admin)
+    allowed = {
+        "id",
+        "username",
+        "display_name",
+        "role",
+        "disabled",
+        "created_at",
+        "updated_at",
+        "last_login_at",
+    }
+    for body in (created.json(), reset.json(), detail.json(), *listed.json()["items"]):
+        assert set(body) == allowed
+    for response in (created, reset, detail, listed):
+        assert PASSWORD not in response.text
+        assert "a brand new password" not in response.text
+        assert "scrypt$" not in response.text
+
+
+async def test_user_admin_actions_are_audited_without_secrets(env: Env) -> None:
+    admin = await env.admin()
+    await env.member(admin, "alice")
+    bob = await env.member(admin, "bob")
+    alice_id = await user_id(env, admin, "alice")
+    admin_id = await user_id(env, admin, "admin")
+    secret = "audited reset password"
+    with capture_json_logs() as records:
+        await env.client.patch(
+            f"/api/v1/users/{alice_id}",
+            json={"role": "admin", "password": secret},
+            headers=admin,
+        )
+        await env.client.patch(
+            f"/api/v1/users/{admin_id}", json={"disabled": True}, headers=admin
+        )
+        await env.client.get("/api/v1/users", headers=bob)
+    events = {r.get("event"): r for r in records}
+    updated = events["user_updated"]
+    assert updated["user_id"] == alice_id and updated["actor_id"] == admin_id
+    assert updated["changes"] == ["role", "password"]
+    assert updated["role"] == "admin"
+    assert updated["request_id"]
+    refused = events["user_update_refused"]
+    assert refused["reason"] == "OWN_ACCOUNT" and refused["user_id"] == admin_id
+    denied = events["admin_required_denied"]
+    assert denied["user_id"] == await user_id(env, admin, "bob")
+    dumped = json.dumps(records)
+    assert secret not in dumped and PASSWORD not in dumped and "scrypt$" not in dumped
 
 
 # -- default deny -----------------------------------------------------------------
@@ -689,7 +883,10 @@ async def test_every_non_public_route_requires_authentication(env: Env) -> None:
         ("DELETE", "/api/v1/credentials/crm", None),
         ("GET", "/api/v1/users", None),
         ("POST", "/api/v1/users", {"username": "eve", "password": PASSWORD}),
+        ("GET", f"/api/v1/users/user_{'0' * 32}", None),
         ("PATCH", f"/api/v1/users/user_{'0' * 32}", {"disabled": True}),
+        ("PATCH", f"/api/v1/users/user_{'0' * 32}", {"role": "admin"}),
+        ("PATCH", f"/api/v1/users/user_{'0' * 32}", {"password": PASSWORD}),
     ],
 )
 async def test_members_cannot_reach_admin_areas(

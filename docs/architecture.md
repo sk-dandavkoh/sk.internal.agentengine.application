@@ -2958,9 +2958,9 @@ Implementation (Phase 20, `domain/identity.py`, `application/auth.py`,
   (`expires_at` null for a non-expiring access token).
 - First run: `POST /auth/setup` creates the first admin only while the user
   table is empty (serialized by a table lock). Afterwards admins create
-  accounts (`/users`). The last active admin cannot be disabled (row locks
-  on the active admins), so the installation cannot lock itself out.
-  `GET /auth/setup` returns `{"required": bool}` (true while no account
+  accounts (`/users`). The last active admin cannot be disabled or demoted
+  (row locks on the active admins), so the installation cannot lock itself
+  out. `GET /auth/setup` returns `{"required": bool}` (true while no account
   exists), so the UI can offer first-run setup (ADR 0003).
 - Login errors do not reveal whether the username exists: the message is
   the same, and an unknown username still costs one hash verification. Per
@@ -2972,10 +2972,32 @@ Implementation (Phase 20, `domain/identity.py`, `application/auth.py`,
   token, with `WWW-Authenticate: Bearer`), `INVALID_CREDENTIALS` (401),
   `LOGIN_THROTTLED` (429), `PERMISSION_DENIED` (403),
   `CSRF_HEADER_REQUIRED` (403).
+- User administration (admin only; `/users`, migration 0016,
+  `docs/reports/backend/admin-user-management.md`): `GET /users` (paged,
+  `q` matches username or display name, `role`, `status=active|disabled`),
+  `GET /users/{id}`, `POST /users` (username, initial password, role,
+  optional display name) and `PATCH /users/{id}` (`display_name`, `role`,
+  `disabled`, `password`; omitted fields unchanged). Usernames are
+  immutable; users are disabled, never deleted. Responses carry
+  `last_login_at` (set by each successful login) and never a hash, session
+  or token.
+- Session effects of admin changes: disabling a user or resetting their
+  password revokes all their sessions and access tokens at once
+  (re-enabling does not restore them). A role change needs no revocation:
+  every request re-reads the user, so it applies from the next request.
+  Disabled users also fail authentication outright (`get_active` filters
+  them), so a revocation race cannot leave access behind.
+- Self-lockout: an admin cannot disable or demote their own account, nor
+  reset their own password through `/users` (that would skip the current
+  password); all three answer 409 `OWN_ACCOUNT`. Another admin can.
 - Audit: `setup_completed`, `login_succeeded`, `login_failed`, `logout`,
-  `password_changed`, `user_created`, `user_updated` are structured log
-  events carrying ids only. The access log carries the caller's `user_id`.
-  Persisted audit records (§61) are not implemented yet.
+  `password_changed`, `user_created` (with role), `user_create_refused`,
+  `user_updated` (with the changed field names and the resulting role and
+  status), `user_update_refused` (with the error code) and
+  `admin_required_denied` are structured log events carrying ids only,
+  plus the request id from the log context. Passwords and hashes never
+  appear. The access log carries the caller's `user_id`. Persisted audit
+  records (§61) are not implemented yet.
 
 ----------
 

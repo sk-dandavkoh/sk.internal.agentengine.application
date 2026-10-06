@@ -29,7 +29,7 @@ from akasha.domain.execution import (
     NodeExecutionStatus,
     NodeLogEntry,
 )
-from akasha.domain.identity import AccessToken, User, UserSession
+from akasha.domain.identity import AccessToken, Role, User, UserSession
 from akasha.domain.project import Project, ProjectStatus, ProjectVersion
 from akasha.errors import AkashaError
 
@@ -347,15 +347,29 @@ class UserRepository(Protocol):
         ...
 
     async def update(self, user: User, password_hash: str | None = None) -> bool:
-        """Update ``disabled`` (and the hash when given); False if missing."""
+        """Update role, display name and ``disabled`` (and the hash when
+        given); False if missing. The username is immutable."""
         ...
+
+    async def record_login(self, user_id: str, at: datetime) -> None: ...
 
     async def lock_active_admins(self) -> int:
         """Lock the active admin rows until the transaction ends and count
         them, so two admins disabling each other cannot both succeed."""
         ...
 
-    async def list(self, *, offset: int = 0, limit: int = 100) -> Sequence[User]: ...
+    async def list(
+        self,
+        *,
+        offset: int = 0,
+        limit: int = 100,
+        search: str | None = None,
+        role: Role | None = None,
+        disabled: bool | None = None,
+    ) -> Sequence[User]:
+        """By username; ``search`` matches username or display name (any
+        case, a literal substring)."""
+        ...
 
 
 class SessionRepository(Protocol):

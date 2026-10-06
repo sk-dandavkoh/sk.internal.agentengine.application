@@ -1102,6 +1102,10 @@ def _user(row: RowMapping) -> User:
         username=row["username"],
         role=Role(row["role"]),
         disabled=row["disabled"],
+        display_name=row["display_name"],
+        last_login_at=(
+            None if row["last_login_at"] is None else _ensure_utc(row["last_login_at"])
+        ),
         timestamps=Timestamps(
             created_at=_ensure_utc(row["created_at"]),
             updated_at=_ensure_utc(row["updated_at"]),
@@ -1147,6 +1151,7 @@ class SqlAlchemyUserRepository(UserRepository):
             password_hash=password_hash,
             role=user.role.value,
             disabled=user.disabled,
+            display_name=user.display_name,
             created_at=user.timestamps.created_at,
             updated_at=user.timestamps.updated_at,
         )
@@ -1172,6 +1177,8 @@ class SqlAlchemyUserRepository(UserRepository):
     async def update(self, user: User, password_hash: str | None = None) -> bool:
         values: dict[str, Any] = {
             "disabled": user.disabled,
+            "role": user.role.value,
+            "display_name": user.display_name,
             "updated_at": user.timestamps.updated_at,
         }
         if password_hash is not None:
@@ -1192,14 +1199,39 @@ class SqlAlchemyUserRepository(UserRepository):
         )
         return len(rows.all())
 
-    async def list(self, *, offset: int = 0, limit: int = 100) -> Sequence[User]:
+    async def record_login(self, user_id: str, at: datetime) -> None:
+        await self._session.execute(
+            m.users.update().where(m.users.c.id == user_id).values(last_login_at=at)
+        )
+
+    async def list(
+        self,
+        *,
+        offset: int = 0,
+        limit: int = 100,
+        search: str | None = None,
+        role: Role | None = None,
+        disabled: bool | None = None,
+    ) -> Sequence[User]:
+        c = m.users.c
+        query = select(*self._PUBLIC)
+        if search:
+            # ponytail: unindexed substring scan, fine for self-hosted user
+            # counts; add a pg_trgm index if installations grow large.
+            query = query.where(
+                or_(
+                    c.username.icontains(search, autoescape=True),
+                    c.display_name.icontains(search, autoescape=True),
+                )
+            )
+        if role is not None:
+            query = query.where(c.role == role.value)
+        if disabled is not None:
+            query = query.where(c.disabled.is_(disabled))
         rows = (
             (
                 await self._session.execute(
-                    select(*self._PUBLIC)
-                    .order_by(m.users.c.username)
-                    .offset(offset)
-                    .limit(limit)
+                    query.order_by(c.username).offset(offset).limit(limit)
                 )
             )
             .mappings()

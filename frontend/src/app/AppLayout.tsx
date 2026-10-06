@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { NavLink, Outlet, useLocation, useNavigation } from 'react-router'
 import { SessionMenu } from '../features/auth/SessionMenu'
+import { useSession } from '../features/auth/session'
 import { cx } from '../lib/cx'
 import { navItems } from './navigation'
 
@@ -8,6 +9,10 @@ export function AppLayout() {
     const isNavigating = useNavigation().state === 'loading'
     const { pathname } = useLocation()
     const mainRef = useRef<HTMLElement>(null)
+    const { data: session } = useSession()
+    const admin =
+        session?.status === 'active' && session.session.user.role === 'admin'
+    const items = navItems.filter((item) => admin || !item.adminOnly)
     const previousPath = useRef(pathname)
 
     // After a client-side navigation, move focus to the new content so
@@ -32,7 +37,7 @@ export function AppLayout() {
                 </p>
                 <nav aria-label="Main" className="overflow-x-auto">
                     <ul className="flex gap-1 px-2 pb-2 md:flex-col">
-                        {navItems.map((item) => (
+                        {items.map((item) => (
                             <li key={item.path}>
                                 <NavLink
                                     to={item.path}

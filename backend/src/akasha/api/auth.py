@@ -17,6 +17,7 @@ route is protected by default:
 """
 
 from datetime import datetime, timedelta
+from enum import StrEnum
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query, Request, Response, status
@@ -35,6 +36,7 @@ from akasha.application.auth import (
 )
 from akasha.application.projects import MAX_PAGE_SIZE, Page
 from akasha.domain.identity import (
+    MAX_DISPLAY_NAME_LENGTH,
     MAX_PASSWORD_LENGTH,
     MAX_TOKEN_NAME_LENGTH,
     AccessToken,
@@ -146,22 +148,30 @@ class SessionLoginRequest(LoginRequest):
 
 
 class UserDetail(BaseModel):
+    """A user's public metadata: never a password hash, session or token."""
+
     id: str
     username: str
+    # Null: none set; show the username.
+    display_name: str | None
     role: Role
     disabled: bool
     created_at: datetime
     updated_at: datetime
+    # Null: never logged in since this was recorded (migration 0016).
+    last_login_at: datetime | None
 
     @classmethod
     def from_domain(cls, user: User) -> "UserDetail":
         return cls(
             id=user.id,
             username=user.username,
+            display_name=user.display_name,
             role=user.role,
             disabled=user.disabled,
             created_at=user.timestamps.created_at,
             updated_at=user.timestamps.updated_at,
+            last_login_at=user.last_login_at,
         )
 
 
@@ -236,15 +246,30 @@ class ChangePasswordRequest(BaseModel):
     new_password: Password
 
 
+DisplayName = Annotated[str, Field(max_length=MAX_DISPLAY_NAME_LENGTH)]
+
+
 class CreateUserRequest(LoginRequest):
     role: Role = Role.MEMBER
+    display_name: DisplayName | None = None
 
 
 class UpdateUserRequest(BaseModel):
-    """Omitted fields stay unchanged; ``password`` resets it."""
+    """Omitted fields stay unchanged. ``display_name`` "" clears it;
+    ``password`` resets it (revoking the user's sessions and tokens). The
+    username cannot be changed. An admin cannot disable, demote or reset
+    the password of their own account (409 OWN_ACCOUNT), and the last
+    active admin cannot be disabled or demoted (409 LAST_ADMIN)."""
 
+    display_name: DisplayName | None = None
+    role: Role | None = None
     disabled: bool | None = None
     password: Password | None = None
+
+
+class UserStatus(StrEnum):
+    ACTIVE = "active"
+    DISABLED = "disabled"
 
 
 class UserPage(BaseModel):
@@ -418,6 +443,7 @@ def create_users_router() -> APIRouter:
             body.username,
             body.password.get_secret_value(),
             role=body.role,
+            display_name=body.display_name,
         )
         return UserDetail.from_domain(user)
 
@@ -427,10 +453,29 @@ def create_users_router() -> APIRouter:
         users: Users,
         offset: Annotated[int, Query(ge=0)] = 0,
         limit: Annotated[int, Query(ge=1, le=MAX_PAGE_SIZE)] = 50,
+        q: Annotated[
+            str | None,
+            Query(max_length=64, description="Username or display name contains"),
+        ] = None,
+        role: Role | None = None,
+        status: UserStatus | None = None,
     ) -> UserPage:
-        return UserPage.from_page(
-            await users.list_users(identity, offset=offset, limit=limit)
+        """Ordered by username."""
+        page = await users.list_users(
+            identity,
+            offset=offset,
+            limit=limit,
+            search=q,
+            role=role,
+            disabled=None if status is None else status is UserStatus.DISABLED,
         )
+        return UserPage.from_page(page)
+
+    @router.get("/{user_id}")
+    async def get_user(
+        user_id: str, identity: CurrentIdentity, users: Users
+    ) -> UserDetail:
+        return UserDetail.from_domain(await users.get_user(identity, user_id))
 
     @router.patch("/{user_id}")
     async def update_user(
@@ -439,6 +484,8 @@ def create_users_router() -> APIRouter:
         user = await users.update_user(
             identity,
             user_id,
+            display_name=body.display_name,
+            role=body.role,
             disabled=body.disabled,
             password=None
             if body.password is None

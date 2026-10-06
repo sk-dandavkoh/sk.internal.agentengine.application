@@ -32,6 +32,7 @@ import { getMonitoringSummary, type MonitoringWindow } from './monitoring'
 import { getExecutionReport } from './reports'
 import type { JsonObject, PageParams } from './schemas'
 import { getSystemStatus } from './system'
+import { getUser, listUsers, type UserListParams } from './users'
 
 /**
  * Every server-state query key. Keys nest by ownership so invalidating a
@@ -90,6 +91,11 @@ export const queryKeys = {
     // Not under 'auth': these belong to one user and must be dropped on a
     // user switch like other server state (features/auth/session.ts).
     accessTokens: () => ['access-tokens'] as const,
+    users: {
+        lists: () => ['users', 'list'] as const,
+        list: (params: UserListParams) => ['users', 'list', params] as const,
+        detail: (id: string) => ['users', 'detail', id] as const,
+    },
     credentials: {
         lists: () => ['credentials', 'list'] as const,
         list: (page: PageParams) => ['credentials', 'list', page] as const,
@@ -265,6 +271,19 @@ export const credentialQueries = {
         queryOptions({
             queryKey: queryKeys.credentials.detail(name),
             queryFn: ({ signal }) => getCredential(client, name, signal),
+        }),
+}
+
+export const userQueries = {
+    list: (client: ApiClient, params: UserListParams = {}) =>
+        queryOptions({
+            queryKey: queryKeys.users.list(params),
+            queryFn: ({ signal }) => listUsers(client, params, signal),
+        }),
+    detail: (client: ApiClient, id: string) =>
+        queryOptions({
+            queryKey: queryKeys.users.detail(id),
+            queryFn: ({ signal }) => getUser(client, id, signal),
         }),
 }
 

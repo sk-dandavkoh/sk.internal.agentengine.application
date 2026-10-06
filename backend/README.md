@@ -194,6 +194,8 @@ Every write is optimistic-concurrency controlled: a stale `expected_revision`
 | GET | `/api/v1/reports/executions/{id}` | full report: nodes, outputs, errors, tokens, cost, timeline |
 | GET | `/api/v1/nodes` | node catalog: ports, config JSON Schema, capabilities |
 | GET | `/api/v1/plugins` | installed plugins: state, failure code, manifest metadata (admin, read-only) |
+| GET | `/api/v1/users?q=&role=&status=&offset=&limit=` | accounts by username (admin); `q` matches username or display name, `status` is `active`/`disabled` |
+| POST / GET / PATCH | `/api/v1/users`, `/api/v1/users/{id}` | create, read, edit (`display_name`, `role`, `disabled`, `password` reset) (admin); own account: no disable/demote/reset (409 `OWN_ACCOUNT`); last active admin: 409 `LAST_ADMIN` |
 | GET | `/api/v1/system/status` | `{version, ready, failures}`: `/health` + `/ready` for API clients (any session; always 200) |
 
 ## Example projects

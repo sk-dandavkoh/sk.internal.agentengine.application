@@ -42,6 +42,12 @@ import {
 } from './plugins'
 import { queryKeys } from './queries'
 import type { JsonObject } from './schemas'
+import {
+    createUser,
+    updateUser,
+    type CreateUserInput,
+    type UpdateUserInput,
+} from './users'
 
 // One hook per write. Each names the server state it changes; the mutation
 // stays pending until that state is refetched, so callers never render the
@@ -269,6 +275,31 @@ export function useDeleteCredential() {
             qc.removeQueries({ queryKey: queryKeys.credentials.detail(name) })
             return invalidate(qc, queryKeys.credentials.lists())
         },
+    )
+}
+
+// -- users ---------------------------------------------------------------------
+
+// The variables may hold a password: dropped as soon as nobody observes.
+export function useCreateUser() {
+    return useApiMutation(
+        (client, input: CreateUserInput) => createUser(client, input),
+        (qc) => invalidate(qc, queryKeys.users.lists()),
+        secretOptions,
+    )
+}
+
+/** Refetches the session too: the edited user may be the signed-in one
+ * (display name), and one cheap request beats comparing ids here. */
+export function useUpdateUser() {
+    return useApiMutation(
+        (client, v: { id: string; input: UpdateUserInput }) =>
+            updateUser(client, v.id, v.input),
+        (qc, user) => {
+            qc.setQueryData(queryKeys.users.detail(user.id), user)
+            return invalidate(qc, queryKeys.users.lists(), queryKeys.session())
+        },
+        secretOptions,
     )
 }
 

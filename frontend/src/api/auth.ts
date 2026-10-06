@@ -4,13 +4,20 @@ import type { ApiClient } from './client'
 // Contracts of backend api/auth.py. The browser session is an HttpOnly
 // cookie (ADR 0002): no function here ever hands a token to the app.
 
+export const userRoleSchema = z.enum(['admin', 'member'])
+export type UserRole = z.infer<typeof userRoleSchema>
+
 export const userSchema = z.object({
     id: z.string(),
     username: z.string(),
-    role: z.enum(['admin', 'member']),
+    /** Null: none set; show the username. */
+    display_name: z.string().nullable(),
+    role: userRoleSchema,
     disabled: z.boolean(),
     created_at: z.iso.datetime({ offset: true }),
     updated_at: z.iso.datetime({ offset: true }),
+    /** Null: no login recorded yet. */
+    last_login_at: z.iso.datetime({ offset: true }).nullable(),
 })
 export type User = z.infer<typeof userSchema>
 

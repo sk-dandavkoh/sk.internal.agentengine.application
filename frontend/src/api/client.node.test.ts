@@ -83,10 +83,12 @@ async function failure(promise: Promise<unknown>): Promise<ApiError> {
 const user = {
     id: 'user_1',
     username: 'ada',
+    display_name: null,
     role: 'admin',
     disabled: false,
     created_at: '2026-10-01T12:00:00Z',
     updated_at: '2026-10-01T12:00:00+00:00',
+    last_login_at: null,
 }
 const session = { expires_at: '2026-10-02T00:00:00Z', user }
 

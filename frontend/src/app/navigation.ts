@@ -1,6 +1,9 @@
 export interface NavItem {
     readonly label: string
     readonly path: string
+    /** Hidden from members. Navigation only: the route and the backend
+     * refuse them regardless. */
+    readonly adminOnly?: boolean
 }
 
 // Top-level product areas. The Editor is reached per project
@@ -13,5 +16,6 @@ export const navItems: readonly NavItem[] = [
     { label: 'Reports', path: '/reports' },
     { label: 'Credentials', path: '/credentials' },
     { label: 'Plugins', path: '/plugins' },
+    { label: 'Users', path: '/users', adminOnly: true },
     { label: 'Settings', path: '/settings' },
 ]

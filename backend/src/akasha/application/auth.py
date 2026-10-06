@@ -2,7 +2,8 @@
 
 - ``AuthenticationService``: first-run setup, login, logout, resolving a
   bearer token to an ``Identity``, changing one's own password.
-- ``UserService``: admin-managed local accounts.
+- ``UserService``: admin-managed local accounts (create, edit, role,
+  enable/disable, password reset) and the self-lockout invariants.
 - ``AuthorizationService``: what an ``Identity`` may reach. Resources a
   caller may not see answer "not found", never "forbidden", so ids cannot
   be probed for existence.
@@ -90,6 +91,14 @@ class UserNotFoundError(AkashaError):
 
 class LastAdminError(AkashaError):
     code = "LAST_ADMIN"
+    http_status = 409
+
+
+class OwnAccountError(AkashaError):
+    """An admin tried to lock themselves out (disable, demote) or to reset
+    their own password without the current one."""
+
+    code = "OWN_ACCOUNT"
     http_status = 409
 
 
@@ -235,7 +244,9 @@ class AuthenticationService:
             # inert (get_active filters them).
             await uow.sessions.delete_expired(now)
             await uow.sessions.add(session)
+            await uow.users.record_login(user.id, now)
             await uow.commit()
+        user = replace(user, last_login_at=now)
         _audit("login_succeeded", user_id=user.id)
         return LoginResult(token, session, user)
 
@@ -361,7 +372,14 @@ class AuthenticationService:
 
 
 class UserService:
-    """Account management; every method is admin-only."""
+    """Account management; every method is admin-only.
+
+    Invariants, enforced here and not in the UI: an admin cannot disable or
+    demote their own account, nor reset their own password here (that needs
+    the current one: ``change_password``); the last active admin can be
+    neither disabled nor demoted, so the installation cannot lock itself
+    out. Usernames are immutable.
+    """
 
     def __init__(
         self, uow: UowFactory, auth: AuthenticationService, *, clock: Clock = utcnow
@@ -371,27 +389,55 @@ class UserService:
         self._clock = clock
 
     async def create_user(
-        self, admin: Identity, username: str, password: str, *, role: Role
+        self,
+        admin: Identity,
+        username: str,
+        password: str,
+        *,
+        role: Role,
+        display_name: str | None = None,
     ) -> User:
         require_admin(admin)
-        user = User.create(username, role=role)
+        user = User.create(username, role=role, display_name=display_name)
         password_hash = await self._auth.hash_password(password)
         async with self._uow() as uow:
             if not await uow.users.add(user, password_hash):
+                _audit("user_create_refused", actor_id=admin.user.id, reason="taken")
                 raise UsernameTakenError(
                     "The username is taken.", details={"username": username}
                 )
             await uow.commit()
-        _audit("user_created", user_id=user.id, actor_id=admin.user.id)
+        _audit("user_created", user_id=user.id, actor_id=admin.user.id, role=role)
+        return user
+
+    async def get_user(self, admin: Identity, user_id: str) -> User:
+        require_admin(admin)
+        async with self._uow() as uow:
+            user = await uow.users.get(user_id)
+        if user is None:
+            raise UserNotFoundError("User not found.", details={"user_id": user_id})
         return user
 
     async def list_users(
-        self, admin: Identity, *, offset: int = 0, limit: int = 50
+        self,
+        admin: Identity,
+        *,
+        offset: int = 0,
+        limit: int = 50,
+        search: str | None = None,
+        role: Role | None = None,
+        disabled: bool | None = None,
     ) -> Page[User]:
         require_admin(admin)
         check_page(offset, limit)
         async with self._uow() as uow:
-            rows = await uow.users.list(offset=offset, limit=limit + 1)
+            rows = await uow.users.list(
+                offset=offset,
+                limit=limit + 1,
+                search=search,
+                role=role,
+                disabled=disabled,
+            )
         return to_page(rows, offset, limit)
 
     async def update_user(
@@ -399,33 +445,105 @@ class UserService:
         admin: Identity,
         user_id: str,
         *,
+        display_name: str | None = None,
+        role: Role | None = None,
         disabled: bool | None = None,
         password: str | None = None,
     ) -> User:
-        """Disable/enable an account or reset its password. Either revokes
-        all of the user's sessions. The last active admin cannot be
-        disabled, so the installation cannot lock itself out."""
+        """Omitted (None) fields stay unchanged; ``display_name=""`` clears
+        it. Disabling or a password reset revokes every session and access
+        token of the user; a role change applies from their next request,
+        since each request re-reads the user."""
         require_admin(admin)
+        try:
+            return await self._update(
+                admin,
+                user_id,
+                display_name=display_name,
+                role=role,
+                disabled=disabled,
+                password=password,
+            )
+        except AkashaError as error:
+            _audit(
+                "user_update_refused",
+                user_id=user_id,
+                actor_id=admin.user.id,
+                reason=error.code,
+            )
+            raise
+
+    async def _update(
+        self,
+        admin: Identity,
+        user_id: str,
+        *,
+        display_name: str | None,
+        role: Role | None,
+        disabled: bool | None,
+        password: str | None,
+    ) -> User:
+        if user_id == admin.user.id:
+            if disabled or (role is not None and role is not Role.ADMIN):
+                raise OwnAccountError(
+                    "You cannot disable your own account or remove your own"
+                    " admin role; another admin has to."
+                )
+            if password is not None:
+                raise OwnAccountError(
+                    "Change your own password in Settings: it needs the current"
+                    " password."
+                )
         password_hash = (
             None if password is None else await self._auth.hash_password(password)
         )
         async with self._uow() as uow:
-            user = await uow.users.get(user_id)
-            if user is None:
+            before = await uow.users.get(user_id)
+            if before is None:
                 raise UserNotFoundError("User not found.", details={"user_id": user_id})
-            if disabled and not user.disabled and user.is_admin:
-                if await uow.users.lock_active_admins() <= 1:
-                    raise LastAdminError("The last active admin cannot be disabled.")
-            if disabled is not None:
-                user = replace(user, disabled=disabled)
+            user = replace(
+                before,
+                role=before.role if role is None else role,
+                disabled=before.disabled if disabled is None else disabled,
+                display_name=(
+                    before.display_name if display_name is None else display_name
+                ),
+            )
+            loses_admin = (
+                before.is_admin
+                and not before.disabled
+                and (user.disabled or not user.is_admin)
+            )
+            if loses_admin and await uow.users.lock_active_admins() <= 1:
+                raise LastAdminError(
+                    "The last active admin cannot be disabled or demoted."
+                )
             user = _touched(user, self._clock())
             await uow.users.update(user, password_hash)
-            if disabled or password_hash is not None:
+            if (user.disabled and not before.disabled) or password_hash is not None:
                 # Recovery: an admin reset or disable ends every credential.
                 await uow.sessions.delete_for_user(user.id)
                 await uow.access_tokens.delete_for_user(user.id)
             await uow.commit()
-        _audit("user_updated", user_id=user.id, actor_id=admin.user.id)
+        changes = [
+            name
+            for name, changed in (
+                ("display_name", user.display_name != before.display_name),
+                ("role", user.role is not before.role),
+                ("disabled", user.disabled != before.disabled),
+                ("password", password_hash is not None),
+            )
+            if changed
+        ]
+        # Ids, field names and the resulting role/status; never a password.
+        _audit(
+            "user_updated",
+            user_id=user.id,
+            actor_id=admin.user.id,
+            changes=changes,
+            role=user.role,
+            disabled=user.disabled,
+        )
         return user
 
 
@@ -461,6 +579,7 @@ class AuthorizationService:
 
 def require_admin(identity: Identity) -> None:
     if not identity.user.is_admin:
+        _audit("admin_required_denied", user_id=identity.user.id)
         raise PermissionDeniedError("This operation requires an admin.")
 
 

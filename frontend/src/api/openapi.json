@@ -336,6 +336,18 @@
       },
       "CreateUserRequest": {
         "properties": {
+          "display_name": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
           "password": {
             "format": "password",
             "maxLength": 256,
@@ -2985,7 +2997,7 @@
         "type": "object"
       },
       "UpdateUserRequest": {
-        "description": "Omitted fields stay unchanged; ``password`` resets it.",
+        "description": "Omitted fields stay unchanged. ``display_name`` \"\" clears it;\n``password`` resets it (revoking the user's sessions and tokens). The\nusername cannot be changed. An admin cannot disable, demote or reset\nthe password of their own account (409 OWN_ACCOUNT), and the last\nactive admin cannot be disabled or demoted (409 LAST_ADMIN).",
         "properties": {
           "disabled": {
             "anyOf": [
@@ -2997,6 +3009,18 @@
               }
             ],
             "title": "Disabled"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
           },
           "password": {
             "anyOf": [
@@ -3012,12 +3036,23 @@
               }
             ],
             "title": "Password"
+          },
+          "role": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Role"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "title": "UpdateUserRequest",
         "type": "object"
       },
       "UserDetail": {
+        "description": "A user's public metadata: never a password hash, session or token.",
         "properties": {
           "created_at": {
             "format": "date-time",
@@ -3028,9 +3063,32 @@
             "title": "Disabled",
             "type": "boolean"
           },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
           "id": {
             "title": "Id",
             "type": "string"
+          },
+          "last_login_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Login At"
           },
           "role": {
             "$ref": "#/components/schemas/Role"
@@ -3048,10 +3106,12 @@
         "required": [
           "id",
           "username",
+          "display_name",
           "role",
           "disabled",
           "created_at",
-          "updated_at"
+          "updated_at",
+          "last_login_at"
         ],
         "title": "UserDetail",
         "type": "object"
@@ -3075,6 +3135,14 @@
         ],
         "title": "UserPage",
         "type": "object"
+      },
+      "UserStatus": {
+        "enum": [
+          "active",
+          "disabled"
+        ],
+        "title": "UserStatus",
+        "type": "string"
       },
       "ValidateProjectRequest": {
         "additionalProperties": false,
@@ -6990,6 +7058,7 @@
     },
     "/api/v1/users": {
       "get": {
+        "description": "Ordered by username.",
         "operationId": "list_users_api_v1_users_get",
         "parameters": [
           {
@@ -7013,6 +7082,57 @@
               "minimum": 1,
               "title": "Limit",
               "type": "integer"
+            }
+          },
+          {
+            "description": "Username or display name contains",
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Username or display name contains",
+              "title": "Q"
+            }
+          },
+          {
+            "in": "query",
+            "name": "role",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/Role"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Role"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/UserStatus"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
             }
           }
         ],
@@ -7164,6 +7284,86 @@
       }
     },
     "/api/v1/users/{user_id}": {
+      "get": {
+        "operationId": "get_user_api_v1_users__user_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "user_id",
+            "required": true,
+            "schema": {
+              "title": "User Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          }
+        },
+        "summary": "Get User",
+        "tags": [
+          "users"
+        ]
+      },
       "patch": {
         "operationId": "update_user_api_v1_users__user_id__patch",
         "parameters": [

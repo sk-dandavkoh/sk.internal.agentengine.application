@@ -12,6 +12,7 @@ from akasha.domain.identity import (
     Role,
     User,
     may_access_project,
+    validate_display_name,
     validate_password,
     validate_username,
 )
@@ -81,6 +82,19 @@ def test_password_length_bounds() -> None:
     for bad in ("x" * (MIN_PASSWORD_LENGTH - 1), "x" * (MAX_PASSWORD_LENGTH + 1)):
         with pytest.raises(DomainValidationError):
             validate_password(bad)
+
+
+def test_display_name_is_trimmed_and_blank_means_none() -> None:
+    assert validate_display_name("  Alice Example ") == "Alice Example"
+    assert validate_display_name("   ") is None
+    assert validate_display_name(None) is None
+    assert User.create("alice", display_name="").display_name is None
+
+
+@pytest.mark.parametrize("name", ["x" * 101, "tab\there", "new\nline"])
+def test_invalid_display_names(name: str) -> None:
+    with pytest.raises(DomainValidationError):
+        validate_display_name(name)
 
 
 def test_project_access_rules() -> None:
