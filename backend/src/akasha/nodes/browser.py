@@ -111,14 +111,18 @@ class BrowserNode(Node):
         ),
         outputs=(
             NodeOutput("url", PortType.STRING, description="The final page URL."),
-            NodeOutput("title", PortType.STRING),
+            NodeOutput("title", PortType.STRING, description="The page title."),
             NodeOutput("text", PortType.STRING, description="The page's visible text."),
             NodeOutput(
                 "extracted",
                 PortType.OBJECT,
                 description="What the extract steps collected, by name.",
             ),
-            NodeOutput("truncated", PortType.BOOLEAN),
+            NodeOutput(
+                "truncated",
+                PortType.BOOLEAN,
+                description="True when the text was cut at max_chars.",
+            ),
         ),
         config_schema=closed_schema(
             {
@@ -176,6 +180,7 @@ class BrowserNode(Node):
                     "minimum": 100,
                     "maximum": MAX_CHARS,
                     "default": DEFAULT_MAX_CHARS,
+                    "description": "Longest text to return; longer pages are cut.",
                 },
                 "timeout_seconds": {
                     "type": "number",

@@ -77,9 +77,19 @@ class CommandNode(Node):
             ),
         ),
         outputs=(
-            NodeOutput("exit_code", PortType.NUMBER),
-            NodeOutput("stdout", PortType.STRING),
-            NodeOutput("stderr", PortType.STRING),
+            NodeOutput(
+                "exit_code",
+                PortType.NUMBER,
+                description="The program's exit code; 0 usually means success.",
+            ),
+            NodeOutput(
+                "stdout", PortType.STRING, description="What the program printed."
+            ),
+            NodeOutput(
+                "stderr",
+                PortType.STRING,
+                description="Error messages the program printed.",
+            ),
             NodeOutput(
                 "truncated",
                 PortType.BOOLEAN,
@@ -109,6 +119,7 @@ class CommandNode(Node):
                     "minimum": 0.1,
                     "maximum": MAX_TIMEOUT_SECONDS,
                     "default": DEFAULT_TIMEOUT_SECONDS,
+                    "description": "How long to wait, in seconds, before giving up.",
                 },
                 "fail_on_nonzero_exit": {
                     "type": "boolean",

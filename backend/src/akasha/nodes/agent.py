@@ -188,15 +188,31 @@ class AgentNode(Node):
             ),
         ),
         outputs=(
-            NodeOutput("text", PortType.STRING, nullable=True),
-            NodeOutput("structured", PortType.JSON, nullable=True),
+            NodeOutput(
+                "text",
+                PortType.STRING,
+                nullable=True,
+                description="The model's reply as text.",
+            ),
+            NodeOutput(
+                "structured",
+                PortType.JSON,
+                nullable=True,
+                description="The reply as data, when an output schema is set;"
+                " empty otherwise.",
+            ),
             NodeOutput(
                 "steps",
                 PortType.LIST,
                 description="Every tool call in order: tool, arguments preview,"
                 " outcome.",
             ),
-            NodeOutput("metadata", PortType.OBJECT),
+            NodeOutput(
+                "metadata",
+                PortType.OBJECT,
+                description="Details of the call: provider, model, token usage"
+                " and estimated cost.",
+            ),
         ),
         config_schema=closed_schema(
             {
@@ -242,6 +258,7 @@ class AgentNode(Node):
                     "minimum": 0.1,
                     "maximum": MAX_TOOL_TIMEOUT_SECONDS,
                     "default": DEFAULT_TOOL_TIMEOUT_SECONDS,
+                    "description": "How long one tool call may take, in seconds.",
                 },
                 "max_tool_result_chars": {
                     "type": "integer",

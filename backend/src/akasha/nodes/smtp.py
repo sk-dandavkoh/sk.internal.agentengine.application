@@ -66,18 +66,33 @@ class SmtpNode(Node):
             category="communication",
         ),
         inputs=(
-            NodeInput("subject", PortType.STRING),
-            NodeInput("body", PortType.STRING),
+            NodeInput(
+                "subject", PortType.STRING, description="The e-mail's subject line."
+            ),
+            NodeInput("body", PortType.STRING, description="The e-mail's text."),
         ),
         outputs=(
-            NodeOutput("message_id", PortType.STRING),
+            NodeOutput(
+                "message_id",
+                PortType.STRING,
+                description="The sent e-mail's unique Message-ID.",
+            ),
             # Partial acceptance is a success (the mail went out); failing
             # would make a retry send duplicates to the accepted recipients.
-            NodeOutput("rejected_recipients", PortType.LIST),
+            NodeOutput(
+                "rejected_recipients",
+                PortType.LIST,
+                description="Addresses the mail server refused; empty when all"
+                " were accepted.",
+            ),
         ),
         config_schema=closed_schema(
             {
-                "host": {"type": "string", "minLength": 1},
+                "host": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Address of the mail server, e.g. smtp.example.com.",
+                },
                 "port": {
                     "type": "integer",
                     "minimum": 1,
@@ -88,24 +103,36 @@ class SmtpNode(Node):
                     "type": "string",
                     "enum": sorted(_DEFAULT_PORTS),
                     "default": DEFAULT_SECURITY,
+                    "description": "How the connection is encrypted; your mail"
+                    " provider tells you which to use.",
                 },
-                "username": {"type": "string", "minLength": 1},
+                "username": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Login name for the mail server, if it needs one.",
+                },
                 "password_credential": {
                     "type": "string",
                     "format": CREDENTIAL_REFERENCE_FORMAT,
                     "description": "Credential holding the SMTP password.",
                 },
-                "sender": _ADDRESS,
+                "sender": {
+                    **_ADDRESS,
+                    "description": "The From address, e.g. bot@example.com.",
+                },
                 "recipients": {
                     "type": "array",
                     "items": _ADDRESS,
                     "maxItems": MAX_RECIPIENTS,
+                    "description": "Who receives the e-mail.",
                 },
                 "timeout_seconds": {
                     "type": "number",
                     "minimum": 1,
                     "maximum": 120,
                     "default": DEFAULT_TIMEOUT_SECONDS,
+                    "description": "How long to wait for the mail server, in"
+                    " seconds, before giving up.",
                 },
             },
             "host",

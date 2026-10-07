@@ -128,7 +128,12 @@ class DatabaseNode(Node):
         ),
         config_schema=closed_schema(
             {
-                "engine": {"type": "string", "enum": list(ENGINES)},
+                "engine": {
+                    "type": "string",
+                    "enum": list(ENGINES),
+                    "description": "The kind of database: sqlite for a file in"
+                    " this workflow's folder, postgres for a server.",
+                },
                 "database": {
                     "type": "string",
                     "minLength": 1,
@@ -156,12 +161,14 @@ class DatabaseNode(Node):
                     "minimum": 1,
                     "maximum": MAX_ROWS,
                     "default": DEFAULT_MAX_ROWS,
+                    "description": "Most rows to return; the rest are left out.",
                 },
                 "timeout_seconds": {
                     "type": "number",
                     "minimum": 0.1,
                     "maximum": MAX_TIMEOUT_SECONDS,
                     "default": DEFAULT_TIMEOUT_SECONDS,
+                    "description": "How long to wait, in seconds, before giving up.",
                 },
             },
             "engine",

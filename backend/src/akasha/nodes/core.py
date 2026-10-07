@@ -64,13 +64,19 @@ def lookup(value: Any, path: str) -> Any:
     return value
 
 
-def value_in(*, required: bool = True) -> NodeInput:
+def value_in(description: str, *, required: bool = True) -> NodeInput:
     if required:
-        return NodeInput("value", J, nullable=True)
-    return NodeInput("value", J, required=False, nullable=True, default=None)
+        return NodeInput("value", J, nullable=True, description=description)
+    return NodeInput(
+        "value", J, required=False, nullable=True, default=None, description=description
+    )
 
 
-VALUE_OUT = NodeOutput("value", J, nullable=True)
+def value_out(description: str) -> NodeOutput:
+    return NodeOutput("value", J, nullable=True, description=description)
+
+
+PASSED_ON = value_out("The incoming value, unchanged.")
 
 
 class InputNode(Node):
@@ -78,18 +84,24 @@ class InputNode(Node):
         metadata=NodeMetadata(
             node_id="core.input",
             name="Input",
-            description="Emits the execution input, or one top-level field of it.",
+            description="Starts the workflow with the data the run was started"
+            " with: all of it, or one field of it.",
             version=VERSION,
             category="input",
         ),
-        outputs=(VALUE_OUT,),
+        outputs=(
+            value_out(
+                "The run's input data, or the value of the chosen field. Its type"
+                " is whatever was sent: text, a number, a list or an object."
+            ),
+        ),
         config_schema=closed_schema(
             {
                 "field": {
                     "type": "string",
                     "minLength": 1,
-                    "description": "Emit only this top-level field of the"
-                    " execution input. Empty: the whole input.",
+                    "description": "Name of one field of the run's input to pass"
+                    " on, e.g. email. Leave empty to pass on the whole input.",
                 }
             }
         ),
@@ -118,12 +130,12 @@ class OutputNode(Node):
         metadata=NodeMetadata(
             node_id="core.output",
             name="Output",
-            description="Records a value as a result of the execution.",
+            description="Saves a value as a result of the run, shown with the run.",
             version=VERSION,
             category="output",
         ),
-        inputs=(value_in(),),
-        outputs=(VALUE_OUT,),
+        inputs=(value_in("The value to keep as a result of the run."),),
+        outputs=(PASSED_ON,),
         config_schema=closed_schema({}),
     )
 
@@ -155,15 +167,21 @@ class LogNode(Node):
             version=VERSION,
             category="observability",
         ),
-        inputs=(value_in(),),
-        outputs=(VALUE_OUT,),
+        inputs=(value_in("The value to log and pass on."),),
+        outputs=(PASSED_ON,),
         config_schema=closed_schema(
             {
-                "message": {"type": "string", "minLength": 1},
+                "message": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Text of the log line.",
+                },
                 "level": {
                     "type": "string",
                     "enum": sorted(_LEVELS),
                     "default": DEFAULT_LEVEL,
+                    "description": "How important the line is; use error for"
+                    " problems and debug for detail.",
                 },
                 "include_value": {
                     "type": "boolean",
@@ -201,8 +219,8 @@ class DelayNode(Node):
             version=VERSION,
             category="control_flow",
         ),
-        inputs=(value_in(required=False),),
-        outputs=(VALUE_OUT,),
+        inputs=(value_in("Optional value to pass on after the wait.", required=False),),
+        outputs=(PASSED_ON,),
         config_schema=closed_schema(
             {
                 "seconds": {
@@ -237,8 +255,23 @@ class MergeNode(Node):
             version=VERSION,
             category="control_flow",
         ),
-        inputs=(NodeInput("items", J, nullable=True, multiple=True),),
-        outputs=(NodeOutput("items", PortType.LIST),),
+        inputs=(
+            NodeInput(
+                "items",
+                J,
+                nullable=True,
+                multiple=True,
+                description="Connect every branch to join here; each one adds"
+                " its value to the list.",
+            ),
+        ),
+        outputs=(
+            NodeOutput(
+                "items",
+                PortType.LIST,
+                description="The values of the branches that ran, in connection order.",
+            ),
+        ),
         config_schema=closed_schema({}),
     )
 
@@ -260,18 +293,30 @@ class SetNode(Node):
             version=VERSION,
             category="transform",
         ),
-        inputs=(value_in(required=False),),
-        outputs=(NodeOutput("value", PortType.OBJECT),),
+        inputs=(
+            value_in(
+                "Optional value to add to the object, under the name set in Key.",
+                required=False,
+            ),
+        ),
+        outputs=(
+            NodeOutput(
+                "value",
+                PortType.OBJECT,
+                description="The object: the fixed fields plus the incoming value.",
+            ),
+        ),
         config_schema=closed_schema(
             {
                 "fields": {
                     "type": "object",
-                    "description": "Static fields of the built object.",
+                    "description": "Fixed names and values the object always contains.",
                 },
                 "key": {
                     "type": "string",
                     "minLength": 1,
-                    "description": "Field the input value is stored under.",
+                    "description": "Name the incoming value is stored under."
+                    " Needed when the input is connected.",
                 },
             }
         ),
@@ -305,8 +350,8 @@ class PickNode(Node):
             version=VERSION,
             category="transform",
         ),
-        inputs=(value_in(),),
-        outputs=(VALUE_OUT,),
+        inputs=(value_in("The data to take a field from."),),
+        outputs=(value_out("The value found at the path."),),
         config_schema=closed_schema(
             {
                 "path": {

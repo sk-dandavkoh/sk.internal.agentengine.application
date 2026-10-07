@@ -101,14 +101,28 @@ class IfNode(Node):
             version="1.1.0",
             category="control_flow",
         ),
-        inputs=(value_in(),),
+        inputs=(value_in("The value to check."),),
         outputs=(
-            NodeOutput("true", J, nullable=True),
-            NodeOutput("false", J, nullable=True),
+            NodeOutput(
+                "true",
+                J,
+                nullable=True,
+                description="Gets the value when the condition holds.",
+            ),
+            NodeOutput(
+                "false",
+                J,
+                nullable=True,
+                description="Gets the value when the condition does not hold.",
+            ),
         ),
         config_schema=closed_schema(
             {
-                "operator": {"type": "string", "enum": sorted(OPERATORS)},
+                "operator": {
+                    "type": "string",
+                    "enum": sorted(OPERATORS),
+                    "description": "How the value is compared with the operand.",
+                },
                 "operand": {  # any JSON value
                     "description": "The value compared with; unused by is_null.",
                 },
@@ -159,10 +173,24 @@ class SwitchNode(Node):
             version=VERSION,
             category="control_flow",
         ),
-        inputs=(value_in(),),
+        inputs=(value_in("The value to match against the cases."),),
         outputs=(
-            *(NodeOutput(f"case_{i}", J, nullable=True) for i in range(SWITCH_CASES)),
-            NodeOutput("default", J, nullable=True),
+            *(
+                NodeOutput(
+                    f"case_{i}",
+                    J,
+                    nullable=True,
+                    description=f"Gets the value when it equals case {i + 1}"
+                    " in the list of cases.",
+                )
+                for i in range(SWITCH_CASES)
+            ),
+            NodeOutput(
+                "default",
+                J,
+                nullable=True,
+                description="Gets the value when no case matches.",
+            ),
         ),
         config_schema=closed_schema(
             {

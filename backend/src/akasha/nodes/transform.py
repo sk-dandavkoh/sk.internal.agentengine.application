@@ -28,11 +28,11 @@ from akasha.nodes.control import OPERATORS, UNARY_OPERATORS
 from akasha.nodes.core import (
     MISSING,
     PATH_SCHEMA,
-    VALUE_OUT,
     VERSION,
     closed_schema,
     lookup,
     value_in,
+    value_out,
 )
 from akasha.nodes.llm import TEMPLATE, render
 from akasha.sdk import (
@@ -250,8 +250,8 @@ class TransformNode(Node):
             version=VERSION,
             category="transform",
         ),
-        inputs=(value_in(),),
-        outputs=(VALUE_OUT,),
+        inputs=(value_in("The data to reshape."),),
+        outputs=(value_out("The result after the last step."),),
         config_schema=closed_schema(
             {
                 "steps": {

@@ -79,6 +79,18 @@ def test_builtin_contract(definition: NodeDefinition) -> None:
 
 
 @pytest.mark.parametrize("definition", BUILTINS, ids=lambda d: d.node_id)
+def test_every_port_and_setting_is_described(definition: NodeDefinition) -> None:
+    """The editor explains ports and settings only with these texts; an
+    undescribed one leaves users guessing what to connect or enter."""
+    for port in definition.inputs:
+        assert port.description.strip(), f"input {port.name}"
+    for out in definition.outputs:
+        assert out.description.strip(), f"output {out.name}"
+    for key, prop in definition.config_schema.json_schema["properties"].items():
+        assert str(prop.get("description", "")).strip(), f"setting {key}"
+
+
+@pytest.mark.parametrize("definition", BUILTINS, ids=lambda d: d.node_id)
 def test_secret_config_keys_declare_credential_references(
     definition: NodeDefinition,
 ) -> None:

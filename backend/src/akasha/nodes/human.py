@@ -57,15 +57,37 @@ class HumanNode(Node):
             version=VERSION,
             category="human_interaction",
         ),
-        inputs=(value_in(required=False),),
+        inputs=(
+            value_in(
+                "Optional data to show the person, and to pass on afterwards.",
+                required=False,
+            ),
+        ),
         outputs=(
-            NodeOutput("approved", J, nullable=True),
-            NodeOutput("rejected", J, nullable=True),
-            NodeOutput("timed_out", J, nullable=True),
+            NodeOutput(
+                "approved",
+                J,
+                nullable=True,
+                description="Gets the incoming value when the person approves"
+                " (or submits the form).",
+            ),
+            NodeOutput(
+                "rejected",
+                J,
+                nullable=True,
+                description="Gets the incoming value when the person rejects.",
+            ),
+            NodeOutput(
+                "timed_out",
+                J,
+                nullable=True,
+                description="Gets the incoming value when nobody answered in time.",
+            ),
             NodeOutput(
                 "response",
                 PortType.OBJECT,
-                description="decision, comment, the fields and responded_by.",
+                description="The answer: decision, comment, the filled-in fields"
+                " and who responded.",
             ),
         ),
         config_schema=closed_schema(
@@ -92,6 +114,7 @@ class HumanNode(Node):
                     "type": "array",
                     "items": {"type": "string"},
                     "maxItems": MAX_FIELDS,
+                    "description": "Names of the extra fields the person must fill in.",
                 },
                 "timeout_seconds": {
                     "type": "number",

@@ -312,7 +312,14 @@ class HttpNode(Node):
             category="web",
         ),
         inputs=(
-            NodeInput("body", PortType.JSON, required=False, nullable=True),
+            NodeInput(
+                "body",
+                PortType.JSON,
+                required=False,
+                nullable=True,
+                description="Data to send with the request, e.g. for POST. Not"
+                " connected: no body.",
+            ),
             NodeInput(
                 "query",
                 PortType.OBJECT,
@@ -331,9 +338,19 @@ class HttpNode(Node):
             ),
         ),
         outputs=(
-            NodeOutput("status", PortType.NUMBER),
-            NodeOutput("headers", PortType.OBJECT),
-            NodeOutput("body", PortType.JSON, nullable=True),
+            NodeOutput(
+                "status",
+                PortType.NUMBER,
+                description="The response status code, e.g. 200 for success.",
+            ),
+            NodeOutput("headers", PortType.OBJECT, description="The response headers."),
+            NodeOutput(
+                "body",
+                PortType.JSON,
+                nullable=True,
+                description="The response content: parsed data for JSON"
+                " responses, text otherwise.",
+            ),
         ),
         config_schema=closed_schema(
             {
@@ -341,12 +358,15 @@ class HttpNode(Node):
                     "type": "string",
                     "enum": list(METHODS),
                     "default": DEFAULT_METHOD,
+                    "description": "GET reads data; POST, PUT, PATCH and DELETE"
+                    " send or change it.",
                 },
                 "url": {
                     "type": "string",
                     "pattern": "^https?://",
-                    "description": "May hold {{ name }} placeholders after the"
-                    " host, filled from the variables input.",
+                    "description": "The address to call, starting with https://."
+                    " May hold {{ name }} placeholders after the host, filled"
+                    " from the variables input.",
                 },
                 "headers": {
                     "type": "object",
@@ -371,8 +391,14 @@ class HttpNode(Node):
                     "minimum": 0.1,
                     "maximum": MAX_TIMEOUT_SECONDS,
                     "default": DEFAULT_TIMEOUT_SECONDS,
+                    "description": "How long to wait, in seconds, before giving up.",
                 },
-                "follow_redirects": {"type": "boolean", "default": False},
+                "follow_redirects": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": "Follow the server when it sends the request"
+                    " on to another address.",
+                },
                 "fail_on_error_status": {
                     "type": "boolean",
                     "default": True,
@@ -568,9 +594,15 @@ class WebFetchNode(Node):
         ),
         outputs=(
             NodeOutput("url", PortType.STRING, description="The requested URL."),
-            NodeOutput("status", PortType.NUMBER),
-            NodeOutput("title", PortType.STRING),
-            NodeOutput("text", PortType.STRING),
+            NodeOutput(
+                "status",
+                PortType.NUMBER,
+                description="The response status code, e.g. 200 for success.",
+            ),
+            NodeOutput("title", PortType.STRING, description="The page title."),
+            NodeOutput(
+                "text", PortType.STRING, description="The page's readable text."
+            ),
             NodeOutput(
                 "truncated",
                 PortType.BOOLEAN,
@@ -584,12 +616,14 @@ class WebFetchNode(Node):
                     "minimum": 100,
                     "maximum": MAX_CHARS,
                     "default": DEFAULT_MAX_CHARS,
+                    "description": "Longest text to return; longer pages are cut.",
                 },
                 "timeout_seconds": {
                     "type": "number",
                     "minimum": 0.1,
                     "maximum": MAX_TIMEOUT_SECONDS,
                     "default": DEFAULT_TIMEOUT_SECONDS,
+                    "description": "How long to wait, in seconds, before giving up.",
                 },
             }
         ),
@@ -661,7 +695,9 @@ class WebSearchNode(Node):
             version=VERSION,
             category="web",
         ),
-        inputs=(NodeInput("query", PortType.STRING),),
+        inputs=(
+            NodeInput("query", PortType.STRING, description="What to search for."),
+        ),
         outputs=(
             NodeOutput(
                 "results",
@@ -677,6 +713,8 @@ class WebSearchNode(Node):
                         },
                     },
                 },
+                description="The search hits, each with title, url and a short"
+                " snippet.",
             ),
         ),
         config_schema=closed_schema(
@@ -686,6 +724,7 @@ class WebSearchNode(Node):
                     "minimum": 1,
                     "maximum": 20,
                     "default": DEFAULT_MAX_RESULTS,
+                    "description": "How many results to return at most.",
                 }
             }
         ),

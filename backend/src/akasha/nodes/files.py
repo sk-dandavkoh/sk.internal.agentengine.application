@@ -80,14 +80,21 @@ class FileReadNode(_WorkspaceNode):
         metadata=NodeMetadata(
             node_id="core.file_read",
             name="Read File",
-            description="Reads a UTF-8 text file from the workflow workspace.",
+            description="Reads a text file from this workflow's folder on the server.",
             version=VERSION,
             category="file",
         ),
-        inputs=(_path_in("Path relative to the workflow workspace."),),
+        inputs=(
+            _path_in(
+                "Which file to read, inside this workflow's folder, e.g."
+                " notes/today.txt."
+            ),
+        ),
         outputs=(
-            NodeOutput("content", PortType.STRING),
-            NodeOutput("size", PortType.NUMBER, description="Size in bytes."),
+            NodeOutput("content", PortType.STRING, description="The file's text."),
+            NodeOutput(
+                "size", PortType.NUMBER, description="The file's size in bytes."
+            ),
         ),
         config_schema=closed_schema({}),
     )
@@ -116,17 +123,30 @@ class FileWriteNode(_WorkspaceNode):
         metadata=NodeMetadata(
             node_id="core.file_write",
             name="Write File",
-            description="Writes a UTF-8 text file into the workflow workspace.",
+            description="Saves text as a file in this workflow's folder on the server.",
             version=VERSION,
             category="file",
         ),
         inputs=(
-            _path_in("Path relative to the workflow workspace."),
-            NodeInput("content", PortType.STRING, description="Text to write."),
+            _path_in(
+                "Where to save the file, inside this workflow's folder, e.g."
+                " reports/summary.txt. Missing folders are created."
+            ),
+            NodeInput(
+                "content", PortType.STRING, description="The text to save in the file."
+            ),
         ),
         outputs=(
-            NodeOutput("path", PortType.STRING),
-            NodeOutput("size", PortType.NUMBER, description="File size afterwards."),
+            NodeOutput(
+                "path",
+                PortType.STRING,
+                description="Where the file was saved, inside this workflow's folder.",
+            ),
+            NodeOutput(
+                "size",
+                PortType.NUMBER,
+                description="The file's size in bytes after saving.",
+            ),
         ),
         config_schema=closed_schema(
             {
@@ -134,7 +154,9 @@ class FileWriteNode(_WorkspaceNode):
                     "type": "string",
                     "enum": list(WRITE_MODES),
                     "default": "overwrite",
-                    "description": "create fails if the file exists.",
+                    "description": "What to do if the file already exists:"
+                    " overwrite replaces it, append adds to its end, create"
+                    " stops with an error.",
                 }
             }
         ),
@@ -175,14 +197,15 @@ class FileListNode(_WorkspaceNode):
         metadata=NodeMetadata(
             node_id="core.file_list",
             name="List Files",
-            description="Lists a directory of the workflow workspace.",
+            description="Lists the files and folders in this workflow's folder"
+            " on the server.",
             version=VERSION,
             category="file",
         ),
         inputs=(
             _path_in(
-                "Directory relative to the workflow workspace; "
-                "the workspace itself when empty.",
+                "Which folder to list, inside this workflow's folder, e.g."
+                " reports. Not connected: the workflow's folder itself.",
                 required=False,
             ),
         ),
@@ -201,6 +224,8 @@ class FileListNode(_WorkspaceNode):
                         },
                     },
                 },
+                description="One entry per file or folder: its path, whether it"
+                " is a file or a directory, and its size in bytes.",
             ),
         ),
         config_schema=closed_schema({}),

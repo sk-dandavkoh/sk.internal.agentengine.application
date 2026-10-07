@@ -300,7 +300,8 @@ def test_port_schemas_cover_lists_nullables_and_value_schemas() -> None:
     assert command["properties"]["args"]["items"] == {"type": "string"}
     assert command["required"] == []
     # JSON ports accept any value; nullable typed ports also accept null.
-    assert tool_parameters(reg.definitions["core.http"])["properties"]["body"] == {}
+    body = tool_parameters(reg.definitions["core.http"])["properties"]["body"]
+    assert body.keys() == {"description"}  # no type constraint
     nullable = NodeDefinition(
         metadata=NodeMetadata(
             node_id="test.n", name="N", description="N.", version="1.0.0"

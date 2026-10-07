@@ -110,25 +110,40 @@ MODEL_CONFIG: dict[str, object] = {
         "minLength": 1,
         "description": "Provider name, e.g. openai or anthropic.",
     },
-    "model": {"type": "string", "minLength": 1},
+    "model": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Model name as the provider calls it, e.g. gpt-4o.",
+    },
     "credential": {
         "type": "string",
         "format": CREDENTIAL_REFERENCE_FORMAT,
         "description": "Credential holding the provider API key.",
     },
-    "system_prompt": TEMPLATE,
-    "user_prompt": {**TEMPLATE, "minLength": 1},
+    "system_prompt": {
+        **TEMPLATE,
+        "description": "Optional standing instructions, e.g. the role or tone."
+        " Reference variables as {{ name }} or {{ lead.name }}.",
+    },
+    "user_prompt": {
+        **TEMPLATE,
+        "minLength": 1,
+        "description": "The request sent to the model. Reference variables as"
+        " {{ name }} or {{ lead.name }}.",
+    },
     "temperature": {
         "type": "number",
         "minimum": 0,
         "maximum": 2,
-        "description": "Empty: the provider's default.",
+        "description": "Higher is more creative, lower more predictable."
+        " Empty: the provider's default.",
     },
     "max_tokens": {
         "type": "integer",
         "minimum": 1,
         "maximum": MAX_OUTPUT_TOKENS,
-        "description": "Empty: the provider's default.",
+        "description": "Longest reply allowed, in tokens (about ¾ of a word"
+        " each). Empty: the provider's default.",
     },
     "output_schema": {
         "type": "object",
@@ -139,6 +154,7 @@ MODEL_CONFIG: dict[str, object] = {
         "type": "number",
         "minimum": 1,
         "maximum": MAX_TIMEOUT_SECONDS,
+        "description": "How long to wait for the reply, in seconds, before giving up.",
     },
 }
 MODEL_CONFIG_REQUIRED = ("provider", "model", "user_prompt")
@@ -191,12 +207,32 @@ class LlmNode(Node):
             ),
         ),
         outputs=(
-            NodeOutput("text", PortType.STRING, nullable=True),
+            NodeOutput(
+                "text",
+                PortType.STRING,
+                nullable=True,
+                description="The model's reply as text.",
+            ),
             # The parsed reply when ``output_schema`` is configured.
-            NodeOutput("structured", PortType.JSON, nullable=True),
-            NodeOutput("tool_calls", PortType.LIST),
+            NodeOutput(
+                "structured",
+                PortType.JSON,
+                nullable=True,
+                description="The reply as data, when an output schema is set;"
+                " empty otherwise.",
+            ),
+            NodeOutput(
+                "tool_calls",
+                PortType.LIST,
+                description="Tools the model asked to call, with their arguments.",
+            ),
             # Provider, model, finish reason, token usage and cost estimate.
-            NodeOutput("metadata", PortType.OBJECT),
+            NodeOutput(
+                "metadata",
+                PortType.OBJECT,
+                description="Details of the call: provider, model, token usage"
+                " and estimated cost.",
+            ),
         ),
         config_schema=closed_schema(
             {
@@ -204,6 +240,8 @@ class LlmNode(Node):
                 "tools": {
                     "type": "array",
                     "maxItems": MAX_TOOLS,
+                    "description": "Tools the model may ask to call; the calls"
+                    " are returned, not run.",
                     "items": {
                         "type": "object",
                         "properties": {
