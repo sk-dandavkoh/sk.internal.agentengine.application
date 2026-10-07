@@ -110,7 +110,9 @@ def test_the_scaffold_is_a_valid_package(tmp_path: Path) -> None:
 def test_the_manifest_schema_is_the_validating_model() -> None:
     schema = manifest_schema()
     assert schema["additionalProperties"] is False
-    assert {"manifest_version", "id", "components"} <= set(schema["required"])
+    required = schema["required"]
+    assert isinstance(required, list)
+    assert {"manifest_version", "id", "components"} <= set(required)
 
 
 @pytest.mark.parametrize("level", ["DEBUG", "INFO", "WARNING"])

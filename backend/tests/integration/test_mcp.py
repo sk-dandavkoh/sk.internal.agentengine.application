@@ -23,6 +23,7 @@ import pytest
 from fastapi import FastAPI
 from mcp.client import Client
 from mcp.client.streamable_http import streamable_http_client
+from mcp.types import TextContent, TextResourceContents
 
 from akasha.api.app import create_app
 from akasha.bootstrap import Container, create_container
@@ -143,7 +144,9 @@ async def fails(client: Client, tool: str, **arguments: Any) -> dict[str, Any]:
     assert set(error) == {"code", "message", "details", "retryable"}
     # The text content carries the same error for clients without
     # structured output.
-    assert json.loads(result.content[0].text) == error
+    content = result.content[0]
+    assert isinstance(content, TextContent)
+    assert json.loads(content.text) == error
     return error
 
 
@@ -359,8 +362,11 @@ async def test_discovery_of_tools_prompts_and_resources(engine: Engine) -> None:
             assert tool.input_schema["type"] == "object"
             assert tool.output_schema is not None, tool.name
             assert tool.annotations is not None and tool.annotations.title
-        assert tools["workflow_delete"].annotations.destructive_hint is True
-        assert tools["node_types_list"].annotations.read_only_hint is True
+        delete, list_types = (
+            tools[name].annotations for name in ("workflow_delete", "node_types_list")
+        )
+        assert delete is not None and delete.destructive_hint is True
+        assert list_types is not None and list_types.read_only_hint is True
         add = tools["graph_node_add"].input_schema
         assert set(add["required"]) == {"workflow_id", "expected_revision", "node_type"}
 
@@ -375,7 +381,9 @@ async def test_discovery_of_tools_prompts_and_resources(engine: Engine) -> None:
             "akasha://plugins/manifest-schema",
         }
         schema = await client.read_resource("akasha://plugins/manifest-schema")
-        assert "manifest_version" in schema.contents[0].text
+        manifest = schema.contents[0]
+        assert isinstance(manifest, TextResourceContents)
+        assert "manifest_version" in manifest.text
 
 
 async def test_unknown_tools_and_malformed_arguments_are_errors(
@@ -933,8 +941,10 @@ async def test_tool_calls_are_audit_logged_without_argument_values(
     ]
     assert calls[1]["error_code"] == "WORKFLOW_NOT_FOUND"
     assert calls[1]["workflow_id"] == "wf_" + "0" * 32
+    auth = engine.container.auth
+    assert auth is not None
     assert {c["user_id"] for c in calls} == {
-        (await engine.container.auth.authenticate(engine.admin_token)).user.id
+        (await auth.authenticate(engine.admin_token)).user.id
     }
     assert all(c.get("request_id") for c in calls)
     assert "private words" not in json.dumps(logs)

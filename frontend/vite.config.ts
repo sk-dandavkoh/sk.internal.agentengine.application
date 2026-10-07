@@ -54,6 +54,10 @@ export default defineConfig(({ mode }) => {
             include: ['src/**/*.test.{ts,tsx}'],
             restoreMocks: true,
             unstubGlobals: true,
+            // A hang detector, not a wait: the heaviest jsdom tests take
+            // ~1 s alone but exceed vitest's 5 s default when every worker
+            // competes for the CPU (full parallel run on a busy machine).
+            testTimeout: 15_000,
         },
     }
 })

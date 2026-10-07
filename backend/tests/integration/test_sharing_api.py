@@ -145,9 +145,9 @@ async def test_only_the_owner_and_admins_share_and_delete(env: Env) -> None:
     alice, bob, owned = await setup(env)
     carol = await env.member(await env.kit.login("admin"), "carol")
     await share(env, alice, owned.workflow_id, "bob", "editor")
-    for method, kwargs in (("PUT", {"json": {"role": "editor"}}), ("DELETE", {})):
+    for method, body in (("PUT", {"role": "editor"}), ("DELETE", None)):
         response = await env.client.request(
-            method, members_url(owned.workflow_id, "carol"), headers=bob, **kwargs
+            method, members_url(owned.workflow_id, "carol"), headers=bob, json=body
         )
         assert_error(response, 403, "PERMISSION_DENIED")
     # Not even allowed to promote oneself.

@@ -343,9 +343,14 @@ class BrowserNode(Node):
 
                 async def read(index: int) -> str | None:
                     item = locator.nth(index)
-                    if attribute is None:
-                        return await item.inner_text()
-                    return await item.get_attribute(attribute)
+                    # Annotated: without the optional playwright installed,
+                    # mypy sees these calls as Any.
+                    text: str | None = (
+                        await item.inner_text()
+                        if attribute is None
+                        else await item.get_attribute(attribute)
+                    )
+                    return text
 
                 if step.get("all", False):
                     count = min(await locator.count(), MAX_EXTRACTED_ITEMS)

@@ -129,6 +129,12 @@ class FakeExecutions(ExecutionRepository):
     async def claim_stale(self, execution_id: str, *, stale_after: timedelta) -> bool:
         return False
 
+    async def list_due_waits(self, *, now: datetime, limit: int) -> Sequence[str]:
+        return []
+
+    async def claim_due_wait(self, execution_id: str, *, now: datetime) -> bool:
+        return False
+
 
 class FakeWorkflows(WorkflowRepository):
     """Unused by the trigger services; the UoW protocol demands the member."""
@@ -149,6 +155,12 @@ class FakeWorkflows(WorkflowRepository):
         self, plugin_id: str, node_types: Sequence[str]
     ) -> Sequence[str]:
         return []
+
+    async def lock_owner(self, workflow_id: str) -> str | None:
+        return None
+
+    async def set_owner(self, workflow_id: str, owner_id: str) -> None:
+        raise NotImplementedError
 
 
 class FakeEvents(EventRepository):

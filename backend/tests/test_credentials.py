@@ -25,6 +25,7 @@ from akasha.domain.credentials import (
     credential_references,
     plaintext_secret_paths,
 )
+from akasha.domain.execution import ExecutionError
 from akasha.domain.graph import Graph, NodeInstance
 from akasha.domain.graph_validation import ValidationCode, validate_graph
 from akasha.domain.node import (
@@ -434,7 +435,7 @@ async def test_outputs_and_logs_never_carry_a_resolved_secret() -> None:
 @pytest.mark.parametrize("config", [{"fail": True}, {"crash": True}])
 async def test_errors_never_carry_a_resolved_secret(config: dict[str, Any]) -> None:
     outcome, logs = await run_leaky(**config)
-    assert not isinstance(outcome, NodeResult)
+    assert isinstance(outcome, ExecutionError)
     assert CANARY not in f"{outcome.message} {outcome.details} {outcome!r}"
     assert CANARY not in logs
 
