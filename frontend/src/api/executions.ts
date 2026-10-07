@@ -2,6 +2,8 @@ import { z } from 'zod'
 import type { ApiClient } from './client'
 import { triggerTypeSchema } from './workflows'
 import {
+    logLevelSchema,
+    type LogLevel,
     jsonObject,
     pageSchema,
     timestamp,
@@ -77,14 +79,8 @@ export const executionEventPageSchema = z.object({
 })
 export type ExecutionEventPage = z.infer<typeof executionEventPageSchema>
 
-export const logLevelSchema = z.enum([
-    'DEBUG',
-    'INFO',
-    'WARNING',
-    'ERROR',
-    'CRITICAL',
-])
-export type LogLevel = z.infer<typeof logLevelSchema>
+// In schemas.ts: workflows.ts needs it too, and imports nothing from here.
+export { logLevelSchema, type LogLevel } from './schemas'
 
 /**
  * A line a node wrote through its logger. Redacted and bounded by the

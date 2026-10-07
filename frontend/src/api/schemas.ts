@@ -25,3 +25,13 @@ export interface PageParams {
     offset?: number
     limit?: number
 }
+
+/** Node log levels (backend LogLevel). */
+export const logLevelSchema = z.enum([
+    'DEBUG',
+    'INFO',
+    'WARNING',
+    'ERROR',
+    'CRITICAL',
+])
+export type LogLevel = z.infer<typeof logLevelSchema>

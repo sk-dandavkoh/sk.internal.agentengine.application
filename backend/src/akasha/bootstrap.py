@@ -39,6 +39,7 @@ from akasha.observability.metrics import EngineMetrics
 from akasha.plugins.registry import PluginRegistry
 from akasha.providers.litellm_adapter import LiteLLMAdapter
 from akasha.runtime.event_triggers import EventTriggerDispatcher
+from akasha.runtime.node_test import NodeTester
 from akasha.runtime.runtime import ExecutionRuntime
 from akasha.runtime.scheduler import TriggerScheduler
 from akasha.security.crypto import SecretCipher
@@ -75,6 +76,7 @@ class Container:
     # The runtime workers hand jobs to; the CLI's ``workflow run`` uses it
     # directly.
     runtime: ExecutionRuntime | None = None
+    node_tester: NodeTester | None = None
     # Needs the database and AKASHA_REDIS_URL (Phase 22).
     queue: RedisExecutionQueue | None = None
     workers: WorkerManager | None = None
@@ -273,6 +275,9 @@ def create_container(settings: Settings) -> Container:
         packages=packages,
         executions=executions,
         runtime=runtime,
+        node_tester=NodeTester(
+            workflows, nodes.catalog, credentials=credentials, limits=limits
+        ),
         queue=queue,
         workers=workers,
         reports=ReportService(uow),

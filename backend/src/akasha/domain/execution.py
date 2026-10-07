@@ -52,6 +52,7 @@ from typing import Any, Final
 
 from akasha import __version__
 from akasha.domain.event import Event, EventType, PayloadValue
+from akasha.domain.graph import Edge
 from akasha.domain.node import (
     RETRYABLE_ERROR_KINDS,
     NodeConfigSchema,
@@ -768,6 +769,16 @@ class Execution(Entity):
             raise DomainValidationError(
                 "unknown node in this execution", details={"node_id": node_id}
             ) from None
+
+    def delivers(self, edge: Edge) -> bool:
+        """Whether ``edge`` carries a value: its source completed and
+        produced that output port (an if/switch fills only the taken one).
+        The one rule for what reached a node: the runtime builds inputs from
+        it, reports show it."""
+        source = self.node(edge.source_node_id)
+        return source.status is NodeExecutionStatus.COMPLETED and (
+            edge.source_port in (source.outputs or {})
+        )
 
     # -- execution transitions ----------------------------------------------
 

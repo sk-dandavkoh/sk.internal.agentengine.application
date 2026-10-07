@@ -1,6 +1,13 @@
 import { z } from 'zod'
 import type { ApiClient } from './client'
-import { jsonObject, pageSchema, timestamp, type PageParams } from './schemas'
+import {
+    jsonObject,
+    logLevelSchema,
+    pageSchema,
+    timestamp,
+    type JsonObject,
+    type PageParams,
+} from './schemas'
 
 // Contracts of backend api/workflows.py and api/workflow_schemas.py.
 // Defaults mirror the backend's: those fields are optional on the wire.
@@ -307,6 +314,53 @@ export function validateWorkflow(
         expectedRevision === undefined
             ? {}
             : { body: { expected_revision: expectedRevision } },
+    )
+}
+
+export const nodeTestResultSchema = z.object({
+    status: z.enum(['completed', 'failed']),
+    duration_ms: z.number().int(),
+    outputs: jsonObject.nullable(),
+    error: z
+        .object({
+            code: z.string(),
+            message: z.string(),
+            kind: z.string(),
+            retryable: z.boolean(),
+            details: z.record(z.string(), z.string()),
+        })
+        .nullable(),
+    logs: z.array(
+        z.object({
+            level: logLevelSchema,
+            message: z.string(),
+            logged_at: timestamp,
+            fields: jsonObject,
+        }),
+    ),
+})
+export type NodeTestResult = z.infer<typeof nodeTestResultSchema>
+
+/**
+ * Runs one node of the saved draft once with `inputs` (ADR 0010). Nothing
+ * is persisted; side effects are real. A node failure is a result, not an
+ * error; 409 means the draft is not the revision the caller shows.
+ */
+export function testNode(
+    client: ApiClient,
+    workflowId: string,
+    nodeId: string,
+    body: {
+        expected_revision: number
+        inputs: JsonObject
+        execution_input: JsonObject
+    },
+) {
+    return client.request(
+        'POST',
+        `${path(workflowId)}/nodes/${encodeURIComponent(nodeId)}/test`,
+        nodeTestResultSchema,
+        { body },
     )
 }
 

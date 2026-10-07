@@ -180,6 +180,17 @@ async def test_successful_execution_report(
     assert llm.outputs is not None and llm.outputs["text"] == "hello"
     assert llm.usage is not None and llm.usage.total_tokens == 42
     assert llm.cost is not None and llm.cost.amount == 0.25
+    # What reached each node, per live edge: derived, never stored.
+    assert [i.model_dump() for i in llm.inputs or []] == [
+        {
+            "port": "variables",
+            "source_node_id": scenario.source.id,
+            "source_port": "out",
+            "value": "x",
+        }
+    ]
+    source = next(n for n in report.nodes if n.node_id == scenario.source.id)
+    assert source.inputs == []
     metrics = report.metrics
     assert metrics.node_status_counts["completed"] == 3
     assert sum(metrics.node_status_counts.values()) == 3
@@ -267,6 +278,9 @@ async def test_partial_execution_report(
     assert by_id[scenario.llm.id].duration_ms is None
     assert by_id[scenario.sink.id].status == "pending"
     assert by_id[scenario.sink.id].attempts == 0
+    # Nothing reached a node that never started; a running one has its input.
+    assert by_id[scenario.sink.id].inputs is None
+    assert [i.value for i in by_id[scenario.llm.id].inputs or []] == ["x"]
     counts = report.metrics.node_status_counts
     assert (counts["completed"], counts["running"], counts["pending"]) == (1, 1, 1)
 
@@ -367,6 +381,8 @@ async def test_report_redacts_secrets(
     assert source.outputs["Authorization"] == "[REDACTED]"
     assert source.outputs["out"] == "password=[REDACTED]"
     llm = next(n for n in report.nodes if n.node_id == scenario.llm.id)
+    # Its input is the source's output, redacted the same way.
+    assert [i.value for i in llm.inputs or []] == ["password=[REDACTED]"]
     assert llm.error is not None and llm.error.details["authorization"] == "[REDACTED]"
     assert "internal.test" in llm.error.message  # context survives redaction
 

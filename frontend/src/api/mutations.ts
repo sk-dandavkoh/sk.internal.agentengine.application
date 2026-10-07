@@ -30,6 +30,7 @@ import {
     importWorkflow,
     publishWorkflow,
     restoreWorkflowVersion,
+    testNode,
     updateWorkflow,
     validateWorkflow,
     type CreateWorkflowInput,
@@ -169,6 +170,28 @@ export function useValidateWorkflow() {
     return useApiMutation(
         (client, v: { workflowId: string; expectedRevision?: number }) =>
             validateWorkflow(client, v.workflowId, v.expectedRevision),
+        () => Promise.resolve(),
+    )
+}
+
+/** A node test run (ADR 0010) persists nothing: there is nothing to refresh. */
+export function useTestNode() {
+    return useApiMutation(
+        (
+            client,
+            v: {
+                workflowId: string
+                nodeId: string
+                expectedRevision: number
+                inputs: JsonObject
+                executionInput: JsonObject
+            },
+        ) =>
+            testNode(client, v.workflowId, v.nodeId, {
+                expected_revision: v.expectedRevision,
+                inputs: v.inputs,
+                execution_input: v.executionInput,
+            }),
         () => Promise.resolve(),
     )
 }

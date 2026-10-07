@@ -37,6 +37,7 @@ from akasha.api.credentials import create_credentials_router
 from akasha.api.executions import create_executions_router
 from akasha.api.live import create_live_router
 from akasha.api.monitoring import create_monitoring_router
+from akasha.api.node_tests import create_node_tests_router
 from akasha.api.nodes import create_nodes_router
 from akasha.api.plugins import create_plugins_router
 from akasha.api.reports import create_reports_router
@@ -133,6 +134,7 @@ def create_api_v1_router() -> APIRouter:
         dependencies=[Depends(current_identity), Depends(authorize_path)]
     )
     protected.include_router(create_workflows_router())
+    protected.include_router(create_node_tests_router())
     protected.include_router(create_sharing_router())
     protected.include_router(create_triggers_router())
     protected.include_router(create_executions_router())

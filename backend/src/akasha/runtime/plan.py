@@ -83,7 +83,7 @@ class ExecutionPlan:
         edges = self.incoming[node_id]
         if any(execution.node(e.source_node_id).status not in _DECIDED for e in edges):
             return None
-        fed = {e.target_port for e in edges if _live(e, execution)}
+        fed = {e.target_port for e in edges if execution.delivers(e)}
         required = {p.name for p in self.definition(node_id).inputs if p.required}
         if fed and required <= fed:
             return NodeExecutionStatus.READY
@@ -101,7 +101,7 @@ class ExecutionPlan:
         definition = self.definition(node_id)
         values: dict[str, Any] = {}
         for edge in self.incoming[node_id]:
-            if not _live(edge, execution):
+            if not execution.delivers(edge):
                 continue
             outputs = execution.node(edge.source_node_id).outputs or {}
             value = deepcopy(outputs[edge.source_port])
@@ -118,13 +118,6 @@ class ExecutionPlan:
             if port.name not in values and port.default is not NO_DEFAULT:
                 values[port.name] = deepcopy(port.default)
         return values
-
-
-def _live(edge: Edge, execution: Execution) -> bool:
-    source = execution.node(edge.source_node_id)
-    return source.status is NodeExecutionStatus.COMPLETED and edge.source_port in (
-        source.outputs or {}
-    )
 
 
 def load_plan(

@@ -90,6 +90,9 @@ interface Shape {
 }
 
 function resolve(ref: string): JsonSchema {
+    // Zod's own definitions: only z.json() is recursive, and any JSON value
+    // is what Pydantic's JsonValue (no type) says too.
+    if (ref.startsWith('#/$defs/')) return {}
     const name = ref.replace('#/components/schemas/', '')
     const target = document.components.schemas[name]
     if (!target) throw new Error(`unresolvable $ref ${ref}`)
@@ -285,6 +288,11 @@ void executions.listPendingInputs(recorder, 'e')
 void executions.respondToInput(recorder, 'e', 'n', { decision: 'approve' })
 void executions.executeWorkflowVersion(recorder, 'p', 1, { k: 'v' })
 void executions.invokeTrigger(recorder, 'p', 't', { k: 'v' })
+void workflows.testNode(recorder, 'p', 'n', {
+    expected_revision: 1,
+    inputs: { text: 'x' },
+    execution_input: {},
+})
 void reports.getExecutionReport(recorder, 'e')
 void reports.exportExecutionReport(recorder, 'e')
 void monitoring.getMonitoringSummary(recorder, {

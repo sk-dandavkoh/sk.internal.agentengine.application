@@ -1449,6 +1449,35 @@
         "title": "ImportWorkflowResponse",
         "type": "object"
       },
+      "InputReport": {
+        "additionalProperties": false,
+        "description": "One value that reached a node: over one live incoming edge, in graph\nedge order. Inputs are not stored (architecture \u00a7148); they are what\nthe runtime built the node's inputs from (``Execution.delivers``).\nUnconnected optional inputs used their defaults and are not listed.",
+        "properties": {
+          "port": {
+            "title": "Port",
+            "type": "string"
+          },
+          "source_node_id": {
+            "title": "Source Node Id",
+            "type": "string"
+          },
+          "source_port": {
+            "title": "Source Port",
+            "type": "string"
+          },
+          "value": {
+            "$ref": "#/components/schemas/JsonValue"
+          }
+        },
+        "required": [
+          "port",
+          "source_node_id",
+          "source_port",
+          "value"
+        ],
+        "title": "InputReport",
+        "type": "object"
+      },
       "InputResponse": {
         "properties": {
           "response": {
@@ -1924,6 +1953,20 @@
             ],
             "title": "Finished At"
           },
+          "inputs": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/InputReport"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inputs"
+          },
           "label": {
             "title": "Label",
             "type": "string"
@@ -1997,6 +2040,157 @@
           "cost"
         ],
         "title": "NodeReport",
+        "type": "object"
+      },
+      "NodeTestError": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "details": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Details",
+            "type": "object"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "retryable": {
+            "title": "Retryable",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "kind",
+          "retryable",
+          "details"
+        ],
+        "title": "NodeTestError",
+        "type": "object"
+      },
+      "NodeTestLog": {
+        "properties": {
+          "fields": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "title": "Fields",
+            "type": "object"
+          },
+          "level": {
+            "$ref": "#/components/schemas/LogLevel"
+          },
+          "logged_at": {
+            "format": "date-time",
+            "title": "Logged At",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "level",
+          "message",
+          "logged_at",
+          "fields"
+        ],
+        "title": "NodeTestLog",
+        "type": "object"
+      },
+      "NodeTestRequest": {
+        "properties": {
+          "execution_input": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "title": "Execution Input",
+            "type": "object"
+          },
+          "expected_revision": {
+            "minimum": 0.0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "inputs": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "title": "Inputs",
+            "type": "object"
+          }
+        },
+        "required": [
+          "expected_revision"
+        ],
+        "title": "NodeTestRequest",
+        "type": "object"
+      },
+      "NodeTestResponse": {
+        "properties": {
+          "duration_ms": {
+            "title": "Duration Ms",
+            "type": "integer"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NodeTestError"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "logs": {
+            "items": {
+              "$ref": "#/components/schemas/NodeTestLog"
+            },
+            "title": "Logs",
+            "type": "array"
+          },
+          "outputs": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outputs"
+          },
+          "status": {
+            "enum": [
+              "completed",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "duration_ms",
+          "outputs",
+          "error",
+          "logs"
+        ],
+        "title": "NodeTestResponse",
         "type": "object"
       },
       "NodeTypeOut": {
@@ -7513,6 +7707,98 @@
           "sharing"
         ],
         "x-akasha-access": "view"
+      }
+    },
+    "/api/v1/workflows/{workflow_id}/nodes/{node_id}/test": {
+      "post": {
+        "description": "Runs the node once with ``inputs``; nothing is persisted. A node\nfailure is a result (``status: failed``), not an error response.",
+        "operationId": "test_node_api_v1_workflows__workflow_id__nodes__node_id__test_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "workflow_id",
+            "required": true,
+            "schema": {
+              "title": "Workflow Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "node_id",
+            "required": true,
+            "schema": {
+              "title": "Node Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NodeTestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NodeTestResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "summary": "Test Node",
+        "tags": [
+          "workflows"
+        ]
       }
     },
     "/api/v1/workflows/{workflow_id}/owner": {

@@ -49,6 +49,16 @@ export const costSchema = z.object({
 })
 export type Cost = z.infer<typeof costSchema>
 
+/** A value that reached a node over one live incoming edge: derived from
+ * upstream outputs (inputs are not stored), redacted like them. */
+export const nodeInputSchema = z.object({
+    port: z.string(),
+    source_node_id: z.string(),
+    source_port: z.string(),
+    value: z.json(),
+})
+export type NodeInput = z.infer<typeof nodeInputSchema>
+
 /** One node of the pinned graph within an execution. */
 export const nodeExecutionSchema = z.object({
     node_id: z.string(),
@@ -62,6 +72,8 @@ export const nodeExecutionSchema = z.object({
     duration_ms: z.number().int().nullable(),
     error: executionErrorSchema.nullable(),
     failures: z.array(nodeFailureSchema),
+    // null: the node never started. Optional: older backends lack it.
+    inputs: z.array(nodeInputSchema).nullable().optional(),
     outputs: jsonObject.nullable(),
     usage: tokenUsageSchema.nullable(),
     cost: costSchema.nullable(),

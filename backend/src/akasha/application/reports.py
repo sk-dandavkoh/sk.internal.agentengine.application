@@ -107,6 +107,18 @@ class ExecutionSection(_Model):
     cancellation: CancellationReport | None
 
 
+class InputReport(_Model):
+    """One value that reached a node: over one live incoming edge, in graph
+    edge order. Inputs are not stored (architecture §148); they are what
+    the runtime built the node's inputs from (``Execution.delivers``).
+    Unconnected optional inputs used their defaults and are not listed."""
+
+    port: str
+    source_node_id: str
+    source_port: str
+    value: JsonValue
+
+
 class NodeReport(_Model):
     node_id: str
     node_type: str
@@ -119,6 +131,8 @@ class NodeReport(_Model):
     duration_ms: int | None  # of the last attempt
     error: ErrorReport | None  # the failure that ended the node
     failures: list[FailureReport]  # every failed attempt, retries included
+    # None: the node never started, so nothing reached it.
+    inputs: list[InputReport] | None = None
     outputs: dict[str, JsonValue] | None
     usage: TokenUsageReport | None
     cost: CostReport | None
@@ -170,7 +184,12 @@ def build_report(
     version = execution.workflow_version
     graph_nodes = version.graph.nodes
     nodes = [
-        _node(ne, graph_nodes[node_id].node_type, graph_nodes[node_id].label)
+        _node(
+            ne,
+            graph_nodes[node_id].node_type,
+            graph_nodes[node_id].label,
+            _inputs(execution, node_id),
+        )
         for node_id, ne in sorted(execution.node_executions.items())
     ]
     return ExecutionReport(
@@ -231,7 +250,31 @@ def report_json(report: ExecutionReport) -> str:
     )
 
 
-def _node(ne: NodeExecution, node_type: str, label: str) -> NodeReport:
+def _inputs(execution: Execution, node_id: str) -> list[InputReport] | None:
+    if execution.node(node_id).started_at is None:
+        return None
+    return [
+        InputReport(
+            port=edge.target_port,
+            source_node_id=edge.source_node_id,
+            source_port=edge.source_port,
+            # From the redacted outputs, so a value shows exactly as it does
+            # on its source node (key-based redaction needs the port name).
+            value=_redacted_object(execution.node(edge.source_node_id).outputs or {})[
+                edge.source_port
+            ],
+        )
+        for edge in execution.workflow_version.graph.edges
+        if edge.target_node_id == node_id and execution.delivers(edge)
+    ]
+
+
+def _node(
+    ne: NodeExecution,
+    node_type: str,
+    label: str,
+    inputs: list[InputReport] | None,
+) -> NodeReport:
     usage, cost = usage_and_cost(ne.outputs)
     return NodeReport(
         node_id=ne.node_id,
@@ -249,6 +292,7 @@ def _node(ne: NodeExecution, node_type: str, label: str) -> NodeReport:
             for n, f in enumerate(ne.failures, start=1)
             if (e := _error(f)) is not None
         ],
+        inputs=inputs,
         outputs=None if ne.outputs is None else _redacted_object(ne.outputs),
         usage=usage,
         cost=cost,

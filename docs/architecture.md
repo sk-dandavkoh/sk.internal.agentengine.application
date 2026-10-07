@@ -582,6 +582,9 @@ unpublished
 
 A Draft is not executable as a production version unless the execution system explicitly supports draft execution.
 
+One node of a saved draft can be *test-run* on its own (ADR 0010): nothing is
+persisted, and it is not an execution.
+
 The preferred default is:
 
 ```text
@@ -2671,7 +2674,8 @@ Implementation (Phase 08, migration `0003_executions`):
   `{"$unpersisted": ...}` stub. Size limits apply since Phase 24 (§75):
   an oversized output fails its node and is never stored. Redaction
   applies since Phase 13. Inputs are not stored; they are
-  derivable from upstream outputs and the pinned graph.
+  derivable from upstream outputs and the pinned graph (reports list
+  them per live edge, by the runtime's rule `Execution.delivers`).
 - Loading takes a share lock on the execution row, so the execution and
   its node rows always come from the same committed state.
 
