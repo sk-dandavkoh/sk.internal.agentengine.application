@@ -1,11 +1,12 @@
 """Configuration loading: defaults, env overrides, validation at startup."""
 
 from datetime import timedelta
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
-from akasha.config import load_settings
+from akasha.config import Settings, load_settings
 
 
 def test_defaults() -> None:
@@ -75,3 +76,14 @@ def test_invalid_resource_limits_fail_fast(
         monkeypatch.setenv(key, value)
     with pytest.raises(ValidationError):
         load_settings()
+
+
+def test_env_example_lists_every_setting() -> None:
+    """The operator's reference must not drift from Settings."""
+    example = (Path(__file__).parents[2] / ".env.example").read_text()
+    missing = [
+        name
+        for name in Settings.model_fields
+        if f"# AKASHA_{name.upper()}=" not in example
+    ]
+    assert missing == []

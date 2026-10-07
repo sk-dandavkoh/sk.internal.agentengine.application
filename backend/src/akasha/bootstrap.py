@@ -28,7 +28,7 @@ from akasha.application.reports import ReportService
 from akasha.application.sharing import SharingService
 from akasha.application.triggers import TriggerRegistry, TriggerService
 from akasha.application.workflows import WorkflowService
-from akasha.config import Settings
+from akasha.config import OpenAICompatibleEndpoint, Settings
 from akasha.domain.ai import LLMClient
 from akasha.infrastructure.database import Database, normalize_async_url
 from akasha.infrastructure.persistence import SqlAlchemyUnitOfWork
@@ -335,16 +335,24 @@ def create_ai_service(settings: Settings) -> AIService:
                 timeout_seconds=timeout,
             )
         )
+    endpoints = list(settings.llm_endpoints)
     if settings.openai_compatible_base_url is not None:
-        providers.append(
-            LLMProvider(
-                settings.openai_compatible_name,
-                LiteLLMAdapter(
-                    "openai", api_base=str(settings.openai_compatible_base_url)
-                ),
+        endpoints.append(
+            OpenAICompatibleEndpoint(
+                name=settings.openai_compatible_name,
+                base_url=settings.openai_compatible_base_url,
                 requires_credential=settings.openai_compatible_requires_credential,
-                timeout_seconds=timeout,
             )
         )
-    # A name clashing with a built-in provider fails startup (ConfigurationError).
+    providers += [
+        LLMProvider(
+            endpoint.name,
+            LiteLLMAdapter("openai", api_base=str(endpoint.base_url)),
+            requires_credential=endpoint.requires_credential,
+            timeout_seconds=timeout,
+        )
+        for endpoint in endpoints
+    ]
+    # A duplicate name, or one clashing with a built-in provider, fails
+    # startup (ConfigurationError).
     return AIService(providers, max_output_tokens=settings.limit_llm_output_tokens)

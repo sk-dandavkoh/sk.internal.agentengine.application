@@ -8,7 +8,14 @@ Missing or invalid critical configuration fails fast at startup (see
 from datetime import timedelta
 from pathlib import Path
 
-from pydantic import AnyHttpUrl, DirectoryPath, Field, SecretStr, model_validator
+from pydantic import (
+    AnyHttpUrl,
+    BaseModel,
+    DirectoryPath,
+    Field,
+    SecretStr,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from akasha.domain.limits import ResourceLimits
@@ -18,6 +25,17 @@ from akasha.domain.limits import ResourceLimits
 # variable (docs/deployment.md). Environment variables take precedence.
 # Only used where it exists: elsewhere pydantic-settings would warn.
 SECRETS_DIR = Path("/run/akasha-secrets")
+
+PROVIDER_NAME_PATTERN = r"^[a-z0-9][a-z0-9_-]{0,31}$"
+
+
+class OpenAICompatibleEndpoint(BaseModel):
+    """One OpenAI-compatible LLM endpoint (vLLM, OpenRouter, LM Studio, ...)."""
+
+    name: str = Field(pattern=PROVIDER_NAME_PATTERN)
+    base_url: AnyHttpUrl
+    # Keyless servers (a local vLLM) set this to false.
+    requires_credential: bool = True
 
 
 class Settings(BaseSettings):
@@ -109,9 +127,14 @@ class Settings(BaseSettings):
     # Keyless servers (a local vLLM) set requires_credential to false.
     openai_compatible_base_url: AnyHttpUrl | None = None
     openai_compatible_name: str = Field(
-        default="openai_compatible", pattern=r"^[a-z0-9][a-z0-9_-]{0,31}$"
+        default="openai_compatible", pattern=PROVIDER_NAME_PATTERN
     )
     openai_compatible_requires_credential: bool = True
+    # Any number of further OpenAI-compatible endpoints, as a JSON list:
+    # '[{"name": "openrouter", "base_url": "https://openrouter.ai/api/v1"},
+    #   {"name": "vllm", "base_url": "http://vllm:8000/v1",
+    #    "requires_credential": false}]'
+    llm_endpoints: list[OpenAICompatibleEndpoint] = Field(default_factory=list)
 
     # Authentication (Phase 20). Sessions expire this long after login;
     # there is no sliding renewal.

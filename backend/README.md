@@ -40,6 +40,15 @@ Built-in node settings:
 | `AKASHA_COMMAND_ALLOWED` | `[]` | JSON list of programs core.command may run; empty disables it. Not a sandbox (ADR 0005) |
 | `AKASHA_COMMAND_MAX_OUTPUT_BYTES` | `262144` | stdout/stderr cap per stream for core.command |
 
+LLM providers (`openai` and `anthropic` are always registered; keys are credentials, never settings):
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `AKASHA_LLM_TIMEOUT_SECONDS` | `60` | ceiling for one LLM request |
+| `AKASHA_OLLAMA_BASE_URL` | unset | registers `ollama` (no key) |
+| `AKASHA_LLM_ENDPOINTS` | `[]` | JSON list of OpenAI-compatible endpoints, each `{"name", "base_url", "requires_credential": true}`; every name becomes a provider |
+| `AKASHA_OPENAI_COMPATIBLE_BASE_URL` / `_NAME` / `_REQUIRES_CREDENTIAL` | unset / `openai_compatible` / `true` | older single-endpoint form, adds one more |
+
 Authentication settings:
 
 | Variable | Default | Meaning |

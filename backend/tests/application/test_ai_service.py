@@ -246,6 +246,56 @@ def test_openai_compatible_name_must_not_shadow_a_builtin() -> None:
         )
 
 
+def test_several_openai_compatible_endpoints_from_settings() -> None:
+    service = create_ai_service(
+        Settings.model_validate(
+            {
+                "llm_endpoints": [
+                    {"name": "openrouter", "base_url": "https://openrouter.ai/api/v1"},
+                    {
+                        "name": "vllm",
+                        "base_url": "http://vllm:8000/v1",
+                        "requires_credential": False,
+                    },
+                ],
+                "openai_compatible_base_url": "http://lmstudio:1234/v1",
+                "openai_compatible_name": "lmstudio",
+            }
+        )
+    )
+    assert service.provider_names == [
+        "anthropic",
+        "lmstudio",
+        "openai",
+        "openrouter",
+        "vllm",
+    ]
+    assert service._providers["openrouter"].requires_credential
+    assert not service._providers["vllm"].requires_credential
+
+
+def test_llm_endpoints_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(
+        "AKASHA_LLM_ENDPOINTS", '[{"name": "a", "base_url": "http://a/v1"}]'
+    )
+    assert create_ai_service(Settings()).provider_names == ["a", "anthropic", "openai"]
+
+
+@pytest.mark.parametrize(
+    "endpoints",
+    [
+        [
+            {"name": "x", "base_url": "http://x/v1"},
+            {"name": "x", "base_url": "http://y/v1"},
+        ],
+        [{"name": "anthropic", "base_url": "http://x/v1"}],
+    ],
+)
+def test_llm_endpoint_names_must_be_unique(endpoints: list[dict[str, str]]) -> None:
+    with pytest.raises(ConfigurationError):
+        create_ai_service(Settings.model_validate({"llm_endpoints": endpoints}))
+
+
 async def test_ai_service_is_the_nodes_llm_port() -> None:
     """Nodes see only ``LLMClient``; the assignment is checked by mypy."""
     client: LLMClient = AIService(
