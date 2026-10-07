@@ -37,6 +37,7 @@ function SnapshotNodeView({ data }: NodeProps<SnapshotNode>) {
         <NodeCard
             title={nodeTitle(instance, definition)}
             nodeType={instance.node_type}
+            kind={definition?.name}
             category={definition?.category}
             inputs={inputs}
             outputs={outputs}

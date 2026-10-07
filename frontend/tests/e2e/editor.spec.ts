@@ -163,7 +163,7 @@ test('renders, zooms, drags and saves a draft graph', async ({ page: p }) => {
     await expect(
         p.getByRole('heading', { level: 1, name: 'Draft editor: Leads' }),
     ).toBeVisible()
-    await expect(p.getByText(/latest being v1, stay unchanged/)).toBeVisible()
+    await expect(p.getByText(/Runs keep using the published v1/)).toBeVisible()
 
     // Nodes, the edge between them (a real SVG path), grid and minimap.
     await expect(node(p, /Lead in/)).toBeVisible()
@@ -246,6 +246,11 @@ test('drags a node from the library onto the canvas', async ({ page: p }) => {
         .dragTo(pane, { targetPosition: target })
 
     await expect(p.locator('.react-flow__node')).toHaveCount(3)
+    // The new node's dialog opens; closing it shows the canvas again.
+    await p
+        .getByRole('dialog', { name: 'core.log' })
+        .getByRole('button', { name: 'Done' })
+        .click()
     const added = p.locator('.react-flow__node.selected')
     await expect(added).toContainText('core.log')
     // The node's top-left lands at the drop point (snapped to the grid).
@@ -590,11 +595,15 @@ test('builds and saves a graph by keyboard alone', async ({ page: p }) => {
         .filter({ hasText: /^\d+ nodes, \d+ connections$/ })
     await expect(graphSize).toHaveText('2 nodes, 1 connections')
 
-    // Add from the library: the change is announced, focus stays put.
+    // Add from the library: the change is announced and the new node's
+    // dialog opens; Escape closes it and focus returns to Add.
     const add = p.getByRole('button', { name: 'Add core.log to graph' })
     await add.focus()
     await p.keyboard.press('Enter')
     await expect(graphSize).toHaveText('3 nodes, 1 connections')
+    await expect(p.getByRole('dialog', { name: 'core.log' })).toBeVisible()
+    await p.keyboard.press('Escape')
+    await expect(p.getByRole('dialog')).toHaveCount(0)
     await expect(add).toBeFocused()
 
     // Tab carries on from the library into the canvas, to the nodes, each
@@ -607,17 +616,16 @@ test('builds and saves a graph by keyboard alone', async ({ page: p }) => {
     await expect(lead).toBeFocused()
     await expect(lead).toHaveCSS('outline-style', 'solid')
 
-    // Enter selects it and opens its inspector; connect through the form.
+    // Enter selects it and opens its dialog; connect through its picker.
     await p.keyboard.press('Enter')
     await expect(lead).toHaveClass(/selected/)
-    const connections = p.getByRole('region', { name: 'Connections: Lead in' })
-    await connections
-        .getByLabel('To input')
+    const dialog = p.getByRole('dialog', { name: 'Lead in' })
+    await dialog
+        .getByLabel('Send value to')
         .selectOption({ label: 'core.log › value' })
-    await connections
-        .getByRole('button', { name: 'Connect', exact: true })
-        .press('Enter')
     await expect(graphSize).toHaveText('3 nodes, 2 connections')
+    await p.keyboard.press('Escape')
+    await expect(dialog).toHaveCount(0)
 
     // Back on the canvas node, Delete removes it with its connections.
     await lead.focus()

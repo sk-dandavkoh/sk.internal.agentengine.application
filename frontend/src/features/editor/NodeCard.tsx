@@ -2,6 +2,7 @@ import { Handle, Position } from '@xyflow/react'
 import type { ReactNode } from 'react'
 import { Icon } from '../../components/ui'
 import { cx } from '../../lib/cx'
+import { describeType, humanize } from './vocabulary'
 
 // The node as drawn on the canvas, shared with the library's preview so
 // the preview is exactly what an added node looks like.
@@ -57,6 +58,8 @@ export interface CardPort {
     /** Port signature (`portSignature`); undefined if the contract lacks it. */
     type?: string | undefined
     required?: boolean
+    /** What the port carries, shown on hover. */
+    description?: string | undefined
     /** While a connection is being drawn: whether this port can take it. */
     fit?: 'compatible' | 'incompatible' | undefined
 }
@@ -64,6 +67,8 @@ export interface CardPort {
 export interface NodeCardProps {
     title: string
     nodeType: string
+    /** The node type's display name, shown under a custom title. */
+    kind?: string | undefined
     /** undefined: the type is unknown, so no category is known either. */
     category: string | undefined
     inputs: readonly CardPort[]
@@ -83,6 +88,7 @@ export interface NodeCardProps {
 export function NodeCard({
     title,
     nodeType,
+    kind,
     category,
     inputs,
     outputs,
@@ -93,6 +99,11 @@ export function NodeCard({
     handles = false,
     footer,
 }: NodeCardProps) {
+    // A custom title is followed by the node's kind, else by its category.
+    const subtitle =
+        kind !== undefined && kind !== title
+            ? kind
+            : category !== undefined && humanize(category)
     return (
         <div
             className={cx(
@@ -113,7 +124,16 @@ export function NodeCard({
                 )}
                 <div className="min-w-0">
                     <p className="font-semibold">{title}</p>
-                    <p className="font-mono text-xs text-muted">{nodeType}</p>
+                    {/* The type id only where nothing friendlier is known. */}
+                    {category === undefined ? (
+                        <p className="font-mono text-xs text-muted">
+                            {nodeType}
+                        </p>
+                    ) : (
+                        subtitle !== title && (
+                            <p className="text-xs text-muted">{subtitle}</p>
+                        )
+                    )}
                     {/* Text, not just the dashed border: state is never color-only. */}
                     {unknown && (
                         <p className="text-xs font-medium text-warning-text">
@@ -177,7 +197,7 @@ function PortItem({
     missing: boolean
 }) {
     return (
-        <li className="relative px-3 py-0.5">
+        <li className="relative px-3 py-0.5" title={port.description}>
             {handles && (
                 <Handle
                     type={side}
@@ -198,8 +218,8 @@ function PortItem({
                 )}
             </span>
             {port.type !== undefined && (
-                <span className="ml-1 font-mono text-[10px] text-muted">
-                    {port.type}
+                <span className="ml-1 text-[10px] text-muted">
+                    {describeType(port.type).label}
                 </span>
             )}
         </li>

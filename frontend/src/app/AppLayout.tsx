@@ -72,7 +72,9 @@ export function AppLayout() {
                     id="main-content"
                     tabIndex={-1}
                     aria-busy={isNavigating}
-                    className="mx-auto max-w-6xl p-4 focus:outline-none sm:p-6"
+                    // Pages read best at a limited width; a page marked
+                    // data-full-width (the graph editor) takes the screen.
+                    className="mx-auto max-w-6xl p-4 focus:outline-none has-[[data-full-width]]:max-w-none sm:p-6"
                 >
                     <Outlet />
                 </main>

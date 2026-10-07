@@ -1,10 +1,11 @@
 import type { UseQueryResult } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useState, type DragEvent } from 'react'
 import type { NodeCatalog, NodeDefinition, NodePort } from '../../api/nodes'
 import { QuerySection } from '../../components/QuerySection'
 import { Badge, Button, EmptyState, Input, Select } from '../../components/ui'
-import { cardPort } from './graphView'
+import { cardPort, portSignature } from './graphView'
 import { CategoryIcon, NodeCard } from './NodeCard'
+import { capabilitiesOf, describeType, humanize } from './vocabulary'
 
 // The node catalog as a browsable library (frontend/AGENTS §24). Everything
 // shown comes from GET /nodes; new backend or plugin nodes appear without a
@@ -13,24 +14,23 @@ import { CategoryIcon, NodeCard } from './NodeCard'
 /** dataTransfer type of a library item dragged onto the canvas. */
 export const NODE_TYPE_MIME = 'application/x-akasha-node-type'
 
-/** "control_flow" → "Control flow"; categories and capabilities are open sets. */
-const humanize = (key: string) => {
-    const text = key.replaceAll('_', ' ')
-    return text.charAt(0).toUpperCase() + text.slice(1)
-}
+/** Capabilities worth a badge in the list; the rest are in the details. */
+const NOTABLE = new Set(['Changes things outside', 'Waits for a person'])
 
-const CAPABILITY_LABELS: Readonly<Record<string, string>> = {
-    supports_cancellation: 'Cancellable',
-    has_side_effects: 'Side effects',
-    is_control_flow: 'Control flow',
-    streams_output: 'Streams output',
+/** The browser's drag image of a list item also captured the items below
+ * it; an off-screen chip with just the node's name is unambiguous. */
+function setDragChip(event: DragEvent<HTMLElement>, name: string) {
+    const chip = document.createElement('div')
+    chip.textContent = name
+    chip.className =
+        'fixed -top-96 left-0 rounded-md border border-primary bg-surface px-3 py-2 text-sm font-semibold text-fg shadow'
+    document.body.append(chip)
+    event.dataTransfer.setDragImage(chip, 16, 16)
+    // The browser snapshots the chip synchronously; it can go right after.
+    setTimeout(() => {
+        chip.remove()
+    })
 }
-const capabilityLabel = (key: string) => CAPABILITY_LABELS[key] ?? humanize(key)
-
-const enabledCapabilities = (d: NodeDefinition) =>
-    Object.keys(d.capabilities)
-        .filter((key) => d.capabilities[key])
-        .sort()
 
 /** Required config keys from the JSON Schema; the inspector is Phase 09. */
 function requiredSettings(d: NodeDefinition): string[] {
@@ -57,13 +57,21 @@ function matches(d: NodeDefinition, query: string) {
     const q = query.trim().toLowerCase()
     return (
         q === '' ||
-        [d.name, d.node_type, d.description, d.category].some((s) =>
+        [d.name, d.node_type, d.description, humanize(d.category)].some((s) =>
             s.toLowerCase().includes(q),
         )
     )
 }
 
-function Ports({ title, ports }: { title: string; ports: NodePort[] }) {
+function Ports({
+    title,
+    ports,
+    inputs = false,
+}: {
+    title: string
+    ports: NodePort[]
+    inputs?: boolean
+}) {
     return (
         <div>
             <h5 className="font-medium">{title}</h5>
@@ -73,11 +81,12 @@ function Ports({ title, ports }: { title: string; ports: NodePort[] }) {
                 <ul>
                     {ports.map((p) => (
                         <li key={p.name}>
-                            <span className="font-mono">{p.name}</span>{' '}
+                            <span className="font-medium">{p.name}</span>{' '}
                             <span className="text-muted">
-                                ({p.type}
-                                {p.required ? ', required' : ''}
-                                {p.multiple ? ', multiple' : ''})
+                                ({describeType(portSignature(p)).label}
+                                {inputs &&
+                                    (p.required ? ', required' : ', optional')}
+                                )
                             </span>
                             {p.description && (
                                 <span className="block text-muted">
@@ -100,7 +109,7 @@ function LibraryItem({
     onAdd: (d: NodeDefinition) => void
 }) {
     const settings = requiredSettings(d)
-    const capabilities = enabledCapabilities(d)
+    const capabilities = capabilitiesOf(d)
     const docs = docsUrl(d)
     return (
         <li
@@ -108,20 +117,19 @@ function LibraryItem({
             onDragStart={(event) => {
                 event.dataTransfer.setData(NODE_TYPE_MIME, d.node_type)
                 event.dataTransfer.effectAllowed = 'copy'
+                setDragChip(event, d.name)
             }}
-            className="cursor-grab rounded-md border border-border p-2 active:cursor-grabbing"
+            className="cursor-grab rounded-md border border-border p-2 hover:border-border-strong hover:bg-surface-muted active:cursor-grabbing"
         >
-            <div className="flex items-start justify-between gap-2">
-                <div className="flex min-w-0 gap-2">
-                    <span className="mt-0.5 text-muted">
-                        <CategoryIcon category={d.category} />
-                    </span>
-                    <div className="min-w-0">
-                        <h4 className="font-semibold">{d.name}</h4>
-                        <p className="truncate font-mono text-xs text-muted">
-                            {d.node_type} · v{d.version}
-                        </p>
-                    </div>
+            <div className="flex items-start gap-2">
+                <span className="mt-0.5 text-muted">
+                    <CategoryIcon category={d.category} />
+                </span>
+                <div className="min-w-0 flex-1">
+                    <h4 className="font-semibold">{d.name}</h4>
+                    {d.description && (
+                        <p className="text-xs text-muted">{d.description}</p>
+                    )}
                 </div>
                 <Button
                     size="sm"
@@ -133,22 +141,23 @@ function LibraryItem({
                     Add
                 </Button>
             </div>
-            {d.description && <p className="mt-1 text-xs">{d.description}</p>}
-            {capabilities.length > 0 && (
+            {capabilities.some((c) => NOTABLE.has(c.label)) && (
                 <ul
-                    aria-label="Capabilities"
-                    className="mt-1 flex flex-wrap gap-1"
+                    aria-label="Good to know"
+                    className="mt-1 ml-7 flex flex-wrap gap-1"
                 >
-                    {capabilities.map((key) => (
-                        <li key={key}>
-                            <Badge>{capabilityLabel(key)}</Badge>
-                        </li>
-                    ))}
+                    {capabilities
+                        .filter((c) => NOTABLE.has(c.label))
+                        .map((c) => (
+                            <li key={c.label} title={c.description}>
+                                <Badge tone="warning">{c.label}</Badge>
+                            </li>
+                        ))}
                 </ul>
             )}
-            <details className="mt-1 text-xs">
+            <details className="mt-1 ml-7 text-xs">
                 <summary className="focus-ring cursor-pointer rounded text-muted">
-                    Preview and details
+                    Details
                     {/* Thirteen identical summaries are ambiguous out of
                         context, e.g. in a screen reader's control list. */}
                     <span className="sr-only"> of {d.name}</span>
@@ -165,16 +174,40 @@ function LibraryItem({
                             outputs={d.outputs.map((p) => cardPort(p, false))}
                         />
                     </div>
-                    <Ports title="Inputs" ports={d.inputs} />
-                    <Ports title="Outputs" ports={d.outputs} />
+                    <Ports title="Receives (inputs)" ports={d.inputs} inputs />
+                    <Ports title="Sends (outputs)" ports={d.outputs} />
                     <div>
-                        <h5 className="font-medium">Required settings</h5>
+                        <h5 className="font-medium">
+                            Settings you must fill in
+                        </h5>
                         <p className={settings.length ? '' : 'text-muted'}>
                             {settings.length
-                                ? settings.join(', ')
-                                : 'None; works with defaults.'}
+                                ? settings.map(humanize).join(', ')
+                                : 'None; works with its defaults.'}
                         </p>
                     </div>
+                    {capabilities.length > 0 && (
+                        <div>
+                            <h5 className="font-medium">Good to know</h5>
+                            <ul aria-label="Capabilities">
+                                {capabilities.map((c) => (
+                                    <li key={c.label}>
+                                        <span className="font-medium">
+                                            {c.label}
+                                        </span>
+                                        {c.description && (
+                                            <span className="text-muted">
+                                                : {c.description}
+                                            </span>
+                                        )}
+                                    </li>
+                                ))}
+                            </ul>
+                        </div>
+                    )}
+                    <p className="font-mono text-muted">
+                        {d.node_type} · v{d.version}
+                    </p>
                     {docs && (
                         <a
                             href={docs}
@@ -200,12 +233,12 @@ export function NodeLibrary({
 }) {
     const [search, setSearch] = useState('')
     const [category, setCategory] = useState('')
-    const [capability, setCapability] = useState('')
 
     return (
         <section
             aria-labelledby="node-library"
-            className="flex flex-col gap-2 rounded-md border border-border bg-surface p-3 max-h-[24rem] overflow-y-auto xl:max-h-[32rem] 2xl:max-h-[40rem]"
+            // Scrolls on its own; beside the canvas it is exactly as tall.
+            className="flex max-h-[24rem] min-h-0 flex-col gap-2 overflow-y-auto rounded-md border border-border bg-surface p-3 xl:max-h-none"
         >
             <h2 id="node-library" className="font-semibold">
                 Node library
@@ -215,15 +248,10 @@ export function NodeLibrary({
                     const categories = [
                         ...new Set(items.map((d) => d.category)),
                     ].sort()
-                    const capabilities = [
-                        ...new Set(items.flatMap(enabledCapabilities)),
-                    ].sort()
                     const shown = items.filter(
                         (d) =>
                             matches(d, search) &&
-                            (category === '' || d.category === category) &&
-                            (capability === '' ||
-                                d.capabilities[capability] === true),
+                            (category === '' || d.category === category),
                     )
                     const groups = categories
                         .map((c) => ({
@@ -236,6 +264,7 @@ export function NodeLibrary({
                             <Input
                                 type="search"
                                 label="Search nodes"
+                                placeholder="e.g. e-mail, file, AI"
                                 value={search}
                                 onChange={(e) => {
                                     setSearch(e.target.value)
@@ -252,20 +281,6 @@ export function NodeLibrary({
                                 {categories.map((c) => (
                                     <option key={c} value={c}>
                                         {humanize(c)}
-                                    </option>
-                                ))}
-                            </Select>
-                            <Select
-                                label="Capability"
-                                value={capability}
-                                onChange={(e) => {
-                                    setCapability(e.target.value)
-                                }}
-                            >
-                                <option value="">Any capability</option>
-                                {capabilities.map((c) => (
-                                    <option key={c} value={c}>
-                                        {capabilityLabel(c)}
                                     </option>
                                 ))}
                             </Select>
@@ -286,7 +301,7 @@ export function NodeLibrary({
                                 />
                             ) : (
                                 <p className="text-xs text-muted">
-                                    Add a node, or drag it onto the canvas.
+                                    Drag a node onto the canvas, or click Add.
                                 </p>
                             )}
                             {groups.map((g) => (

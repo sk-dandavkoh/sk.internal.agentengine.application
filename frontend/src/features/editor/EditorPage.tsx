@@ -1,6 +1,13 @@
 import { useQuery, type UseQueryResult } from '@tanstack/react-query'
 import { ReactFlowProvider, useReactFlow } from '@xyflow/react'
-import { Fragment, useMemo, useRef, useState, type KeyboardEvent } from 'react'
+import {
+    useCallback,
+    useMemo,
+    useRef,
+    useState,
+    type ComponentProps,
+    type KeyboardEvent,
+} from 'react'
 import { useParams } from 'react-router'
 import { useApiClient } from '../../api/context'
 import { ApiError, errorMessage } from '../../api/errors'
@@ -13,6 +20,7 @@ import type {
     ValidationIssue,
 } from '../../api/workflows'
 import { nodeQueries, workflowQueries } from '../../api/queries'
+import { cx } from '../../lib/cx'
 import { formatDateTime } from '../../lib/format'
 import { QuerySection } from '../../components/QuerySection'
 import {
@@ -26,18 +34,48 @@ import {
     useToast,
 } from '../../components/ui'
 import type { ConnectionRules } from './connections'
-import { ConnectionsPanel } from './ConnectionsPanel'
 import { newNodeId } from './editorState'
 import { GRID, GraphCanvas } from './GraphCanvas'
 import { edgeKey, edgesOf, nodeTitle } from './graphView'
-import { NodeInspector } from './NodeInspector'
+import { NodeDialog } from './NodeDialog'
 import { NodeLibrary } from './NodeLibrary'
 import { useDraftEditor } from './useDraftEditor'
+import { useFocusMode } from './useFocusMode'
 import { usePublishFlow } from './usePublishFlow'
 import { issueCounts } from './validation'
 import { ValidationPanel } from './ValidationPanel'
 
 const workflowPath = (id: string) => `/workflows/${encodeURIComponent(id)}`
+
+/** Library, canvas and side column fill the screen below the header; in
+ * full screen, below the toolbar. */
+const PANE_HEIGHT = 'xl:h-[calc(100dvh-15rem)] xl:min-h-[30rem]'
+const FOCUS_PANE_HEIGHT = 'xl:h-[calc(100dvh-4.5rem)] xl:min-h-[20rem]'
+
+function Divider() {
+    return <span aria-hidden="true" className="mx-1 h-5 w-px bg-border" />
+}
+
+/** A quiet toolbar button; its shortcut is in the tooltip. */
+function ToolButton({
+    label,
+    keys,
+    ...props
+}: { label: string; keys?: string } & Omit<
+    ComponentProps<typeof Button>,
+    'children' | 'size' | 'variant'
+>) {
+    return (
+        <Button
+            size="sm"
+            variant="ghost"
+            title={keys ? label + ' (' + keys + ')' : undefined}
+            {...props}
+        >
+            {label}
+        </Button>
+    )
+}
 
 function SaveStatus({
     dirty,
@@ -76,6 +114,14 @@ function isTextInput(target: EventTarget) {
     )
 }
 
+/** The id of the canvas node `target` is (React Flow's node wrapper). */
+function nodeAt(target: EventTarget) {
+    return target instanceof HTMLElement &&
+        target.classList.contains('react-flow__node')
+        ? target.dataset['id']
+        : undefined
+}
+
 function DraftEditor({
     workflow,
     rules,
@@ -112,10 +158,17 @@ function DraftEditor({
             editor.saveError.kind === 'conflict') ||
         publishFlow.stale
     const selected = new Set(state.selection)
-    const inspected =
-        state.selection.length === 1
-            ? state.graph.nodes.find((n) => n.id === state.selection[0])
-            : undefined
+    const [focus, setFocus] = useFocusMode()
+    // Off: the canvas alone, library and side column hidden.
+    const [panels, setPanels] = useState(true)
+    const paneHeight = focus ? FOCUS_PANE_HEIGHT : PANE_HEIGHT
+    // The node whose dialog is open; it closes by itself if the node goes
+    // (deleted, undone).
+    const [openId, setOpenId] = useState<string | null>(null)
+    const opened =
+        openId === null
+            ? undefined
+            : state.graph.nodes.find((n) => n.id === openId)
 
     const hasSelection =
         state.selection.length > 0 || state.edgeSelection.length > 0
@@ -149,20 +202,25 @@ function DraftEditor({
             event.target instanceof Node &&
             canvasRef.current?.contains(event.target) === true
         if (!(event.ctrlKey || event.metaKey)) {
+            const focusedNode = nodeAt(event.target)
             const plain =
                 !onCanvas || event.altKey
                     ? null
                     : event.key === 'Delete' || event.key === 'Backspace'
                       ? deleteSelection
-                      : event.key === 'Escape'
+                      : event.key === 'Enter' && focusedNode !== undefined
                         ? () => {
-                              dispatch({
-                                  type: 'select',
-                                  nodeIds: [],
-                                  edgeKeys: [],
-                              })
+                              openNode(focusedNode)
                           }
-                        : null
+                        : event.key === 'Escape'
+                          ? () => {
+                                dispatch({
+                                    type: 'select',
+                                    nodeIds: [],
+                                    edgeKeys: [],
+                                })
+                            }
+                          : null
             if (!plain) return
             event.preventDefault()
             plain()
@@ -216,10 +274,11 @@ function DraftEditor({
                 x: (rect?.left ?? 0) + (rect?.width ?? 0) / 2,
                 y: (rect?.top ?? 0) + (rect?.height ?? 0) / 2,
             })
+        const id = newNodeId()
         dispatch({
             type: 'add',
             node: {
-                id: newNodeId(),
+                id,
                 node_type: nodeType,
                 config: {},
                 label: '',
@@ -230,10 +289,25 @@ function DraftEditor({
                 },
             },
         })
+        // A new node is set up next; its dialog says what it needs.
+        setOpenId(id)
+    }
+
+    /** Selects the node and shows its dialog. Stable, see GraphCanvas. */
+    const openNode = useCallback(
+        (nodeId: string) => {
+            dispatch({ type: 'select', nodeIds: [nodeId], edgeKeys: [] })
+            setOpenId(nodeId)
+        },
+        [dispatch],
+    )
+
+    function closeNode() {
+        setOpenId(null)
     }
 
     function focusNode(nodeId: string) {
-        dispatch({ type: 'select', nodeIds: [nodeId], edgeKeys: [] })
+        openNode(nodeId)
         const position = state.graph.nodes.find(
             (n) => n.id === nodeId,
         )?.position
@@ -262,81 +336,107 @@ function DraftEditor({
     }
 
     return (
-        <div className="flex flex-col gap-3" onKeyDown={onKeyDown}>
+        // data-full-width: the editor uses the whole screen (AppLayout).
+        <div
+            data-full-width
+            className={cx(
+                'flex flex-col gap-3',
+                // Over the app, edge to edge (see useFocusMode).
+                focus && 'fixed inset-0 z-40 overflow-auto bg-canvas p-3',
+            )}
+            onKeyDown={onKeyDown}
+        >
             <div
                 role="toolbar"
                 aria-label="Editor"
-                className="flex flex-wrap items-center gap-2"
+                className="flex flex-wrap items-center gap-1 rounded-md border border-border bg-surface px-2 py-1.5"
             >
-                <Button
-                    size="sm"
+                <ToolButton
+                    label="Undo"
+                    keys="Ctrl+Z"
                     onClick={() => {
                         dispatch({ type: 'undo' })
                     }}
                     disabled={state.past.length === 0}
                     aria-keyshortcuts="Control+Z Meta+Z"
-                >
-                    Undo
-                </Button>
-                <Button
-                    size="sm"
+                />
+                <ToolButton
+                    label="Redo"
+                    keys="Ctrl+Shift+Z"
                     onClick={() => {
                         dispatch({ type: 'redo' })
                     }}
                     disabled={state.future.length === 0}
                     aria-keyshortcuts="Control+Shift+Z Meta+Shift+Z Control+Y"
-                >
-                    Redo
-                </Button>
-                <Button
-                    size="sm"
+                />
+                <Divider />
+                <ToolButton
+                    label="Copy"
+                    keys="Ctrl+C"
                     onClick={() => {
                         dispatch({ type: 'copy' })
                     }}
                     disabled={state.selection.length === 0}
                     aria-keyshortcuts="Control+C Meta+C"
-                >
-                    Copy
-                </Button>
-                <Button
-                    size="sm"
+                />
+                <ToolButton
+                    label="Paste"
+                    keys="Ctrl+V"
                     onClick={editor.paste}
                     disabled={state.clipboard === null}
                     aria-keyshortcuts="Control+V Meta+V"
-                >
-                    Paste
-                </Button>
-                <Button
-                    size="sm"
+                />
+                <ToolButton
+                    label="Duplicate"
+                    keys="Ctrl+D"
                     onClick={editor.duplicate}
                     disabled={state.selection.length === 0}
                     aria-keyshortcuts="Control+D Meta+D"
-                >
-                    Duplicate
-                </Button>
-                <Button
-                    size="sm"
+                />
+                <ToolButton
+                    label="Delete"
+                    keys="Delete"
                     onClick={deleteSelection}
                     disabled={!hasSelection}
                     aria-keyshortcuts="Delete Backspace"
-                >
-                    Delete
-                </Button>
-                <Button
-                    size="sm"
-                    variant="primary"
-                    onClick={editor.save}
-                    loading={editor.saving}
-                    disabled={!editor.dirty && !editor.saving}
-                    aria-keyshortcuts="Control+S Meta+S"
-                >
-                    Save draft
-                </Button>
-                <SaveStatus
-                    dirty={editor.dirty}
-                    saving={editor.saving}
-                    failed={editor.saveError !== null}
                 />
+                <span className="ml-auto flex flex-wrap items-center gap-2">
+                    <SaveStatus
+                        dirty={editor.dirty}
+                        saving={editor.saving}
+                        failed={editor.saveError !== null}
+                    />
+                    <Button
+                        size="sm"
+                        variant="primary"
+                        onClick={editor.save}
+                        loading={editor.saving}
+                        disabled={!editor.dirty && !editor.saving}
+                        aria-keyshortcuts="Control+S Meta+S"
+                        title="Save draft (Ctrl+S)"
+                    >
+                        Save draft
+                    </Button>
+                    <Divider />
+                    <ToolButton
+                        label="Panels"
+                        aria-pressed={panels}
+                        onClick={() => {
+                            setPanels(!panels)
+                        }}
+                        title="Show or hide the node library and side panels"
+                    />
+                    <ToolButton
+                        label={focus ? 'Exit full screen' : 'Full screen'}
+                        aria-pressed={focus}
+                        onClick={() => {
+                            // Canvas first: the panels are one click away.
+                            setPanels(focus)
+                            setFocus(!focus)
+                        }}
+                        title="Give the editor the whole screen (Esc leaves)"
+                    />
+                </span>
             </div>
 
             {conflict ? (
@@ -374,20 +474,36 @@ function DraftEditor({
                 it shrank to a sliver between library and panels), library
                 beside canvas from xl, stacked below. DOM order stays the
                 visual order, so Tab order follows the layout. */}
-            <div className="flex flex-col gap-3 xl:grid xl:grid-cols-[18rem_minmax(0,1fr)] 2xl:min-h-[32rem] 2xl:grid-cols-[18rem_minmax(0,1fr)_24rem]">
-                <NodeLibrary
-                    query={catalogQuery}
-                    onAdd={(d) => {
-                        addNode(d.node_type)
-                    }}
-                />
+            <div
+                className={cx(
+                    'flex flex-col gap-3',
+                    panels &&
+                        'xl:grid xl:grid-cols-[18rem_minmax(0,1fr)] 2xl:grid-cols-[18rem_minmax(0,1fr)_22rem]',
+                )}
+            >
+                {panels && (
+                    <div className={cx('flex min-h-0 flex-col', paneHeight)}>
+                        <NodeLibrary
+                            query={catalogQuery}
+                            onAdd={(d) => {
+                                addNode(d.node_type)
+                            }}
+                        />
+                    </div>
+                )}
                 <section
                     ref={canvasRef}
                     // Focusable, so a click on the empty pane still lands
                     // keyboard shortcuts here.
                     tabIndex={-1}
                     aria-label="Graph canvas"
-                    className="h-[32rem] min-w-0 overflow-hidden rounded-md border border-border bg-canvas 2xl:h-auto"
+                    className={cx(
+                        'min-w-0 overflow-hidden rounded-md border border-border bg-canvas',
+                        focus
+                            ? 'h-[calc(100dvh-4.5rem)] min-h-[20rem]'
+                            : 'h-[70vh] min-h-[24rem]',
+                        paneHeight,
+                    )}
                 >
                     <GraphCanvas
                         graph={state.graph}
@@ -416,9 +532,18 @@ function DraftEditor({
                                 description: problem.message,
                             })
                         }}
+                        onOpenNode={openNode}
                     />
                 </section>
-                <div className="flex flex-col gap-3 xl:col-span-2 2xl:col-span-1">
+                <div
+                    hidden={!panels}
+                    className={cx(
+                        'flex min-h-0 flex-col gap-3 xl:col-span-2 2xl:col-span-1 2xl:overflow-y-auto',
+                        focus
+                            ? '2xl:h-[calc(100dvh-4.5rem)]'
+                            : '2xl:h-[calc(100dvh-15rem)] 2xl:min-h-[30rem]',
+                    )}
+                >
                     <ValidationPanel
                         publishFlow={publishFlow}
                         revision={state.revision}
@@ -435,46 +560,18 @@ function DraftEditor({
                         }}
                         onLocate={locate}
                     />
-                    {inspected && (
-                        // One key for both panels: per node, so its half-typed
-                        // numbers and JSON stay its own.
-                        <Fragment key={inspected.id}>
-                            <NodeInspector
-                                node={inspected}
-                                definition={catalog?.get(inspected.node_type)}
-                                onConfigure={(config, field) => {
-                                    dispatch({
-                                        type: 'configure',
-                                        nodeId: inspected.id,
-                                        config,
-                                        field,
-                                    })
-                                }}
-                            />
-                            <ConnectionsPanel
-                                node={inspected}
-                                graph={state.graph}
-                                rules={rules}
-                                onConnect={connect}
-                                onRemove={(edge) => {
-                                    dispatch({
-                                        type: 'delete',
-                                        nodeIds: [],
-                                        edgeKeys: [edgeKey(edge)],
-                                    })
-                                }}
-                            />
-                        </Fragment>
-                    )}
                     {/* The canvas as a list: the graph without pointer or sight
                     (frontend/AGENTS §100). */}
                     <section
                         aria-labelledby="draft-nodes"
                         className="rounded-md border border-border bg-surface p-3"
                     >
-                        <h2 id="draft-nodes" className="mb-2 font-semibold">
+                        <h2 id="draft-nodes" className="font-semibold">
                             Nodes ({state.graph.nodes.length})
                         </h2>
+                        <p className="mb-2 text-xs text-muted">
+                            Click a node, here or on the canvas, to set it up.
+                        </p>
                         {/* Adding, deleting, connecting or undoing changes
                             the graph off-focus: announce its new size. */}
                         <p role="status" className="sr-only">
@@ -518,8 +615,11 @@ function DraftEditor({
                                                     ),
                                                 )}
                                                 <span className="block text-xs text-muted">
-                                                    {node.node_type} ·{' '}
-                                                    {incoming} in, {outgoing}{' '}
+                                                    {catalog?.get(
+                                                        node.node_type,
+                                                    )?.name ??
+                                                        node.node_type}{' '}
+                                                    · {incoming} in, {outgoing}{' '}
                                                     out
                                                 </span>
                                                 {issues > 0 && (
@@ -539,6 +639,58 @@ function DraftEditor({
                     </section>
                 </div>
             </div>
+
+            {opened && (
+                // Keyed per node, so its half-typed numbers and JSON stay
+                // its own.
+                <NodeDialog
+                    key={opened.id}
+                    test={{
+                        workflowId: workflow.id,
+                        revision: state.revision,
+                        saved: clean,
+                        onSave: editor.save,
+                    }}
+                    node={opened}
+                    definition={catalog?.get(opened.node_type)}
+                    graph={state.graph}
+                    rules={rules}
+                    onClose={closeNode}
+                    onRename={(label) => {
+                        dispatch({ type: 'rename', nodeId: opened.id, label })
+                    }}
+                    onConfigure={(config, field) => {
+                        dispatch({
+                            type: 'configure',
+                            nodeId: opened.id,
+                            config,
+                            field,
+                        })
+                    }}
+                    onConnect={connect}
+                    onRemoveEdge={(edge) => {
+                        dispatch({
+                            type: 'delete',
+                            nodeIds: [],
+                            edgeKeys: [edgeKey(edge)],
+                        })
+                    }}
+                    onDuplicate={() => {
+                        closeNode()
+                        editor.duplicate()
+                    }}
+                    onDelete={() => {
+                        closeNode()
+                        // Focus was on the node being deleted.
+                        canvasRef.current?.focus()
+                        dispatch({
+                            type: 'delete',
+                            nodeIds: [opened.id],
+                            edgeKeys: [],
+                        })
+                    }}
+                />
+            )}
 
             <ConfirmDialog
                 open={editor.blocker.state === 'blocked'}
@@ -570,12 +722,11 @@ function EditorHeader({ workflow }: { workflow: Workflow }) {
                 <>
                     <span className="block">
                         You are editing the draft (revision{' '}
-                        {String(workflow.revision)}). Saving changes the draft
-                        only;{' '}
+                        {String(workflow.revision)}). Changes are saved to it
+                        automatically.{' '}
                         {published > 0
-                            ? `published versions, the latest being v${String(published)}, stay unchanged.`
-                            : 'nothing has been published yet.'}{' '}
-                        Publishing is a separate step.
+                            ? `Runs keep using the published v${String(published)} until you publish again.`
+                            : 'Nothing has been published yet: publish to make it runnable.'}
                     </span>
                     <TextLink to={workflowPath(workflow.id)}>
                         Back to workflow

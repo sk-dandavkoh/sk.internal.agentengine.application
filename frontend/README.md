@@ -437,7 +437,15 @@ Request validation errors (`details["body.name"]`) appear at their field.
 
 `features/editor/` (`/workflows/:workflowId/editor`) edits the workflow
 **draft** only. The page says so: "Draft" badge, the draft revision, and
-that published versions stay unchanged. Saving never publishes.
+that runs keep using the published version. Saving never publishes.
+
+The editor is written for people who never saw a JSON Schema: words come
+from `vocabulary.ts` (port types as "Text", "Number", "Any"…, capabilities
+as "Changes things outside", "Can be stopped"…, each with what it means),
+and every port and setting is explained by its contract description (the
+backend's built-ins all have one: `test_every_port_and_setting_is_described`).
+The page takes the full screen width (`data-full-width`, see `AppLayout`);
+library, canvas and side column fill the screen height from `xl`.
 
 - `editorState.ts`: the pure editor state and reducer (graph, saved graph,
   revision, undo/redo stacks, node and edge selection, clipboard, drag
@@ -478,27 +486,49 @@ that published versions stay unchanged. Saving never publishes.
   is solid or dashed red. A drop on a port that refuses shows the reason
   in a toast. Stored edges the rule rejects (imports, contract changes)
   are drawn dashed with a text label.
-- `ConnectionsPanel.tsx`: the selected node's connections as lists with
-  Remove buttons, plus a "New connection" form. The form lists every input
-  of every other node, with the reason when one cannot take the chosen
-  output. It is the keyboard and screen-reader way to edit edges, checked
-  by the same rules as dragging.
+- `NodeDialog.tsx`: everything about one node in a modal dialog, opened by
+  a plain click on its card (a modifier click selects instead), Enter on a
+  focused card, a click in the node list or on a validation issue, and
+  right after adding a node. It holds the node's name on the canvas (the
+  `rename` action), what it does and what to know about it (capabilities in
+  plain words), its settings (`NodeInspector`) and its connections; Delete
+  node and Duplicate are in its footer. Edits apply as made (autosaved,
+  undoable), so Done only closes it.
+- `ConnectionsPanel.tsx`, in the dialog: each input and output with its
+  type, whether it is required, its description and its connections (with
+  Remove), and a picker to connect it ("Connect … from" / "Send … to") that
+  lists every port of every other node, with the reason when one cannot
+  fit. It is the keyboard and screen-reader way to edit edges, checked by
+  the same rules as dragging.
 - Node positions are part of the backend graph (`position: {x, y} | null`,
   architecture §7.2). Never-placed nodes are laid out on load and saved with
   the next edit.
+- Toolbar: history (undo, redo) | editing (copy, paste, duplicate,
+  delete), then save status and Save draft, then the view: Panels hides
+  the library and side column, Full screen (`useFocusMode.ts`) lays the
+  editor over the app and asks the browser for full screen too (Escape
+  leaves both; where the browser refuses, the in-page mode still works).
+  Full screen starts canvas-only; Panels brings the panels back.
+- Test node (`NodeTestPanel.tsx`, in the node dialog; ADR 0010): runs this
+  node of the _saved_ draft once on the backend with inputs typed in the
+  dialog (text ports as plain text, others as JSON) or taken from the
+  workflow's last run ("Use the input of the last run"). Shows status,
+  outputs, error and log lines; nothing is stored as a run. Nodes that
+  change things outside ask for confirmation first; nodes that wait for a
+  person cannot be tested alone.
 - Shortcuts (on the editor, never in text fields): Ctrl/⌘+Z undo,
   Ctrl/⌘+Shift+Z or Ctrl+Y redo, Ctrl/⌘+C/V copy/paste, Ctrl/⌘+D
   duplicate, Ctrl/⌘+S save. On the canvas only: Delete/Backspace delete
   the selection, Ctrl/⌘+A selects all, Escape clears the selection.
 - The node list beside the canvas is the non-visual view of the graph
-  (AGENTS §100): every node with type and connection counts. Selecting a
-  node there selects and centers it on the canvas.
+  (AGENTS §100): every node with its kind and connection counts. Choosing a
+  node there selects and centers it on the canvas and opens its dialog.
 
 Tests: `editorState.test.ts` covers the reducer. `EditorPage.test.tsx` runs
 the real route against a stub backend that enforces revisions (load, select,
 zoom, move, undo/redo, save, autosave, failures, conflict, leave guard).
 `connections.test.ts` covers the connection rules. Graph editing in
-`EditorPage.test.tsx` covers the panel, delete, duplicate, select all,
+`EditorPage.test.tsx` covers the dialog, delete, duplicate, select all,
 undo/redo, invalid stored edges and reload consistency.
 `tests/e2e/editor.spec.ts` covers what needs real layout: drag, pan, edge
 paths, minimap, saved positions, drag-to-connect with fit feedback, refused
@@ -513,15 +543,18 @@ the real backend, checks `/validate` and reloads.
 is no node list in the frontend; a new backend node appears without a
 frontend change. Unknown categories and capabilities are shown humanized.
 
-- Search (name, type, description, category), category and capability
-  filters, all local: the catalog is small and unpaginated. Results are
-  grouped by category with a live "n of m nodes" count.
-- Each item shows a category icon, name, type, version, description and
-  capabilities. "Preview and details" opens a preview (the canvas card
-  itself, `NodeCard.tsx`, shared with `GraphCanvas`), then ports (type,
-  required, multiple), the config schema's required settings and the
-  documentation link (only `http(s)` URLs are linked: it is plugin
-  metadata).
+- Search (name, type, description, category) and a category filter, both
+  local: the catalog is small and unpaginated. Results are grouped by
+  category with a live "n of m nodes" count.
+- Each item shows a category icon, name and description, plus a badge for
+  what users must know before using it (it changes things outside, it
+  waits for a person). "Details" opens a preview (the canvas card itself,
+  `NodeCard.tsx`, shared with `GraphCanvas`), then ports (type, required,
+  description), the settings that must be filled in, every capability in
+  plain words, type id and version, and the documentation link (only
+  `http(s)` URLs are linked: it is plugin metadata).
+- Dragging an item shows a chip with just the node's name: the browser's
+  own drag image of a list item also captured the items below it.
 - Icons are per category (`CATEGORY_GLYPHS` in `NodeCard.tsx`, the
   backend's built-in categories); any other category, e.g. a plugin's, gets
   a generic glyph. Icons are decorative: the category is always text too.
@@ -529,17 +562,18 @@ frontend change. Unknown categories and capabilities are shown humanized.
   its own icon.
 - Add puts the node at the canvas center; dragging an item onto the canvas
   puts it at the drop point. Both are one undoable edit that selects the
-  new node; it is saved like any other draft change. Adds onto an occupied
-  spot are offset, so repeated adds stay visible.
+  new node and opens its dialog; it is saved like any other draft change.
+  A node that would cover another card moves down below it, so adds stay
+  visible.
 - Refused: a type the catalog does not contain (a stale drop, a removed
   plugin) shows a toast, and a duplicate node id (the backend would reject
   the draft). New nodes start with empty config; configuring them is the
-  inspector (Phase 09), validity is the backend's `/validate`.
+  node dialog, validity is the backend's `/validate`.
 
 ## Node inspector
 
-`features/editor/NodeInspector.tsx`, beside the canvas while exactly one
-node is selected. Its form is generated from the node's `config_schema`
+`features/editor/NodeInspector.tsx`, the Settings section of the node
+dialog. Its form is generated from the node's `config_schema`
 (`configSchema.ts` reads the schema, `ConfigForm.tsx` renders it); no node
 has a form of its own, so a new backend or plugin node is configurable
 without a frontend change.
@@ -682,10 +716,12 @@ version's graph and its node logs (`/executions/{id}/logs`):
 
 - **Overview**: details, usage/cost, run snapshot (engine and node
   versions, redacted input), live activity while it runs;
-- **Graph**: the version's graph with each node's state; a click opens it;
-- **Nodes**: node table and the node inspector (status, attempts and
-  retries, timing, error, failed attempts by number, outputs, usage, cost
-  and the node's logs);
+- **Graph**: the version's graph with each node's state; a click opens the
+  node in a dialog (`?tab=graph&node=<id>`): input and output side by side,
+  then its facts and logs, like n8n's node view;
+- **Nodes**: node table and the node inspector (error, input | output,
+  status, attempts and retries, timing, failed attempts by number, usage,
+  cost and the node's logs);
 - **Logs**: node log lines, filtered by level, node and message text on the
   backend, 100 per page;
 - **Errors**: the execution error and every failed attempt per node;
@@ -694,9 +730,14 @@ version's graph and its node logs (`/executions/{id}/logs`):
 Untrusted content (outputs, log messages and fields, error texts, labels)
 renders as React text only, never as HTML or Markdown; text over 20,000
 characters is cut with a "Show all" toggle. Redaction is the backend's; the
-UI shows `[REDACTED]` as sent and stores nothing in browser storage. Node
-inputs are not shown: the backend does not persist them (the upstream
-outputs are what a node received).
+UI shows `[REDACTED]` as sent and stores nothing in browser storage.
+
+Input and output (`inspector/NodeData.tsx`): inputs are not stored; the
+report lists what reached each node per live edge (port, source node and
+port, value), derived by the runtime's own rule and redacted like outputs.
+Text shows as text; a list of objects has a Table view (first 100 rows)
+beside JSON. Nodes are named like in the editor: label, else catalog name,
+else type.
 
 ## Monitoring
 

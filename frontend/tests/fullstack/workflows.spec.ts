@@ -306,11 +306,13 @@ test('the inspector configures a built-in node from its backend schema', async (
     await library
         .getByRole('button', { name: 'Add HTTP Request to graph' })
         .click()
-    const inspector = p.getByRole('region', { name: /^Settings: HTTP Request/ })
+    const inspector = p
+        .getByRole('dialog', { name: 'HTTP Request' })
+        .getByRole('region', { name: 'Settings' })
 
     // The real backend judges the config, field by field.
     await expect(
-        inspector.getByText(/publishing would be rejected/),
+        inspector.getByText(/before the workflow can be published/),
     ).toBeVisible()
     const url = inspector.getByRole('textbox', { name: /^Url/ })
     await url.fill('ftp://example.com')
@@ -371,7 +373,9 @@ test('a graph connected by dragging is stored, validates and reloads the same', 
     expect(seeded.status()).toBe(200)
     await p.goto(`/workflows/${workflow.id}/editor`)
     const card = (name: string) =>
-        p.locator('.react-flow__node').filter({ hasText: name })
+        // By its accessible name, "<title> (<type>)": card texts overlap
+        // ("Input" is also in "Missing required input").
+        p.locator(`.react-flow__node[aria-label^="${name} ("]`)
     await expect(p.locator('.react-flow__node')).toHaveCount(3)
 
     const port = (name: string, side: 'source' | 'target') =>
@@ -386,8 +390,8 @@ test('a graph connected by dragging is stored, validates and reloads the same', 
         await p.mouse.up()
     }
     await expect(card('Log')).toContainText('Missing required input: value')
-    await connect('core.input', 'core.log')
-    await connect('core.log', 'core.output')
+    await connect('Input', 'Log')
+    await connect('Log', 'Output')
     await expect(p.locator('.react-flow__edge')).toHaveCount(2)
     await expect(card('Log')).not.toContainText('Missing required input')
     await p.keyboard.press('ControlOrMeta+s')
@@ -445,28 +449,28 @@ test('the backend port rule decides which inputs an output may feed', async ({
         await library
             .getByRole('button', { name: `Add ${name} to graph` })
             .click()
+        await p
+            .getByRole('dialog', { name })
+            .getByRole('button', { name: 'Done' })
+            .click()
     }
     await p
         .getByRole('region', { name: /^Nodes/ })
         .getByRole('button', { name: /^HTTP Request/ })
         .click()
-    const panel = p.getByRole('region', { name: /^Connections: HTTP Request/ })
-    const to = panel.getByRole('combobox', { name: 'To input' })
+    const dialog = p.getByRole('dialog', { name: 'HTTP Request' })
     // number → string: refused by the real compatibility table.
-    await panel
-        .getByRole('combobox', { name: 'From output' })
-        .selectOption('status')
     await expect(
-        to.getByRole('option', {
-            name: 'Web Search › query (incompatible type)',
-        }),
+        dialog
+            .getByRole('combobox', { name: 'Send status to' })
+            .getByRole('option', {
+                name: 'Web Search › query (incompatible type)',
+            }),
     ).toBeDisabled()
     // json → string: the generic type connects anywhere.
-    await panel
-        .getByRole('combobox', { name: 'From output' })
-        .selectOption('body')
-    await to.selectOption({ label: 'Web Search › query' })
-    await panel.getByRole('button', { name: 'Connect' }).click()
+    await dialog
+        .getByRole('combobox', { name: 'Send body to' })
+        .selectOption({ label: 'Web Search › query' })
     await expect(p.locator('.react-flow__edge')).toHaveCount(1)
 })
 
@@ -524,17 +528,21 @@ test('validate, fix and publish a draft as an immutable version', async ({
             .getByRole('region', { name: /^Nodes/ })
             .getByRole('button', { name: /^Log/ }),
     ).toHaveAttribute('aria-pressed', 'true')
+    // The error opens the node it is about, saying what is missing.
+    const log = p.getByRole('dialog', { name: 'Log' })
+    await expect(log.getByText(/^Not connected yet/)).toBeVisible()
+    await log.getByRole('button', { name: 'Done' }).click()
 
     // Fix: connect Input → Log, save, validate again.
     await p
         .getByRole('region', { name: /^Nodes/ })
         .getByRole('button', { name: /^Input/ })
         .click()
-    const connections = p.getByRole('region', { name: /^Connections: Input/ })
-    await connections
-        .getByRole('combobox', { name: 'To input' })
+    const dialog = p.getByRole('dialog', { name: 'Input' })
+    await dialog
+        .getByRole('combobox', { name: 'Send value to' })
         .selectOption({ label: 'Log › value' })
-    await connections.getByRole('button', { name: 'Connect' }).click()
+    await dialog.getByRole('button', { name: 'Done' }).click()
     await p.keyboard.press('ControlOrMeta+s')
     await expect(p.getByText('All changes saved to draft')).toBeVisible()
     await panel.getByRole('button', { name: 'Validate' }).click()

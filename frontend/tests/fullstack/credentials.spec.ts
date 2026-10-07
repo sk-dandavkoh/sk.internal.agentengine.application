@@ -82,9 +82,9 @@ test('a credential is created, referenced, exported without its secret and repor
         await library
             .getByRole('button', { name: 'Add HTTP Request to graph' })
             .click()
-        const inspector = p.getByRole('region', {
-            name: /^Settings: HTTP Request/,
-        })
+        const inspector = p
+            .getByRole('dialog', { name: 'HTTP Request' })
+            .getByRole('region', { name: 'Settings' })
         await inspector
             .getByRole('textbox', { name: /^Url/ })
             .fill('https://example.com/hook')

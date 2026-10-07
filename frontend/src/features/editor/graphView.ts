@@ -74,6 +74,7 @@ export const cardPort = (port: NodePort, input = true): CardPort => ({
     name: port.name,
     type: portSignature(port),
     required: input && port.required,
+    description: port.description || undefined,
 })
 
 /**

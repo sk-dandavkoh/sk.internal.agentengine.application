@@ -228,7 +228,10 @@ describe('Execution inspector', () => {
                 .getByRole('heading', { name: 'Node: Score' })
                 .closest('section') ?? document.body,
         )
-        expect(inspector.getByText(/"body": "ok"/)).toBeInTheDocument()
+        // Output per port; text shows as text, not as a JSON string.
+        const output = within(inspector.getByRole('region', { name: 'Output' }))
+        expect(output.getByText('body')).toBeInTheDocument()
+        expect(output.getByText('ok')).toBeInTheDocument()
         expect(inspector.getByText(/1\.2\.0/)).toBeInTheDocument()
 
         const events = await openTab('Events')
@@ -274,10 +277,62 @@ describe('Execution inspector', () => {
         })
         expect(within(graph).getByText('Completed')).toBeInTheDocument()
 
+        // A node opens in place, its input and output side by side.
         fireEvent.click(within(graph).getByText('Fetch leads'))
+        const dialog = within(
+            await screen.findByRole('dialog', { name: 'Fetch leads' }),
+        )
+        expect(router.state.location.search).toBe('?tab=graph&node=fetch')
+        expect(
+            dialog.getByRole('region', { name: 'Input' }),
+        ).toBeInTheDocument()
+        expect(
+            dialog.getByRole('region', { name: 'Output' }),
+        ).toBeInTheDocument()
+        fireEvent.click(dialog.getByRole('button', { name: 'Close' }))
         await waitFor(() => {
-            expect(router.state.location.search).toBe('?tab=nodes&node=fetch')
+            expect(router.state.location.search).toBe('?tab=graph')
         })
+    })
+
+    it('shows what reached a node and from where; lists of objects as a table', async () => {
+        const rows = [
+            { name: 'Ada', score: 9 },
+            { name: 'Lin', score: 7 },
+        ]
+        backend(
+            report({
+                nodes: [
+                    node('fetch', 'Fetch leads', { inputs: [] }),
+                    node('score', 'Score', {
+                        inputs: [
+                            {
+                                port: 'leads',
+                                source_node_id: 'fetch',
+                                source_port: 'rows',
+                                value: rows,
+                            },
+                        ],
+                        outputs: { best: 'Ada' },
+                    }),
+                ],
+            }),
+        )
+        renderRoute(`/executions/${EID}?tab=nodes&node=score`)
+
+        const input = within(
+            await screen.findByRole('region', { name: 'Input' }),
+        )
+        // Named by the source node's label, not its id.
+        expect(input.getByText(/from Fetch leads › rows/)).toBeInTheDocument()
+        const table = within(input.getByRole('table'))
+        expect(
+            table.getAllByRole('columnheader').map((h) => h.textContent),
+        ).toEqual(['name', 'score'])
+        expect(table.getByText('Lin')).toBeInTheDocument()
+        fireEvent.click(input.getByRole('button', { name: 'JSON' }))
+        expect(input.queryByRole('table')).toBeNull()
+        expect(input.getByText(/"name": "Ada"/)).toBeInTheDocument()
     })
 
     it('lets a failed node be diagnosed: error, retried failures and its logs', async () => {
@@ -532,10 +587,11 @@ describe('Execution inspector', () => {
         )
         renderRoute(`/executions/${EID}?tab=nodes&node=fetch`)
 
-        // No label: the node is named by its id.
+        // No label and no catalog: the node is named by its type, as in the
+        // editor (its id means nothing to a reader).
         const inspector = within(
             (
-                await screen.findByRole('heading', { name: 'Node: fetch' })
+                await screen.findByRole('heading', { name: 'Node: core.http' })
             ).closest('section') ?? document.body,
         )
         expect(inspector.getByText('Pending')).toBeInTheDocument()
@@ -617,9 +673,9 @@ describe('Execution inspector', () => {
                 })
             ).closest('section') ?? document.body,
         )
-        expect(
-            inspector.getByText(/"api_key": "\[REDACTED\]"/),
-        ).toBeInTheDocument()
+        const output = within(inspector.getByRole('region', { name: 'Output' }))
+        expect(output.getByText('api_key')).toBeInTheDocument()
+        expect(output.getByText('[REDACTED]')).toBeInTheDocument()
         expect(
             await inspector.findByText('calling with Bearer [REDACTED]'),
         ).toBeInTheDocument()
@@ -649,10 +705,12 @@ describe('Execution inspector', () => {
         renderRoute(`/executions/${EID}?tab=nodes&node=fetch`)
 
         expect(await screen.findByText(hostile)).toBeInTheDocument()
-        // The output, as JSON text with the markup still in it.
-        expect(document.body.textContent).toContain(
-            `"html": ${JSON.stringify(hostile)}`,
-        )
+        // The output text, with the markup still in it as text.
+        expect(
+            within(screen.getByRole('region', { name: 'Output' })).getByText(
+                hostile,
+            ),
+        ).toBeInTheDocument()
         expect(screen.getAllByText(link).length).toBeGreaterThan(0)
         // Nothing was interpreted: no element came out of the text.
         expect(document.querySelector('img')).toBeNull()

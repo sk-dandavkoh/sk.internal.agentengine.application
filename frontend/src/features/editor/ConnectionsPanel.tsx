@@ -1,6 +1,5 @@
-import { useState } from 'react'
 import type { Edge, Graph, NodeInstance } from '../../api/workflows'
-import { Button, Select } from '../../components/ui'
+import { Badge, Button, Select } from '../../components/ui'
 import {
     connectionProblem,
     missingInputs,
@@ -8,10 +7,12 @@ import {
     type ConnectionRules,
 } from './connections'
 import { edgeKey, edgesOf, graphIndex, nodeTitle, portsOf } from './graphView'
+import type { CardPort } from './NodeCard'
+import { describeType } from './vocabulary'
 
 /**
- * The selected node's edges as lists with remove buttons, plus a form to
- * connect one of its outputs: graph editing without pointer or sight
+ * The node's inputs and outputs, each explained, with its connections and
+ * a picker to add one: graph editing without pointer or sight
  * (frontend/AGENTS §18), checked by the same rules as dragging.
  */
 export function ConnectionsPanel({
@@ -28,195 +29,208 @@ export function ConnectionsPanel({
     onRemove: (edge: Edge) => void
 }) {
     const definition = rules.catalog?.get(node.node_type)
-    const own = edgesOf(graph, node.id)
-    const { inputs, outputs } = portsOf(node, definition, own)
-    const missing = missingInputs(node.id, definition, own)
+    const { inputs, outputs } = portsOf(
+        node,
+        definition,
+        edgesOf(graph, node.id),
+    )
+    const missing = missingInputs(node.id, definition, edgesOf(graph, node.id))
     const title = (id: string) => {
         const n = graphIndex(graph).nodes.get(id)
         return n ? nodeTitle(n, rules.catalog?.get(n.node_type)) : id
     }
-    const name = nodeTitle(node, definition)
-    const [output, setOutput] = useState('')
-    const [target, setTarget] = useState('')
-    const source = outputs.some((p) => p.name === output)
-        ? output
-        : (outputs[0]?.name ?? '')
-    const targets = graph.nodes
+    const others = graph.nodes
         .filter((n) => n.id !== node.id)
-        .flatMap((n) =>
-            portsOf(
+        .map((n) => ({
+            node: n,
+            ports: portsOf(
                 n,
                 rules.catalog?.get(n.node_type),
                 edgesOf(graph, n.id),
-            ).inputs.map((p) => {
-                const edge = {
-                    source_node_id: node.id,
-                    source_port: source,
-                    target_node_id: n.id,
-                    target_port: p.name,
-                }
+            ),
+        }))
+
+    /** Every port of the other nodes this port could connect to. */
+    function candidates(port: CardPort, side: 'input' | 'output') {
+        return others.flatMap(({ node: n, ports }) =>
+            (side === 'input' ? ports.outputs : ports.inputs).map((p) => {
+                const edge =
+                    side === 'input'
+                        ? {
+                              source_node_id: n.id,
+                              source_port: p.name,
+                              target_node_id: node.id,
+                              target_port: port.name,
+                          }
+                        : {
+                              source_node_id: node.id,
+                              source_port: port.name,
+                              target_node_id: n.id,
+                              target_port: p.name,
+                          }
                 return {
                     edge,
-                    key: edgeKey(edge),
                     label: `${title(n.id)} › ${p.name}`,
                     problem: connectionProblem(graph, edge, rules),
                 }
             }),
         )
-    // A choice that a changed output (or graph) made invalid is dropped.
-    const chosen = targets.find((t) => t.key === target && !t.problem)
+    }
 
-    const edgeList = (edges: Edge[], other: (e: Edge) => string) =>
-        edges.length === 0 ? null : (
-            <ul className="flex flex-col gap-1">
-                {edges.map((e) => (
-                    <li
-                        key={edgeKey(e)}
-                        className="flex items-center justify-between gap-2"
-                    >
-                        <span>{other(e)}</span>
-                        <Button
-                            size="sm"
-                            variant="ghost"
-                            onClick={() => {
-                                onRemove(e)
-                            }}
-                            aria-label={`Remove connection ${title(e.source_node_id)} ${e.source_port} to ${title(e.target_node_id)} ${e.target_port}`}
-                        >
-                            Remove
-                        </Button>
-                    </li>
-                ))}
-            </ul>
+    // A render function, not a component: one defined in here would
+    // remount on every change and drop the focus of its picker.
+    function portRow(port: CardPort, side: 'input' | 'output') {
+        const edges = graph.edges.filter((e) =>
+            side === 'input'
+                ? e.target_node_id === node.id && e.target_port === port.name
+                : e.source_node_id === node.id && e.source_port === port.name,
         )
+        const type = port.type === undefined ? null : describeType(port.type)
+        // By side: an input and an output may share a name (file_write's
+        // `path`), and only an input can be missing.
+        const needed = side === 'input' && missing.includes(port.name)
+        const options = candidates(port, side)
+        return (
+            <li
+                key={port.name}
+                className="flex flex-col gap-1 rounded-md border border-border p-2"
+            >
+                <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-medium">{port.name}</span>
+                    {type && (
+                        <span title={type.hint}>
+                            <Badge>{type.label}</Badge>
+                        </span>
+                    )}
+                    {side === 'input' &&
+                        (port.required ? (
+                            <Badge tone="warning">Required</Badge>
+                        ) : (
+                            <span className="text-xs text-muted">Optional</span>
+                        ))}
+                </div>
+                {port.description && (
+                    <p className="text-muted">{port.description}</p>
+                )}
+                {edges.length > 0 ? (
+                    <ul className="flex flex-col gap-1">
+                        {edges.map((e) => (
+                            <li
+                                key={edgeKey(e)}
+                                className="flex items-center justify-between gap-2"
+                            >
+                                <span>
+                                    {side === 'input'
+                                        ? `From ${title(e.source_node_id)} › ${e.source_port}`
+                                        : `To ${title(e.target_node_id)} › ${e.target_port}`}
+                                </span>
+                                <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    onClick={() => {
+                                        onRemove(e)
+                                    }}
+                                    aria-label={`Remove connection ${title(e.source_node_id)} ${e.source_port} to ${title(e.target_node_id)} ${e.target_port}`}
+                                >
+                                    Remove
+                                </Button>
+                            </li>
+                        ))}
+                    </ul>
+                ) : (
+                    <p
+                        className={
+                            needed
+                                ? 'font-medium text-warning-text'
+                                : 'text-muted'
+                        }
+                    >
+                        {needed
+                            ? 'Not connected yet. This node cannot run without it: connect the output of a node that provides this value.'
+                            : side === 'input'
+                              ? 'Not connected; optional.'
+                              : 'Not sent anywhere yet.'}
+                    </p>
+                )}
+                {/* Listed even when none fits: the reasons say why. */}
+                {options.length > 0 && (
+                    // Connects on choice; the list above announces the result.
+                    <Select
+                        label={
+                            side === 'input'
+                                ? `Connect ${port.name} from`
+                                : `Send ${port.name} to`
+                        }
+                        value=""
+                        onChange={(event) => {
+                            const chosen = options.find(
+                                (o) => edgeKey(o.edge) === event.target.value,
+                            )
+                            if (chosen && !chosen.problem)
+                                onConnect(chosen.edge)
+                        }}
+                    >
+                        <option value="">
+                            {side === 'input'
+                                ? 'Choose a node output…'
+                                : 'Choose a node input…'}
+                        </option>
+                        {options.map((o) => (
+                            <option
+                                key={edgeKey(o.edge)}
+                                value={edgeKey(o.edge)}
+                                disabled={o.problem !== null}
+                            >
+                                {o.label}
+                                {o.problem &&
+                                    ` (${PROBLEM_LABELS[o.problem.code]})`}
+                            </option>
+                        ))}
+                    </Select>
+                )}
+            </li>
+        )
+    }
 
     return (
         <section
             aria-labelledby="node-connections"
-            className="flex flex-col gap-3 rounded-md border border-border bg-surface p-3 text-sm"
+            className="flex flex-col gap-3 text-sm"
         >
-            <h2 id="node-connections" className="font-semibold">
-                Connections: {name}
-            </h2>
-            {missing.length > 0 && (
-                <p className="font-medium text-warning-text">
-                    Missing required input: {missing.join(', ')}. Publishing
-                    would be rejected.
+            <div>
+                <h3 id="node-connections" className="font-semibold">
+                    Connections
+                </h3>
+                <p className="text-muted">
+                    Data flows along connections, from one node&apos;s output
+                    into another node&apos;s input. On the canvas, drag from a
+                    dot on the right of a node to a dot on the left of another.
                 </p>
-            )}
-            <div>
-                <h3 className="font-medium">Inputs</h3>
+            </div>
+            <div className="flex flex-col gap-2">
+                <h4 className="font-medium">Receives (inputs)</h4>
                 {inputs.length === 0 ? (
-                    <p className="text-muted">No inputs.</p>
+                    <p className="text-muted">
+                        Nothing: this node starts a flow.
+                    </p>
                 ) : (
                     <ul className="flex flex-col gap-2">
-                        {inputs.map((p) => {
-                            const edges = graph.edges.filter(
-                                (e) =>
-                                    e.target_node_id === node.id &&
-                                    e.target_port === p.name,
-                            )
-                            return (
-                                <li key={p.name}>
-                                    <span className="font-mono text-xs">
-                                        {p.name}
-                                        {p.type && ` (${p.type})`}
-                                        {p.required && ', required'}
-                                    </span>
-                                    {edgeList(
-                                        edges,
-                                        (e) =>
-                                            `from ${title(e.source_node_id)} › ${e.source_port}`,
-                                    ) ?? (
-                                        <p className="text-muted">
-                                            Not connected
-                                        </p>
-                                    )}
-                                </li>
-                            )
-                        })}
+                        {inputs.map((p) => portRow(p, 'input'))}
                     </ul>
                 )}
             </div>
-            <div>
-                <h3 className="font-medium">Outputs</h3>
+            <div className="flex flex-col gap-2">
+                <h4 className="font-medium">Sends (outputs)</h4>
                 {outputs.length === 0 ? (
-                    <p className="text-muted">No outputs.</p>
+                    <p className="text-muted">
+                        Nothing: this node ends a flow.
+                    </p>
                 ) : (
                     <ul className="flex flex-col gap-2">
-                        {outputs.map((p) => (
-                            <li key={p.name}>
-                                <span className="font-mono text-xs">
-                                    {p.name}
-                                    {p.type && ` (${p.type})`}
-                                </span>
-                                {edgeList(
-                                    graph.edges.filter(
-                                        (e) =>
-                                            e.source_node_id === node.id &&
-                                            e.source_port === p.name,
-                                    ),
-                                    (e) =>
-                                        `to ${title(e.target_node_id)} › ${e.target_port}`,
-                                ) ?? (
-                                    <p className="text-muted">Not connected</p>
-                                )}
-                            </li>
-                        ))}
+                        {outputs.map((p) => portRow(p, 'output'))}
                     </ul>
                 )}
             </div>
-            {outputs.length > 0 && targets.length > 0 && (
-                <form
-                    className="flex flex-col gap-2 border-t border-border pt-3"
-                    onSubmit={(event) => {
-                        event.preventDefault()
-                        if (!chosen) return
-                        onConnect(chosen.edge)
-                        setTarget('')
-                    }}
-                >
-                    <h3 className="font-medium">New connection</h3>
-                    <Select
-                        label="From output"
-                        value={source}
-                        onChange={(e) => {
-                            setOutput(e.target.value)
-                        }}
-                    >
-                        {outputs.map((p) => (
-                            <option key={p.name} value={p.name}>
-                                {p.name}
-                                {p.type && ` (${p.type})`}
-                            </option>
-                        ))}
-                    </Select>
-                    <Select
-                        label="To input"
-                        description="Inputs that cannot take this output are listed with the reason."
-                        value={chosen?.key ?? ''}
-                        onChange={(e) => {
-                            setTarget(e.target.value)
-                        }}
-                    >
-                        <option value="">Choose an input…</option>
-                        {targets.map((t) => (
-                            <option
-                                key={t.key}
-                                value={t.key}
-                                disabled={t.problem !== null}
-                            >
-                                {t.label}
-                                {t.problem &&
-                                    ` (${PROBLEM_LABELS[t.problem.code]})`}
-                            </option>
-                        ))}
-                    </Select>
-                    <Button type="submit" size="sm" disabled={!chosen}>
-                        Connect
-                    </Button>
-                </form>
-            )}
         </section>
     )
 }

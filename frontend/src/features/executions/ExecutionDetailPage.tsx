@@ -89,7 +89,13 @@ function ExecutionView({ execution }: { execution: Execution }) {
                 <GraphPanel
                     execution={execution}
                     report={r}
-                    onInspect={inspect}
+                    selected={node}
+                    onInspect={(nodeId) => {
+                        show('graph', nodeId)
+                    }}
+                    onClose={() => {
+                        show('graph', '')
+                    }}
                 />
             )),
         },
@@ -181,6 +187,17 @@ export function ExecutionDetailPage() {
                         <Mono>{executionId}</Mono> ·{' '}
                         <TextLink to={reportPath(executionId)}>Report</TextLink>{' '}
                         · <TextLink to="/executions">All executions</TextLink>
+                        {execution && (
+                            <>
+                                {' '}
+                                ·{' '}
+                                <TextLink
+                                    to={`/workflows/${encodeURIComponent(execution.workflow_id)}/editor`}
+                                >
+                                    Open workflow in editor
+                                </TextLink>
+                            </>
+                        )}
                     </>
                 }
                 actions={

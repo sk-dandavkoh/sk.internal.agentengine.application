@@ -132,10 +132,9 @@ async function openInspector() {
     const view = renderRoute('/workflows/p1/editor')
     const list = await screen.findByRole('region', { name: /^Nodes/ })
     fireEvent.click(within(list).getByRole('button', { name: /Rich one/ }))
-    const inspector = await screen.findByRole('region', {
-        name: /^Settings: Rich one/,
-    })
-    return { ...view, inspector: within(inspector) }
+    const dialog = await screen.findByRole('dialog', { name: 'Rich one' })
+    const inspector = within(dialog).getByRole('region', { name: 'Settings' })
+    return { ...view, dialog: within(dialog), inspector: within(inspector) }
 }
 
 const type = (field: HTMLElement, value: string) => {
@@ -159,10 +158,11 @@ beforeAll(() => import('./EditorPage'))
 describe('NodeInspector', () => {
     it('renders every field kind from the node schema alone', async () => {
         backend()
-        const { inspector } = await openInspector()
+        const { dialog, inspector } = await openInspector()
 
-        expect(inspector.getByText('acme.rich · v1.2.0')).toBeInTheDocument()
-        expect(inspector.getByText('Does many things.')).toBeInTheDocument()
+        expect(dialog.getByText('acme.rich')).toBeInTheDocument()
+        expect(dialog.getByText('1.2.0')).toBeInTheDocument()
+        expect(dialog.getByText('Does many things.')).toBeInTheDocument()
         const url = inspector.getByRole('textbox', { name: /^Url/ })
         expect(url).toBeRequired()
         expect(url).toHaveAccessibleDescription('Where requests go.')
@@ -315,7 +315,7 @@ describe('NodeInspector', () => {
 
         expect(
             await inspector.findByText(
-                '3 problems; publishing would be rejected.',
+                '3 settings need attention before the workflow can be published.',
             ),
         ).toBeInTheDocument()
         const url = inspector.getByRole('textbox', { name: /^Url/ })
@@ -360,7 +360,7 @@ describe('NodeInspector', () => {
         const { inspector } = await openInspector()
         expect(
             await inspector.findByText(
-                '1 problem; publishing would be rejected.',
+                '1 setting needs attention before the workflow can be published.',
             ),
         ).toBeInTheDocument()
 
@@ -571,7 +571,7 @@ describe('NodeInspector', () => {
         backend({ schema: { type: 'object', properties: {} } })
         const { inspector } = await openInspector()
         expect(
-            inspector.getByText('This node has no settings.'),
+            inspector.getByText('Nothing to set up: this node works as it is.'),
         ).toBeInTheDocument()
     })
 

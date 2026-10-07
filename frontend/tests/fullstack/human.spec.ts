@@ -23,11 +23,16 @@ test.afterAll(async () => {
 
 const library = (p: Page) => p.getByRole('region', { name: 'Node library' })
 
-async function addNode(p: Page, type: string, name: string) {
+/** Adds a node; its dialog opens. Closed unless `keepOpen`. */
+async function addNode(p: Page, type: string, name: string, keepOpen = false) {
     await library(p).getByRole('searchbox', { name: 'Search nodes' }).fill(type)
     await library(p)
         .getByRole('button', { name: `Add ${name} to graph` })
         .click()
+    const dialog = p.getByRole('dialog', { name })
+    await expect(dialog).toBeVisible()
+    if (!keepOpen) await dialog.getByRole('button', { name: 'Done' }).click()
+    return dialog
 }
 
 async function connect(p: Page, from: string, output: string, to: string) {
@@ -35,16 +40,11 @@ async function connect(p: Page, from: string, output: string, to: string) {
         .getByRole('region', { name: /^Nodes/ })
         .getByRole('button', { name: new RegExp(`^${from}`) })
         .click()
-    const panel = p.getByRole('region', {
-        name: new RegExp(`^Connections: ${from}`),
-    })
-    await panel
-        .getByRole('combobox', { name: 'From output' })
-        .selectOption(output)
-    await panel
-        .getByRole('combobox', { name: 'To input' })
+    const dialog = p.getByRole('dialog', { name: from })
+    await dialog
+        .getByRole('combobox', { name: `Send ${output} to` })
         .selectOption({ label: `${to} › value` })
-    await panel.getByRole('button', { name: 'Connect', exact: true }).click()
+    await dialog.getByRole('button', { name: 'Done' }).click()
 }
 
 test('a human approval stops the run, the answer from the UI resumes it', async ({
@@ -78,17 +78,16 @@ test('a human approval stops the run, the answer from the UI resumes it', async 
 
     await test.step('place, configure and connect a Human Input node', async () => {
         await addNode(p, 'core.input', 'Input')
-        await addNode(p, 'core.human', 'Human Input')
-        const inspector = p.getByRole('region', {
-            name: /^Settings: Human Input/,
-        })
+        const dialog = await addNode(p, 'core.human', 'Human Input', true)
+        const inspector = dialog.getByRole('region', { name: 'Settings' })
         await expect(
-            inspector.getByText(/publishing would be rejected/),
+            inspector.getByText(/before the workflow can be published/),
         ).toBeVisible() // the backend requires a prompt
         await inspector
             .getByRole('textbox', { name: /^Prompt/ })
             .fill('Approve the order for {{ value.customer }}?')
         await expect(inspector.getByText('Configuration valid')).toBeVisible()
+        await dialog.getByRole('button', { name: 'Done' }).click()
         await addNode(p, 'core.output', 'Output')
         await connect(p, 'Input', 'value', 'Human Input')
         await connect(p, 'Human Input', 'approved', 'Output')

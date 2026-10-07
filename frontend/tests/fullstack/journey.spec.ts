@@ -39,10 +39,15 @@ async function stored(workflowId: string): Promise<StoredWorkflow> {
     return (await response.json()) as StoredWorkflow
 }
 
-async function addNode(p: Page, type: string, name: string) {
+/** Adds a node; its dialog opens. Closed unless `keepOpen`. */
+async function addNode(p: Page, type: string, name: string, keepOpen = false) {
     const library = p.getByRole('region', { name: 'Node library' })
     await library.getByRole('searchbox', { name: 'Search nodes' }).fill(type)
     await library.getByRole('button', { name: `Add ${name} to graph` }).click()
+    const dialog = p.getByRole('dialog', { name })
+    await expect(dialog).toBeVisible()
+    if (!keepOpen) await dialog.getByRole('button', { name: 'Done' }).click()
+    return dialog
 }
 
 async function connect(p: Page, from: string, to: string) {
@@ -50,13 +55,11 @@ async function connect(p: Page, from: string, to: string) {
         .getByRole('region', { name: /^Nodes/ })
         .getByRole('button', { name: new RegExp(`^${from}`) })
         .click()
-    const panel = p.getByRole('region', {
-        name: new RegExp(`^Connections: ${from}`),
-    })
-    await panel
-        .getByRole('combobox', { name: 'To input' })
+    const dialog = p.getByRole('dialog', { name: from })
+    await dialog
+        .getByRole('combobox', { name: 'Send value to' })
         .selectOption({ label: `${to} › value` })
-    await panel.getByRole('button', { name: 'Connect', exact: true }).click()
+    await dialog.getByRole('button', { name: 'Done' }).click()
 }
 
 async function validateAndPublish(p: Page, version: number) {
@@ -136,14 +139,15 @@ test('the V1 journey: build, publish, run, inspect, report, export, import, run 
     await test.step('edit the draft: add, configure and connect nodes', async () => {
         await p.getByRole('link', { name: 'Open editor' }).click()
         await addNode(p, 'core.input', 'Input')
-        await addNode(p, 'core.log', 'Log')
-        const inspector = p.getByRole('region', { name: /^Settings: Log/ })
+        const dialog = await addNode(p, 'core.log', 'Log', true)
+        const inspector = dialog.getByRole('region', { name: 'Settings' })
         // The backend judges the config: a Log needs a message.
         await expect(
-            inspector.getByText(/publishing would be rejected/),
+            inspector.getByText(/before the workflow can be published/),
         ).toBeVisible()
         await inspector.getByRole('textbox', { name: /^Message/ }).fill(message)
         await expect(inspector.getByText('Configuration valid')).toBeVisible()
+        await dialog.getByRole('button', { name: 'Done' }).click()
         await addNode(p, 'core.output', 'Output')
         await connect(p, 'Input', 'Log')
         await connect(p, 'Log', 'Output')
@@ -228,6 +232,41 @@ test('the V1 journey: build, publish, run, inspect, report, export, import, run 
             name: 'Execution graph (read-only)',
         })
         await expect(graph.getByText('Completed')).toHaveCount(3)
+
+        // A node opens in place: what reached it, from where, and its output.
+        await graph.getByText('Log', { exact: true }).click()
+        const node = p.getByRole('dialog', { name: 'Log' })
+        await expect(
+            node
+                .getByRole('region', { name: 'Input' })
+                .getByText(/from Input › value/),
+        ).toBeVisible()
+        await expect(
+            node.getByRole('region', { name: 'Output' }).getByText('value'),
+        ).toBeVisible()
+        await node.getByRole('button', { name: 'Close' }).click()
+    })
+
+    await test.step('test one node with the input of the last run', async () => {
+        await p.goto(`/workflows/${workflowId}/editor`)
+        await p
+            .getByRole('region', { name: /^Nodes/ })
+            .getByRole('button', { name: /^Log/ })
+            .click()
+        const dialog = p.getByRole('dialog', { name: 'Log' })
+        await dialog
+            .getByRole('button', { name: 'Use the input of the last run' })
+            .click()
+        await dialog.getByRole('button', { name: 'Run test' }).click()
+        const result = dialog.getByRole('region', { name: 'Test result' })
+        await expect(result.getByText('Succeeded')).toBeVisible()
+        await expect(result.getByText(message)).toBeVisible() // its log line
+        // A test is not a run: still exactly the one execution.
+        const runs = (await (
+            await api.get(`/api/v1/workflows/${workflowId}/executions`)
+        ).json()) as { items: unknown[] }
+        expect(runs.items).toHaveLength(1)
+        await dialog.getByRole('button', { name: 'Done' }).click()
     })
 
     await test.step('view the metrics', async () => {

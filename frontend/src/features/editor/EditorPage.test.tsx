@@ -106,7 +106,11 @@ interface PutBody {
     expected_revision: number
     draft: {
         graph: {
-            nodes: { id: string; position: { x: number; y: number } | null }[]
+            nodes: {
+                id: string
+                label?: string
+                position: { x: number; y: number } | null
+            }[]
             edges: unknown[]
         }
         triggers: unknown[]
@@ -189,6 +193,43 @@ afterEach(() => {
 beforeAll(() => import('./EditorPage'))
 
 describe('EditorPage', () => {
+    it('gives the canvas the screen: full screen and hidden panels', async () => {
+        backend()
+        await openEditor()
+        const toolbar = within(screen.getByRole('toolbar', { name: 'Editor' }))
+        const editorRoot = () =>
+            screen.getByRole('toolbar', { name: 'Editor' }).parentElement
+
+        fireEvent.click(toolbar.getByRole('button', { name: 'Full screen' }))
+        const exit = toolbar.getByRole('button', { name: 'Exit full screen' })
+        expect(exit).toHaveAttribute('aria-pressed', 'true')
+        // Laid over the app (the browser's own full screen is best effort).
+        expect(editorRoot()).toHaveClass('fixed', 'inset-0')
+        // Canvas first: the panels step aside, and come back on exit.
+        expect(
+            screen.queryByRole('region', { name: 'Node library' }),
+        ).toBeNull()
+        fireEvent.click(exit)
+        expect(editorRoot()).not.toHaveClass('fixed')
+        expect(
+            screen.getByRole('region', { name: 'Node library' }),
+        ).toBeInTheDocument()
+
+        const panels = toolbar.getByRole('button', { name: 'Panels' })
+        fireEvent.click(panels)
+        expect(panels).toHaveAttribute('aria-pressed', 'false')
+        expect(
+            screen.queryByRole('region', { name: 'Node library' }),
+        ).toBeNull()
+        expect(
+            screen.getByRole('region', { name: 'Graph canvas' }),
+        ).toBeInTheDocument()
+        fireEvent.click(panels)
+        expect(
+            screen.getByRole('region', { name: 'Node library' }),
+        ).toBeInTheDocument()
+    })
+
     it('loads the draft graph and says it is the draft, not a version', async () => {
         backend()
         await openEditor()
@@ -196,11 +237,8 @@ describe('EditorPage', () => {
         expect(screen.getByText('Draft', { selector: 'span' })).toBeVisible()
         expect(
             screen.getByText(
-                /published versions, the latest being v2, stay unchanged/,
+                /Runs keep using the published v2 until you publish again/,
             ),
-        ).toBeInTheDocument()
-        expect(
-            screen.getByText(/Publishing is a separate step/),
         ).toBeInTheDocument()
         expect(status()).toHaveTextContent('All changes saved to draft')
 
@@ -208,7 +246,7 @@ describe('EditorPage', () => {
         const list = nodeList()
         expect(
             list.getByRole('button', { name: /^Lead in/ }),
-        ).toHaveTextContent('core.input · 0 in, 1 out')
+        ).toHaveTextContent('Input · 0 in, 1 out')
         expect(
             list.getByRole('button', { name: /^core\.log/ }),
         ).toHaveTextContent('core.log · 1 in, 0 out')
@@ -233,7 +271,7 @@ describe('EditorPage', () => {
         })
         await openEditor()
         expect(
-            screen.getByText(/nothing has been published yet/),
+            screen.getByText(/Nothing has been published yet/),
         ).toBeInTheDocument()
     })
 
@@ -624,10 +662,14 @@ describe('Node library', () => {
         )
         expect(item.getByText('ai.llm · v2.1.0')).toBeInTheDocument()
         expect(item.getByText('Calls a language model.')).toBeInTheDocument()
+        // In plain words, each with what it means.
         const caps = within(item.getByRole('list', { name: 'Capabilities' }))
         expect(
             caps.getAllByRole('listitem').map((li) => li.textContent),
-        ).toEqual(['Streams output', 'Cancellable'])
+        ).toEqual([
+            'Can be stopped: Stops right away when a run is cancelled or times out, instead of finishing its current work first.',
+            'Streams output: Produces its result piece by piece while it runs.',
+        ])
         // The preview is the canvas card, hidden from assistive tech
         // because the text lists below say the same.
         const preview = item.getByRole('list', {
@@ -638,8 +680,8 @@ describe('Node library', () => {
         expect(preview.closest('[aria-hidden="true"]')).not.toBeNull()
         expect(item.queryByRole('list', { name: 'Outputs' })).toBeNull()
         expect(item.getAllByText('prompt')).toHaveLength(2)
-        expect(item.getByText('(string, required)')).toBeInTheDocument()
-        expect(item.getByText('model, credential')).toBeInTheDocument()
+        expect(item.getByText('(Text, required)')).toBeInTheDocument()
+        expect(item.getByText('Model, Credential')).toBeInTheDocument()
         expect(
             item.getByRole('link', { name: 'Documentation for LLM' }),
         ).toHaveAttribute('href', 'https://docs.example/llm')
@@ -651,7 +693,7 @@ describe('Node library', () => {
         ).not.toBeInTheDocument()
     })
 
-    it('searches and filters by category and capability', async () => {
+    it('searches and filters by category', async () => {
         await openLibrary()
         const search = await library().findByRole('searchbox', {
             name: 'Search nodes',
@@ -672,10 +714,7 @@ describe('Node library', () => {
             library().getByRole('heading', { name: 'HTTP Request' }),
         ).toBeInTheDocument()
 
-        fireEvent.change(
-            library().getByRole('combobox', { name: 'Capability' }),
-            { target: { value: 'streams_output' } },
-        )
+        fireEvent.change(search, { target: { value: 'language' } })
         expect(library().getByText('0 of 3 nodes')).toBeInTheDocument()
         expect(
             library().getByRole('heading', { name: 'No matching nodes' }),
@@ -720,8 +759,9 @@ describe('Node library', () => {
         expect(status()).toHaveTextContent('Unsaved changes')
         const listed = nodeList().getAllByRole('button', { name: /^LLM/ })
         expect(listed).toHaveLength(2)
-        // The last added node is the selection.
+        // The last added node is the selection, and its dialog is open.
         expect(listed[1]).toHaveAttribute('aria-pressed', 'true')
+        expect(screen.getByRole('dialog', { name: 'LLM' })).toBeInTheDocument()
 
         await act(async () => {
             await vi.advanceTimersByTimeAsync(AUTOSAVE_DELAY_MS)
@@ -838,7 +878,11 @@ describe('Graph editing', () => {
     const nodeOnCanvas = (name: RegExp) =>
         canvas().findByRole('group', { name })
     const connections = () =>
-        within(screen.getByRole('region', { name: /^Connections:/ }))
+        within(
+            within(screen.getByRole('dialog')).getByRole('region', {
+                name: 'Connections',
+            }),
+        )
     const edgeOnCanvas = (name: RegExp) =>
         canvas().findByRole('group', { name })
     const save = async () => {
@@ -848,27 +892,26 @@ describe('Graph editing', () => {
         })
     }
 
-    it('connects from the panel, offering inputs with their fit, and saves the edge', async () => {
+    it('connects from the dialog, offering inputs with their fit, and saves the edge', async () => {
         const server = graphBackend()
         await openEditor()
         fireEvent.click(await nodeOnCanvas(/^Source/))
 
-        const panel = connections()
-        const to = panel.getByRole('combobox', { name: 'To input' })
+        const to = () =>
+            connections().getByRole('combobox', { name: 'Send text to' })
         const option = (name: RegExp) =>
-            within(to).getByRole<HTMLOptionElement>('option', { name })
+            within(to()).getByRole<HTMLOptionElement>('option', { name })
         expect(option(/^Target › n \(incompatible type\)$/).disabled).toBe(true)
         expect(option(/^Target › s$/).disabled).toBe(false)
-        expect(panel.getByRole('button', { name: 'Connect' })).toBeDisabled()
 
-        fireEvent.change(to, {
+        fireEvent.change(to(), {
             target: { value: option(/^Target › s$/).value },
         })
-        fireEvent.click(panel.getByRole('button', { name: 'Connect' }))
 
         expect(
             await edgeOnCanvas(/^Connection from Source text to Target s$/),
         ).toBeInTheDocument()
+        expect(connections().getByText('To Target › s')).toBeInTheDocument()
         // The same edge again is offered, but not choosable: a duplicate.
         expect(option(/^Target › s \(already connected\)$/).disabled).toBe(true)
         expect(nodeList().getByText(/0 in, 1 out/)).toBeInTheDocument()
@@ -877,29 +920,85 @@ describe('Graph editing', () => {
         expect(server.puts[0]?.draft.graph.edges).toEqual([wire('text', 's')])
     })
 
-    it('switching nodes shows one settings and one connections panel', async () => {
+    it('switching nodes shows one dialog, for the last one clicked', async () => {
         graphBackend()
         await openEditor()
         fireEvent.click(await nodeOnCanvas(/^Source/))
         fireEvent.click(await nodeOnCanvas(/^Target/))
         fireEvent.click(await nodeOnCanvas(/^Source/))
+        expect(screen.getAllByRole('dialog')).toHaveLength(1)
+        const dialog = within(screen.getByRole('dialog', { name: 'Source' }))
         expect(
-            screen.getAllByRole('region', { name: /^(Settings|Connections):/ }),
+            dialog.getAllByRole('region', { name: /^(Settings|Connections)$/ }),
         ).toHaveLength(2)
+    })
+
+    it('connects an input from the dialog, and closes with Done', async () => {
+        graphBackend()
+        await openEditor()
+        fireEvent.click(await nodeOnCanvas(/^Target/))
+        const from = connections().getByRole('combobox', {
+            name: 'Connect s from',
+        })
+        fireEvent.change(from, {
+            target: {
+                value: within(from).getByRole<HTMLOptionElement>('option', {
+                    name: 'Source › text',
+                }).value,
+            },
+        })
         expect(
-            connections().getByRole('heading', { level: 2 }),
-        ).toHaveTextContent('Connections: Source')
+            await edgeOnCanvas(/^Connection from Source text to Target s$/),
+        ).toBeInTheDocument()
+        fireEvent.click(
+            within(screen.getByRole('dialog')).getByRole('button', {
+                name: 'Done',
+            }),
+        )
+        expect(screen.queryByRole('dialog')).toBeNull()
+    })
+
+    it('names a node from the dialog; the canvas and list follow', async () => {
+        const server = graphBackend()
+        await openEditor()
+        fireEvent.click(await nodeOnCanvas(/^Source/))
+        fireEvent.change(
+            screen.getByRole('textbox', { name: /^Name on the canvas/ }),
+            { target: { value: 'Lead source' } },
+        )
+        expect(await nodeOnCanvas(/^Lead source/)).toBeInTheDocument()
+        expect(
+            nodeList().getByRole('button', { name: /^Lead source/ }),
+        ).toBeInTheDocument()
+        await save()
+        expect(server.puts[0]?.draft.graph.nodes[0]?.label).toBe('Lead source')
+    })
+
+    it('deletes the node from its dialog', async () => {
+        graphBackend([wire('text', 's')])
+        await openEditor()
+        fireEvent.click(await nodeOnCanvas(/^Source/))
+        fireEvent.click(
+            within(screen.getByRole('dialog')).getByRole('button', {
+                name: 'Delete node',
+            }),
+        )
+        await waitFor(() => {
+            expect(nodeList().getAllByRole('button')).toHaveLength(1)
+        })
+        expect(screen.queryByRole('dialog')).toBeNull()
+        expect(
+            canvas().queryByRole('group', { name: /^Connection/ }),
+        ).not.toBeInTheDocument()
     })
 
     it('a list output only fits list inputs', async () => {
         graphBackend()
         await openEditor()
         fireEvent.click(await nodeOnCanvas(/^Source/))
-        const panel = connections()
-        fireEvent.change(panel.getByRole('combobox', { name: 'From output' }), {
-            target: { value: 'lines' },
+        const to = connections().getByRole('combobox', {
+            name: 'Send lines to',
         })
-        const to = panel.getByRole('combobox', { name: 'To input' })
         expect(
             within(to).getByRole<HTMLOptionElement>('option', {
                 name: 'Target › s (incompatible type)',
@@ -922,7 +1021,7 @@ describe('Graph editing', () => {
         fireEvent.click(sink)
         expect(
             connections().getByText(
-                'Missing required input: n. Publishing would be rejected.',
+                /^Not connected yet\. This node cannot run/,
             ),
         ).toBeInTheDocument()
     })
@@ -982,9 +1081,8 @@ describe('Graph editing', () => {
         expect(
             canvas().queryByRole('group', { name: /^Connection/ }),
         ).not.toBeInTheDocument()
-        expect(
-            screen.queryByRole('region', { name: /^Connections:/ }),
-        ).toBeNull()
+        // Its dialog went with it.
+        expect(screen.queryByRole('dialog')).toBeNull()
 
         fireEvent.click(button('Undo'))
         expect(
@@ -1039,7 +1137,7 @@ describe('Graph editing', () => {
             nodeList()
                 .getAllByRole('button', { pressed: true })
                 .map((b) => b.textContent),
-        ).toEqual(['Sourcet.text · 0 in, 1 out', 'Targett.sink · 1 in, 0 out'])
+        ).toEqual(['SourceText · 0 in, 1 out', 'TargetSink · 1 in, 0 out'])
 
         fireEvent.keyDown(source, { key: 'Escape' })
         await waitFor(() => {
@@ -1059,7 +1157,7 @@ describe('Graph editing', () => {
         graphBackend()
         await openEditor()
         fireEvent.click(await nodeOnCanvas(/^Source/))
-        const to = connections().getByRole('combobox', { name: 'To input' })
+        const to = connections().getByRole('combobox', { name: 'Send text to' })
         fireEvent.change(to, {
             target: {
                 value: within(to).getByRole<HTMLOptionElement>('option', {
@@ -1067,7 +1165,6 @@ describe('Graph editing', () => {
                 }).value,
             },
         })
-        fireEvent.click(connections().getByRole('button', { name: 'Connect' }))
         await save()
 
         cleanup()

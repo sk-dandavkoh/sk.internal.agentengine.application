@@ -9,7 +9,6 @@ import { Alert, Badge } from '../../components/ui'
 import { PropertyFields } from './ConfigForm'
 import { useDebounced, VALIDATION_DELAY_MS } from './useDebounced'
 import { describePath, issuesByPath, properties } from './configSchema'
-import { nodeTitle } from './graphView'
 
 /**
  * Settings of one node, generated from its config schema. Edits go into
@@ -39,22 +38,11 @@ export function NodeInspector({
     return (
         <section
             aria-labelledby="node-inspector"
-            className="flex flex-col gap-3 rounded-md border border-border bg-surface p-3"
+            className="flex flex-col gap-3"
         >
-            <div>
-                <h2 id="node-inspector" className="font-semibold">
-                    Settings: {nodeTitle(node, definition)}
-                </h2>
-                <p className="text-xs text-muted">
-                    {node.node_type}
-                    {definition && ` · v${definition.version}`}
-                </p>
-                {definition?.description && (
-                    <p className="mt-1 text-sm text-muted">
-                        {definition.description}
-                    </p>
-                )}
-            </div>
+            <h3 id="node-inspector" className="font-semibold">
+                Settings
+            </h3>
 
             {!definition ? (
                 <Alert tone="warning" title="Settings unavailable">
@@ -72,7 +60,7 @@ export function NodeInspector({
                         ) : issues.length === 0 ? (
                             <Badge tone="success">Configuration valid</Badge>
                         ) : (
-                            `${String(issues.length)} ${issues.length === 1 ? 'problem' : 'problems'}; publishing would be rejected.`
+                            `${String(issues.length)} ${issues.length === 1 ? 'setting needs' : 'settings need'} attention before the workflow can be published.`
                         )}
                     </p>
                     {issues.length > 0 && (
@@ -90,7 +78,7 @@ export function NodeInspector({
                     {fields.length === 0 &&
                     Object.keys(node.config).length === 0 ? (
                         <p className="text-sm text-muted">
-                            This node has no settings.
+                            Nothing to set up: this node works as it is.
                         </p>
                     ) : (
                         <PropertyFields

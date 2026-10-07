@@ -260,13 +260,13 @@ describe('add', () => {
         expect(run(dragging, add('c'))).toBe(dragging)
     })
 
-    it('offsets nodes added onto an occupied spot', () => {
-        const state = run(initEditor(graph(), 1), add('c'), add('d'))
-        expect(at(state, 'c')).toEqual({ x: PASTE_OFFSET, y: PASTE_OFFSET })
-        expect(at(state, 'd')).toEqual({
-            x: 2 * PASTE_OFFSET,
-            y: 2 * PASTE_OFFSET,
-        })
+    it('moves a node added onto another card below it, and below that', () => {
+        const state = run(initEditor(graph(), 1), add('c', 20, 30), add('d'))
+        expect(at(state, 'c')).toEqual({ x: 20, y: 170 })
+        // d overlaps a, then c: it goes below both.
+        expect(at(state, 'd')).toEqual({ x: 0, y: 420 })
+        // A free spot is kept as it is.
+        expect(at(run(state, add('e', 900, 0)), 'e')).toEqual({ x: 900, y: 0 })
     })
 })
 
@@ -350,6 +350,37 @@ describe('configure', () => {
         expect(run(start, configure('zz', { x: 'y' }, 'x'))).toBe(start)
         const dragging = run(start, drag('a', 5, 5, false))
         expect(run(dragging, configure('a', { x: 'y' }, 'x'))).toBe(dragging)
+    })
+})
+
+describe('rename', () => {
+    const rename = (label: string, nodeId = 'a'): EditorAction => ({
+        type: 'rename',
+        nodeId,
+        label,
+    })
+
+    it('typing a name is one undo step, apart from settings', () => {
+        const start = initEditor(graph(), 1)
+        const state = run(start, rename('L'), rename('Lead'), {
+            type: 'configure',
+            nodeId: 'a',
+            config: { m: 'x' },
+            field: 'm',
+        })
+        expect(state.graph.nodes[0]).toMatchObject({
+            label: 'Lead',
+            config: { m: 'x' },
+        })
+        expect(state.past).toHaveLength(2)
+        const once = run(state, { type: 'undo' })
+        expect(once.graph.nodes[0]?.label).toBe('Lead')
+        expect(run(once, { type: 'undo' }).graph).toBe(start.graph)
+    })
+
+    it('ignores unknown nodes', () => {
+        const start = initEditor(graph(), 1)
+        expect(run(start, rename('x', 'zz'))).toBe(start)
     })
 })
 

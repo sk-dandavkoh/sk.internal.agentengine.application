@@ -2,29 +2,56 @@ import { useQuery } from '@tanstack/react-query'
 import { useCallback, useMemo } from 'react'
 import { useApiClient } from '../../../api/context'
 import type { Execution } from '../../../api/executions'
-import { workflowQueries } from '../../../api/queries'
+import { nodeQueries, workflowQueries } from '../../../api/queries'
 import type { ExecutionReport, NodeExecution } from '../../../api/reports'
 import { QuerySection } from '../../../components/QuerySection'
-import { Button, Card, Table, type TableColumn } from '../../../components/ui'
+import {
+    Button,
+    Card,
+    Dialog,
+    Table,
+    type TableColumn,
+} from '../../../components/ui'
 import { SnapshotCanvas } from '../../versions/SnapshotCanvas'
 import { Time } from '../shared'
 import { NodeStatusBadge } from './display'
 import { ms } from './format'
-import { NodeInspector } from './NodeInspector'
+
+/** Names a node of `report` like the editor does: its label, else its
+ * type's name in the catalog, else its type. */
+function useNodeName(report: ExecutionReport) {
+    const catalog = useQuery(nodeQueries.catalog(useApiClient())).data
+    return useMemo(() => {
+        const names = new Map(catalog?.items.map((d) => [d.node_type, d.name]))
+        const byId = new Map(report.nodes.map((n) => [n.node_id, n]))
+        return (nodeId: string) => {
+            const node = byId.get(nodeId)
+            return node
+                ? node.label || (names.get(node.node_type) ?? node.node_type)
+                : nodeId
+        }
+    }, [catalog, report])
+}
+import { NodeIdentity, NodeInspector, NodeRunDetails } from './NodeInspector'
 
 /**
  * The pinned version's graph with each node's state in this execution.
- * Clicking a node opens it in the Nodes tab.
+ * Clicking a node opens what it got and produced in a dialog.
  */
 export function GraphPanel({
     execution,
     report,
+    selected,
     onInspect,
+    onClose,
 }: {
     execution: Execution
     report: ExecutionReport
+    selected: string | undefined
     onInspect: (nodeId: string) => void
+    onClose: () => void
 }) {
+    const name = useNodeName(report)
     const version = useQuery(
         workflowQueries.version(
             useApiClient(),
@@ -59,10 +86,11 @@ export function GraphPanel({
         },
         [byId],
     )
+    const node = selected === undefined ? undefined : byId.get(selected)
     return (
         <Card
             title="Execution graph"
-            description="The published version this execution ran, with each node's state. Select a node to inspect it."
+            description="The published version this execution ran, with each node's state. Click a node to see what it got and what it produced."
         >
             <QuerySection query={version} subject="the graph">
                 {(v) => (
@@ -74,6 +102,31 @@ export function GraphPanel({
                     />
                 )}
             </QuerySection>
+            {node && (
+                <Dialog
+                    open
+                    onClose={onClose}
+                    size="full"
+                    title={name(node.node_id)}
+                    description={
+                        <NodeIdentity
+                            node={node}
+                            nodeVersion={
+                                report.execution.node_versions[node.node_type]
+                            }
+                        />
+                    }
+                >
+                    <NodeRunDetails
+                        // Keyed: log filters belong to one node.
+                        key={node.node_id}
+                        executionId={execution.id}
+                        node={node}
+                        nodeVersion={undefined}
+                        title={name}
+                    />
+                </Dialog>
+            )}
         </Card>
     )
 }
@@ -89,13 +142,14 @@ export function NodesPanel({
     selected: string | undefined
     onInspect: (nodeId: string) => void
 }) {
+    const name = useNodeName(report)
     const columns: TableColumn<NodeExecution>[] = [
         {
             key: 'node',
             header: 'Node',
             cell: (n) => (
                 <>
-                    {n.label || n.node_id}{' '}
+                    {name(n.node_id)}{' '}
                     <span className="text-muted">{n.node_type}</span>
                 </>
             ),
@@ -138,7 +192,7 @@ export function NodesPanel({
                     size="sm"
                     variant={n.node_id === selected ? 'primary' : 'ghost'}
                     aria-pressed={n.node_id === selected}
-                    aria-label={`Inspect node ${n.label || n.node_id}`}
+                    aria-label={`Inspect node ${name(n.node_id)}`}
                     onClick={() => {
                         onInspect(n.node_id)
                     }}
@@ -168,6 +222,7 @@ export function NodesPanel({
                     executionId={executionId}
                     node={node}
                     nodeVersion={report.execution.node_versions[node.node_type]}
+                    title={name}
                 />
             ) : (
                 selected && (

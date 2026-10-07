@@ -14,10 +14,17 @@ export interface DialogProps {
     footer?: ReactNode
     /** false blocks Escape and hides the close button, e.g. while saving. */
     dismissible?: boolean
-    size?: 'sm' | 'md' | 'lg'
+    size?: 'sm' | 'md' | 'lg' | 'xl' | 'full'
 }
 
-const widths = { sm: 'max-w-sm', md: 'max-w-lg', lg: 'max-w-2xl' }
+const widths = {
+    sm: 'max-w-sm',
+    md: 'max-w-lg',
+    lg: 'max-w-2xl',
+    xl: 'max-w-3xl',
+    // Side-by-side data (input | output) needs the room.
+    full: 'max-w-6xl',
+}
 
 /**
  * Modal dialog on the native <dialog> element: the browser provides the top

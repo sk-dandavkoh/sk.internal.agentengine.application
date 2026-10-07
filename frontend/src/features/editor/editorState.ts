@@ -76,6 +76,8 @@ export type EditorAction =
     /** A node's whole new config, edited through `field` (a top-level
      * config key). Validity is the backend's call, not the reducer's. */
     | { type: 'configure'; nodeId: string; config: JsonObject; field: string }
+    /** The node's name on the canvas; '' falls back to the type's name. */
+    | { type: 'rename'; nodeId: string; label: string }
 
 // ponytail: fixed cap; make it a preference if users ask for deeper history.
 export const HISTORY_LIMIT = 100
@@ -306,16 +308,23 @@ export function editorReducer(
                 edgeSelection: [],
             }
         }
-        case 'configure': {
+        case 'configure':
+        case 'rename': {
             const node = state.graph.nodes.find((n) => n.id === action.nodeId)
             if (!node || state.dragOrigin) return state
             const graph = {
                 ...state.graph,
                 nodes: state.graph.nodes.map((n) =>
-                    n === node ? { ...n, config: action.config } : n,
+                    n !== node
+                        ? n
+                        : action.type === 'rename'
+                          ? { ...n, label: action.label }
+                          : { ...n, config: action.config },
                 ),
             }
-            const edit = `${action.nodeId} ${action.field}`
+            // A config key cannot hold a space, so the label never shares
+            // an undo step with a setting.
+            const edit = `${action.nodeId} ${action.type === 'rename' ? 'label name' : action.field}`
             if (state.lastEdit === edit) return { ...state, graph }
             return { ...commit(state, graph), lastEdit: edit }
         }
@@ -325,21 +334,24 @@ export function editorReducer(
     }
 }
 
-/** `p`, moved diagonally until no node sits exactly there, so repeated
- * adds at one spot stay visible instead of stacking. */
+/** About a card's size; positions are top-left corners. */
+const CARD = { width: 240, height: 120 }
+
+/** `p`, moved down until its card covers no other, so a node added where
+ * one already is (the canvas center, a drop on a card) stays visible.
+ * ponytail: estimated card size and an O(n) scan per step; measure cards
+ * if wide plugin nodes still overlap. */
 function freeSpot(graph: Graph, p: NodePosition): NodePosition {
-    const taken = new Set(
-        graph.nodes.map(
+    const covers = (y: number) =>
+        graph.nodes.some(
             (n) =>
-                n.position && `${String(n.position.x)},${String(n.position.y)}`,
-        ),
-    )
-    let { x, y } = p
-    while (taken.has(`${String(x)},${String(y)}`)) {
-        x += PASTE_OFFSET
-        y += PASTE_OFFSET
-    }
-    return { x, y }
+                n.position &&
+                Math.abs(n.position.x - p.x) < CARD.width &&
+                Math.abs(n.position.y - y) < CARD.height,
+        )
+    let { y } = p
+    while (covers(y)) y += ROW_GAP
+    return { x: p.x, y }
 }
 
 // Moves only change positions, so the node lists align index by index.

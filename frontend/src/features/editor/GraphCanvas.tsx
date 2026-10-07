@@ -17,7 +17,15 @@ import {
     type NodeProps,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { createContext, use, useMemo, useRef, useState } from 'react'
+import {
+    createContext,
+    use,
+    useCallback,
+    useMemo,
+    useRef,
+    useState,
+    type MouseEvent,
+} from 'react'
 import type { NodeDefinition } from '../../api/nodes'
 import type {
     Edge,
@@ -116,6 +124,7 @@ function DraftNode({ id, data, selected }: NodeProps<CanvasNode>) {
         <NodeCard
             title={nodeTitle(instance, definition)}
             nodeType={instance.node_type}
+            kind={definition?.name}
             category={definition?.category}
             inputs={inputs.map((p) => fit(p, 'target'))}
             outputs={outputs.map((p) => fit(p, 'source'))}
@@ -231,6 +240,8 @@ export interface GraphCanvasProps {
     onReconnect: (from: Edge, edge: Edge) => void
     /** A connection dropped on a port that cannot take it. */
     onRefuse: (problem: ConnectionProblem) => void
+    /** A plain click on a node: show everything about it. */
+    onOpenNode?: (nodeId: string) => void
 }
 
 /**
@@ -253,6 +264,7 @@ export function GraphCanvas({
     onConnect,
     onReconnect,
     onRefuse,
+    onOpenNode,
 }: GraphCanvasProps) {
     const { screenToFlowPosition } = useReactFlow()
     const [measured, setMeasured] = useState<
@@ -263,6 +275,16 @@ export function GraphCanvas({
     const check = (edge: Edge) =>
         connectionProblem(graph, edge, rules, reconnecting.current)
     const { catalog } = rules
+    // Stable: React Flow re-renders every node when this handler changes,
+    // which on each drag frame made large graphs lag.
+    const onNodeClick = useCallback(
+        (event: MouseEvent, node: CanvasNode) => {
+            // A modifier click adds to the selection instead.
+            if (event.shiftKey || event.ctrlKey || event.metaKey) return
+            onOpenNode?.(node.id)
+        },
+        [onOpenNode],
+    )
 
     /** Reports a drop on a port that refused the connection. */
     function refused(state: FinalConnectionState) {
@@ -372,6 +394,7 @@ export function GraphCanvas({
                 edges={edges}
                 nodeTypes={nodeTypes}
                 onNodesChange={onNodesChange}
+                onNodeClick={onNodeClick}
                 onEdgesChange={onEdgesChange}
                 isValidConnection={(c) => {
                     const edge = toEdge(c)
@@ -429,6 +452,21 @@ export function GraphCanvas({
                 <Controls showInteractive={false} />
                 <MiniMap pannable zoomable ariaLabel="Minimap" />
                 <ZoomLevel />
+                {graph.nodes.length === 0 && (
+                    <Panel
+                        position="top-center"
+                        className="mt-16 max-w-sm rounded-md border border-dashed border-border-strong bg-surface p-4 text-center text-sm text-muted"
+                    >
+                        <p className="font-semibold text-fg">
+                            Start by adding a node
+                        </p>
+                        <p>
+                            Drag one from the node library onto the canvas, or
+                            click its Add button. Usually a workflow starts with
+                            an Input node.
+                        </p>
+                    </Panel>
+                )}
             </ReactFlow>
         </CheckContext>
     )
