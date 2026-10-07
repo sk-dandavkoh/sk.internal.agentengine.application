@@ -33,6 +33,7 @@ from akasha.domain.node import (
     NodeExecutionContext,
     NodeMetrics,
     NodeResult,
+    NodeServices,
     check_node_contract,
 )
 from akasha.domain.primitives import new_id
@@ -69,10 +70,15 @@ async def run_node(
     execution_input: Mapping[str, Any] | None = None,
     credentials: Mapping[str, str] | None = None,
     is_cancelled: Callable[[], bool] = lambda: False,
+    services: NodeServices | None = None,
+    settings: Mapping[str, Any] | None = None,
 ) -> NodeRun:
     """Run ``node`` once. ``credentials`` maps credential references (e.g.
     ``"credential:api-key"``) to secret values; ``None`` means the engine has
-    no credential store, so ``context.resolve_credential`` fails."""
+    no credential store, so ``context.resolve_credential`` fails.
+    ``services`` stands in for the engine's (default: no LLM, the strict
+    network policy, no workspace); ``settings`` for the operator's settings
+    of the node's plugin (default: those in ``services``)."""
     check_node_contract(type(node))
     definition = node.definition
     config = dict(config or {})
@@ -85,6 +91,7 @@ async def run_node(
     inputs = dict(inputs or {})
     definition.validate_inputs(inputs)
     metrics, events = NodeMetrics(definition.metrics), NodeEvents(definition.events)
+    services = services or NodeServices()
     context = NodeExecutionContext(
         execution_id=new_id("exec"),
         node_execution_id=new_id("nexec"),
@@ -102,6 +109,10 @@ async def run_node(
         execution_input=dict(execution_input or {}),
         metrics=metrics,
         events=events,
+        services=services,
+        settings=services.settings_for(definition.node_id)
+        if settings is None
+        else settings,
     )
     result = await node.execute(context)
     if not isinstance(result, NodeResult) or not isinstance(result.outputs, Mapping):

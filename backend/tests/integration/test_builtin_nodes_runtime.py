@@ -9,7 +9,7 @@ control-flow rule (``ExecutionPlan.readiness``).
 
 import logging
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any
 
@@ -24,7 +24,7 @@ from akasha.domain.execution import (
     TimeoutPolicy,
 )
 from akasha.domain.graph import Edge, Graph, NodeInstance
-from akasha.domain.node import NodeErrorKind
+from akasha.domain.node import NodeErrorKind, NodeServices
 from akasha.domain.workflow import Dependency, WorkflowDraft
 from akasha.infrastructure.database import Database
 from akasha.infrastructure.persistence import SqlAlchemyUnitOfWork
@@ -54,6 +54,7 @@ def open_mailpit() -> Iterator[Mailpit]:
 class Engine:
     database: Database
     registry: NodeRegistry
+    services: NodeServices = field(default_factory=NodeServices)
 
     def uow(self) -> SqlAlchemyUnitOfWork:
         return SqlAlchemyUnitOfWork(self.database)
@@ -85,7 +86,9 @@ class Engine:
         queued = await executions.create_execution(
             workflow_id, version, input=input, timeout_policy=timeout_policy
         )
-        await ExecutionRuntime(self.uow, self.registry.catalog).run(queued.id)
+        await ExecutionRuntime(
+            self.uow, self.registry.catalog, services=self.services
+        ).run(queued.id)
         return await executions.get_execution(queued.id)  # persisted state
 
 
@@ -116,7 +119,7 @@ def value(execution: Execution, node_id: str) -> Any:
 
 @pytest.fixture
 def engine(database: Database) -> Engine:
-    return Engine(database, create_builtin_registry(network=LOCAL))
+    return Engine(database, create_builtin_registry(), NodeServices(network=LOCAL))
 
 
 def lead_router() -> tuple[Graph, dict[str, str]]:
@@ -331,7 +334,9 @@ async def test_web_search_results_propagate(
         b'{"results": [{"title": "T", "url": "https://example.test/", "content": "S"}]}'
     )
     engine = Engine(
-        database, create_builtin_registry(web_search_url=http_server.base_url)
+        database,
+        create_builtin_registry(),
+        NodeServices(settings={"core": {"web_search_url": http_server.base_url}}),
     )
     graph, ids = build(
         {

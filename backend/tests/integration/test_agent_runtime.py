@@ -23,6 +23,7 @@ from akasha.application.workflows import WorkflowService
 from akasha.domain.credentials import CredentialKind, Secret
 from akasha.domain.execution import Execution, ExecutionStatus
 from akasha.domain.graph import Edge, Graph, NodeInstance
+from akasha.domain.node import NodeServices
 from akasha.domain.workflow import WorkflowDraft
 from akasha.infrastructure.database import Database
 from akasha.infrastructure.persistence import SqlAlchemyUnitOfWork
@@ -96,8 +97,9 @@ async def run(
     store = CredentialService(uow, SecretCipher(os.urandom(32)))
     await store.create("llm-key", kind=CredentialKind.PROVIDER, value=Secret(CANARY))
     adapter = LiteLLMAdapter("openai", api_base=f"{server.base_url}/v1")
-    registry = create_builtin_registry(
-        llm=AIService([LLMProvider("local", adapter)]), workspace=workspace
+    registry = create_builtin_registry()
+    services = NodeServices(
+        llm=AIService([LLMProvider("local", adapter)]), workspace_dir=workspace.root
     )
 
     g, ids = Graph(), {}
@@ -125,7 +127,9 @@ async def run(
     queued = await executions.create_execution(
         workflow.id, version.version, input={"topic": "agents"}
     )
-    await ExecutionRuntime(uow, registry.catalog, credentials=store).run(queued.id)
+    await ExecutionRuntime(
+        uow, registry.catalog, credentials=store, services=services
+    ).run(queued.id)
     ids["workflow"] = workflow.id
     return await executions.get_execution(queued.id), ids
 

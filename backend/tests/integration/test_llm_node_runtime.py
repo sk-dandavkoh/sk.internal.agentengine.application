@@ -21,7 +21,7 @@ from akasha.application.workflows import WorkflowService, WorkflowValidationFail
 from akasha.domain.credentials import CredentialKind, Secret
 from akasha.domain.execution import Execution, ExecutionStatus, NodeExecutionStatus
 from akasha.domain.graph import Edge, Graph, NodeInstance
-from akasha.domain.node import NodeErrorKind
+from akasha.domain.node import NodeErrorKind, NodeServices
 from akasha.domain.workflow import WorkflowDraft
 from akasha.infrastructure.database import Database
 from akasha.infrastructure.persistence import SqlAlchemyUnitOfWork
@@ -77,7 +77,8 @@ async def run(
     store = CredentialService(uow, SecretCipher(os.urandom(32)))
     await store.create("llm-key", kind=CredentialKind.PROVIDER, value=Secret(CANARY))
     adapter = LiteLLMAdapter("openai", api_base=f"{server.base_url}/v1")
-    registry = create_builtin_registry(llm=AIService([LLMProvider("local", adapter)]))
+    registry = create_builtin_registry()
+    services = NodeServices(llm=AIService([LLMProvider("local", adapter)]))
 
     workflows = WorkflowService(uow, registry.definitions)
     workflow = await workflows.create_workflow("llm")
@@ -91,7 +92,9 @@ async def run(
     version = await workflows.publish_workflow(workflow.id)
     executions = ExecutionService(uow)
     queued = await executions.create_execution(workflow.id, version.version, input=LEAD)
-    await ExecutionRuntime(uow, registry.catalog, credentials=store).run(queued.id)
+    await ExecutionRuntime(
+        uow, registry.catalog, credentials=store, services=services
+    ).run(queued.id)
     return await executions.get_execution(queued.id), ids
 
 
@@ -151,7 +154,7 @@ async def test_missing_variable_fails_the_execution_without_a_provider_call(
     assert node.status is NodeExecutionStatus.FAILED
     assert node.error is not None
     assert (node.error.code, node.error.kind) == (
-        "PROMPT_VARIABLE_MISSING",
+        "TEMPLATE_VARIABLE_MISSING",
         NodeErrorKind.VALIDATION,
     )
     assert execution.node(ids["out"]).status is not NodeExecutionStatus.COMPLETED

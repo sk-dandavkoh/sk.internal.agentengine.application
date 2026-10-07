@@ -1,8 +1,9 @@
 """File built-ins: core.file_read, core.file_write, core.file_list.
 
 All three work inside the execution's workflow directory of the
-operator-configured workspace (``AKASHA_WORKSPACE_DIR``); every path goes
-through ``akasha.security.paths.Workspace`` (architecture §64). Without a
+operator-configured workspace (``context.services.workspace_dir``); every
+path goes through ``Workspace.resolve`` (architecture §64). The size cap is the
+setting ``workspace_max_file_bytes``. Without a
 workspace they fail with WORKSPACE_NOT_CONFIGURED. Contents are UTF-8 text:
 binary files need artifact storage, which the engine does not have yet.
 """
@@ -12,7 +13,12 @@ import stat
 from pathlib import Path
 from typing import Any
 
-from akasha.nodes.core import VERSION, closed_schema
+from akasha.nodes.core import (
+    VERSION,
+    closed_schema,
+    require_workspace,
+)
+from akasha.nodes.settings import core_settings
 from akasha.sdk import (
     Node,
     NodeCapabilities,
@@ -25,10 +31,9 @@ from akasha.sdk import (
     NodeOutput,
     NodeResult,
     PortType,
+    Workspace,
 )
-from akasha.security.paths import Workspace
 
-DEFAULT_MAX_FILE_BYTES = 1024 * 1024
 MAX_LIST_ENTRIES = 1000
 WRITE_MODES = ("overwrite", "append", "create")
 
@@ -46,33 +51,19 @@ def _path_in(description: str, *, required: bool = True) -> NodeInput:
 
 
 class _WorkspaceNode(Node):
-    def __init__(
-        self,
-        workspace: Workspace | None = None,
-        *,
-        max_file_bytes: int = DEFAULT_MAX_FILE_BYTES,
-    ) -> None:
-        self._workspace = workspace
-        self._max_bytes = max_file_bytes
+    @staticmethod
+    def _resolve(context: NodeExecutionContext) -> tuple[Workspace, Path]:
+        workspace = require_workspace(context)
+        path = workspace.resolve(context.workflow_id, context.inputs.get("path", "."))
+        return workspace, path
 
-    def _resolve(self, context: NodeExecutionContext) -> tuple[Workspace, Path]:
-        if self._workspace is None:
-            raise _error(
-                "no workspace directory is configured for this engine",
-                NodeErrorKind.CONFIGURATION,
-                "WORKSPACE_NOT_CONFIGURED",
-            )
-        path = self._workspace.resolve(
-            context.workflow_id, context.inputs.get("path", ".")
-        )
-        return self._workspace, path
 
-    def _too_large(self) -> NodeError:
-        return _error(
-            f"the file exceeds the limit of {self._max_bytes} bytes",
-            NodeErrorKind.PERMANENT,
-            "FILE_TOO_LARGE",
-        )
+def _too_large(limit: int) -> NodeError:
+    return _error(
+        f"the file exceeds the limit of {limit} bytes",
+        NodeErrorKind.PERMANENT,
+        "FILE_TOO_LARGE",
+    )
 
 
 class FileReadNode(_WorkspaceNode):
@@ -101,21 +92,24 @@ class FileReadNode(_WorkspaceNode):
 
     async def execute(self, context: NodeExecutionContext) -> NodeResult:
         _, path = self._resolve(context)
-        data = await asyncio.to_thread(self._read, path)
+        data = await asyncio.to_thread(
+            _read, path, core_settings(context).workspace_max_file_bytes
+        )
         return NodeResult(
             {"content": data.decode("utf-8", errors="replace"), "size": len(data)}
         )
 
-    def _read(self, path: Path) -> bytes:
-        if not path.is_file():
-            raise _error(
-                "the file does not exist", NodeErrorKind.PERMANENT, "FILE_NOT_FOUND"
-            )
-        with path.open("rb") as handle:
-            data = handle.read(self._max_bytes + 1)
-        if len(data) > self._max_bytes:
-            raise self._too_large()
-        return data
+
+def _read(path: Path, limit: int) -> bytes:
+    if not path.is_file():
+        raise _error(
+            "the file does not exist", NodeErrorKind.PERMANENT, "FILE_NOT_FOUND"
+        )
+    with path.open("rb") as handle:
+        data = handle.read(limit + 1)
+    if len(data) > limit:
+        raise _too_large(limit)
+    return data
 
 
 class FileWriteNode(_WorkspaceNode):
@@ -167,29 +161,32 @@ class FileWriteNode(_WorkspaceNode):
         workspace, path = self._resolve(context)
         data = context.inputs["content"].encode()
         mode = context.config.get("mode", "overwrite")
-        size = await asyncio.to_thread(self._write, path, data, mode)
+        size = await asyncio.to_thread(
+            _write, path, data, mode, core_settings(context).workspace_max_file_bytes
+        )
         return NodeResult(
             {"path": workspace.relative(context.workflow_id, path), "size": size}
         )
 
-    def _write(self, path: Path, data: bytes, mode: str) -> int:
-        existing = path.stat().st_size if path.is_file() and mode == "append" else 0
-        if existing + len(data) > self._max_bytes:
-            raise self._too_large()
-        if path.is_dir():
-            raise _error(
-                "the path is a directory", NodeErrorKind.PERMANENT, "FILE_IS_DIRECTORY"
-            )
-        path.parent.mkdir(parents=True, exist_ok=True)
-        flag = {"overwrite": "wb", "append": "ab", "create": "xb"}[mode]
-        try:
-            with path.open(flag) as handle:
-                handle.write(data)
-        except FileExistsError:
-            raise _error(
-                "the file already exists", NodeErrorKind.PERMANENT, "FILE_EXISTS"
-            ) from None
-        return existing + len(data)
+
+def _write(path: Path, data: bytes, mode: str, limit: int) -> int:
+    existing = path.stat().st_size if path.is_file() and mode == "append" else 0
+    if existing + len(data) > limit:
+        raise _too_large(limit)
+    if path.is_dir():
+        raise _error(
+            "the path is a directory", NodeErrorKind.PERMANENT, "FILE_IS_DIRECTORY"
+        )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    flag = {"overwrite": "wb", "append": "ab", "create": "xb"}[mode]
+    try:
+        with path.open(flag) as handle:
+            handle.write(data)
+    except FileExistsError:
+        raise _error(
+            "the file already exists", NodeErrorKind.PERMANENT, "FILE_EXISTS"
+        ) from None
+    return existing + len(data)
 
 
 class FileListNode(_WorkspaceNode):

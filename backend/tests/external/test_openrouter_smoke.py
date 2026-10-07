@@ -22,7 +22,7 @@ from akasha.domain.ai import (
     ToolDefinition,
 )
 from akasha.domain.credentials import Secret
-from akasha.domain.node import NodeResult
+from akasha.domain.node import NodeResult, NodeServices
 from akasha.nodes.llm import LlmNode
 from akasha.providers.litellm_adapter import LiteLLMAdapter
 from akasha.runtime.credentials import NodeCredentials
@@ -116,13 +116,14 @@ async def run_llm_node(config: dict[str, object], question: str) -> NodeResult:
     provider = LLMProvider(
         "openrouter", LiteLLMAdapter("openrouter"), timeout_seconds=120
     )
-    node = LlmNode(AIService([provider]))
+    node = LlmNode()
     node.definition.validate_config(config)
     context = make_context(
         node,
         config=config,
         inputs={"variables": {"question": question}},
         credentials=NodeCredentials(EnvSource(API_KEY), config),
+        services=NodeServices(llm=AIService([provider])),
     )
     result = await node.execute(context)
     node.definition.validate_outputs(result.outputs)

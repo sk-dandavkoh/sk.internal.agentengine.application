@@ -13,7 +13,6 @@ import operator
 from collections.abc import Callable
 from typing import Any
 
-from akasha.domain.node import json_equal
 from akasha.nodes.core import (
     MISSING,
     PATH_SCHEMA,
@@ -33,6 +32,7 @@ from akasha.sdk import (
     NodeOutput,
     NodeResult,
     PortType,
+    json_equal,
 )
 
 J = PortType.JSON

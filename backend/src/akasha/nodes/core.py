@@ -6,7 +6,9 @@ stateless and constructed without arguments.
 """
 
 import asyncio
+import json
 import logging
+import re
 from collections.abc import Mapping
 from typing import Any
 
@@ -23,6 +25,7 @@ from akasha.sdk import (
     NodeOutput,
     NodeResult,
     PortType,
+    Workspace,
 )
 
 J = PortType.JSON
@@ -62,6 +65,56 @@ def lookup(value: Any, path: str) -> Any:
         else:
             return MISSING
     return value
+
+
+_PLACEHOLDER = re.compile(r"\{\{(.*?)\}\}", re.DOTALL)
+# A whole template: text, single braces, and well-formed placeholders only,
+# so a malformed ``{{ ... }}`` is rejected when the workflow is published.
+TEMPLATE = {
+    "type": "string",
+    # Forms offer a template editor; the pattern below is the real check.
+    "format": "template",
+    "description": "Reference variables as {{ name }} or {{ lead.name }}.",
+    "pattern": rf"^(?:[^{{]|\{{(?!\{{)|\{{\{{\s*{PATH}\s*\}}\}})*$",
+}
+
+
+def render(template: str, variables: Mapping[str, Any]) -> str:
+    """Substitute every ``{{ path }}``; a missing variable is an error, never
+    an empty string — a silently blank prompt still costs a model call."""
+
+    def substitute(match: re.Match[str]) -> str:
+        path = match.group(1).strip()
+        if not re.fullmatch(PATH, path):
+            raise NodeError(
+                "the template has an invalid placeholder",
+                kind=NodeErrorKind.CONFIGURATION,
+                code="TEMPLATE_INVALID",
+            )
+        value = lookup(variables, path)
+        if value is MISSING:
+            raise NodeError(
+                f"template variable is missing: {path}",
+                kind=NodeErrorKind.VALIDATION,
+                code="TEMPLATE_VARIABLE_MISSING",
+                details={"variable": path},
+            )
+        if isinstance(value, str):
+            return value
+        return json.dumps(value, ensure_ascii=False)
+
+    return _PLACEHOLDER.sub(substitute, template)
+
+
+def require_workspace(context: NodeExecutionContext) -> Workspace:
+    root = context.services.workspace_dir
+    if root is None:
+        raise NodeError(
+            "no workspace directory is configured for this engine",
+            kind=NodeErrorKind.CONFIGURATION,
+            code="WORKSPACE_NOT_CONFIGURED",
+        )
+    return Workspace(root)
 
 
 def value_in(description: str, *, required: bool = True) -> NodeInput:

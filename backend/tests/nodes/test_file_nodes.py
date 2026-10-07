@@ -9,10 +9,22 @@ from typing import Any
 
 import pytest
 
-from akasha.domain.node import Node, NodeError, NodeErrorKind, NodeResult
+from akasha.domain.node import (
+    Node,
+    NodeError,
+    NodeErrorKind,
+    NodeExecutionContext,
+    NodeResult,
+    NodeServices,
+)
 from akasha.nodes.files import FileListNode, FileReadNode, FileWriteNode
 from akasha.security.paths import Workspace
 from tests.support import RunNode, make_context
+
+
+def _root(workspace: Workspace | None) -> Path | None:
+    return None if workspace is None else workspace.root
+
 
 LIMIT = 64
 
@@ -27,12 +39,26 @@ def workspace(tmp_path: Path) -> Workspace:
 WORKFLOW = "wf_files"
 
 
-async def run(node: Node, config: dict[str, Any], inputs: dict[str, Any]) -> NodeResult:
+def context(
+    node: Node, workspace: Workspace, limit: int | None = None, **kwargs: Any
+) -> NodeExecutionContext:
+    settings = {} if limit is None else {"workspace_max_file_bytes": limit}
+    return make_context(
+        node,
+        services=NodeServices(workspace_dir=_root(workspace)),
+        settings=settings,
+        **kwargs,
+    )
+
+
+async def run(
+    node: Node, workspace: Workspace, config: dict[str, Any], inputs: dict[str, Any]
+) -> NodeResult:
     """Like ``run_node``, but every call runs in the same workflow."""
     node.definition.validate_config(config)
     node.definition.validate_inputs(inputs)
-    context = make_context(node, config=config, inputs=inputs)
-    result = await node.execute(replace(context, workflow_id=WORKFLOW))
+    ctx = context(node, workspace, LIMIT, config=config, inputs=inputs)
+    result = await node.execute(replace(ctx, workflow_id=WORKFLOW))
     assert isinstance(result, NodeResult)
     node.definition.validate_outputs(result.outputs)
     return result
@@ -41,14 +67,14 @@ async def run(node: Node, config: dict[str, Any], inputs: dict[str, Any]) -> Nod
 async def write(
     run_node: RunNode, workspace: Workspace, path: str, content: str, **config: str
 ) -> dict[str, object]:
-    node = FileWriteNode(workspace, max_file_bytes=LIMIT)
-    result = await run(node, config, {"path": path, "content": content})
+    result = await run(
+        FileWriteNode(), workspace, config, {"path": path, "content": content}
+    )
     return dict(result.outputs)
 
 
 async def read(run_node: RunNode, workspace: Workspace, path: str) -> str:
-    node = FileReadNode(workspace, max_file_bytes=LIMIT)
-    result = await run(node, {}, {"path": path})
+    result = await run(FileReadNode(), workspace, {}, {"path": path})
     content: str = result.outputs["content"]
     return content
 
@@ -125,10 +151,10 @@ async def test_write_then_read_round_trip(
 async def test_files_land_in_the_execution_workflow_directory(
     workspace: Workspace,
 ) -> None:
-    node = FileWriteNode(workspace)
-    context = make_context(node, inputs={"path": "a.txt", "content": "x"})
-    await node.execute(context)
-    assert (workspace.root / context.workflow_id / "a.txt").read_text() == "x"
+    node = FileWriteNode()
+    ctx = context(node, workspace, inputs={"path": "a.txt", "content": "x"})
+    await node.execute(ctx)
+    assert (workspace.root / ctx.workflow_id / "a.txt").read_text() == "x"
 
 
 async def test_append_and_create_modes(run_node: RunNode, workspace: Workspace) -> None:
@@ -151,11 +177,11 @@ async def test_size_limits_hold_for_read_write_and_append(
         with pytest.raises(NodeError) as exc:
             await write(run_node, workspace, "full.txt", content, mode=mode)
         assert exc.value.code == "FILE_TOO_LARGE"
-    node = FileReadNode(workspace, max_file_bytes=LIMIT)
-    context = make_context(node, inputs={"path": "big.txt"})
-    workspace.resolve(context.workflow_id, "big.txt").write_bytes(b"z" * (LIMIT + 1))
+    node = FileReadNode()
+    ctx = context(node, workspace, LIMIT, inputs={"path": "big.txt"})
+    workspace.resolve(ctx.workflow_id, "big.txt").write_bytes(b"z" * (LIMIT + 1))
     with pytest.raises(NodeError) as read_exc:
-        await node.execute(context)
+        await node.execute(ctx)
     assert read_exc.value.code == "FILE_TOO_LARGE"
 
 
@@ -186,15 +212,15 @@ async def test_traversal_through_a_node_input_is_refused(
 async def test_list_is_sorted_and_does_not_follow_symlinks(
     workspace: Workspace, tmp_path: Path
 ) -> None:
-    node = FileListNode(workspace)
-    context = make_context(node, inputs={"path": "."})
-    workflow = workspace.workflow_dir(context.workflow_id)
+    node = FileListNode()
+    ctx = context(node, workspace, inputs={"path": "."})
+    workflow = workspace.workflow_dir(ctx.workflow_id)
     (workflow / "b.txt").write_text("bb")
     (workflow / "a").mkdir()
     outside = tmp_path / "outside"
     outside.mkdir()
     (workflow / "c-link").symlink_to(outside)
-    result = await node.execute(context)
+    result = await node.execute(ctx)
     entries = result.outputs["entries"]
     assert [(e["path"], e["type"]) for e in entries] == [
         ("a", "directory"),
@@ -208,7 +234,9 @@ async def test_list_is_sorted_and_does_not_follow_symlinks(
 async def test_list_defaults_to_the_workflow_root(
     run_node: RunNode, workspace: Workspace
 ) -> None:
-    result = await run_node(FileListNode(workspace))
+    result = await run_node(
+        FileListNode(), services=NodeServices(workspace_dir=_root(workspace))
+    )
     assert result.outputs == {"entries": []}
 
 

@@ -17,19 +17,10 @@ name), so a DNS-rebinding server cannot answer differently at connect time.
 import asyncio
 import ipaddress
 import socket
-from dataclasses import dataclass
 
-from akasha.domain.node import NodeError, NodeErrorKind
+from akasha.domain.node import NetworkPolicy, NodeError, NodeErrorKind
 
-
-@dataclass(frozen=True)
-class NetworkPolicy:
-    """``allowed_hosts``: host names/IP literals the operator trusts even
-    though they resolve to private addresses (e.g. one internal API),
-    compared case-insensitively. Each redirect hop is checked on its own."""
-
-    allow_private_networks: bool = False
-    allowed_hosts: frozenset[str] = frozenset()
+__all__ = ["NetworkPolicy", "check_destination"]
 
 
 def _blocked(address: str) -> bool:

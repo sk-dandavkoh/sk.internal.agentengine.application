@@ -40,7 +40,7 @@ from uuid import UUID
 import psycopg
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
-from akasha.nodes.core import VERSION, closed_schema
+from akasha.nodes.core import VERSION, closed_schema, require_workspace
 from akasha.sdk import (
     CREDENTIAL_REFERENCE_FORMAT,
     Node,
@@ -54,9 +54,8 @@ from akasha.sdk import (
     NodeOutput,
     NodeResult,
     PortType,
+    check_destination,
 )
-from akasha.security.network import NetworkPolicy, check_destination
-from akasha.security.paths import Workspace
 
 DEFAULT_MAX_ROWS = 1000
 MAX_ROWS = 10_000
@@ -179,14 +178,6 @@ class DatabaseNode(Node):
         ),
     )
 
-    def __init__(
-        self,
-        workspace: Workspace | None = None,
-        policy: NetworkPolicy | None = None,
-    ) -> None:
-        self._workspace = workspace
-        self._policy = policy or NetworkPolicy()
-
     async def execute(self, context: NodeExecutionContext) -> NodeResult:
         cfg = context.config
         params: Params = context.inputs.get("params") or []
@@ -209,19 +200,14 @@ class DatabaseNode(Node):
 
     async def _sqlite(self, context: NodeExecutionContext, params: Params) -> Rows:
         cfg = context.config
-        if self._workspace is None:
-            raise _error(
-                "no workspace directory is configured for this engine",
-                NodeErrorKind.CONFIGURATION,
-                "WORKSPACE_NOT_CONFIGURED",
-            )
+        workspace = require_workspace(context)
         if "database" not in cfg:
             raise _error(
                 "sqlite needs 'database'",
                 NodeErrorKind.CONFIGURATION,
                 "DATABASE_CONFIG_INVALID",
             )
-        path = self._workspace.resolve(context.workflow_id, cfg["database"])
+        path = workspace.resolve(context.workflow_id, cfg["database"])
         read_only = cfg.get("read_only", False)
         if read_only and not path.is_file():
             raise _error(
@@ -274,7 +260,7 @@ class DatabaseNode(Node):
                 "DATABASE_CONFIG_INVALID",
             )
         port = int(conninfo.get("port") or 5432)
-        address, *_ = await check_destination(host, port, self._policy)
+        address, *_ = await check_destination(host, port, context.services.network)
         try:
             connection = await psycopg.AsyncConnection.connect(
                 make_conninfo(

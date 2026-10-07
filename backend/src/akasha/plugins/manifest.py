@@ -23,7 +23,10 @@ Manifest (format version 1)::
       "components": {"nodes": [{"id": "text_tools.slugify",
                                 "entry_point": "nodes:SlugifyNode"}]},
       "documentation": "README.md",
-      "python_requirements": ["python-slugify==8.0.4"]
+      "python_requirements": ["python-slugify==8.0.4"],
+      "settings_schema": {"type": "object",
+                          "properties": {"endpoint": {"type": "string"}},
+                          "additionalProperties": false}
     }
 
 Unknown fields and component kinds are rejected, not ignored: V1 plugins
@@ -32,7 +35,7 @@ provide node types only.
 
 import json
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from packaging.requirements import InvalidRequirement, Requirement
 from packaging.utils import canonicalize_name
@@ -86,6 +89,7 @@ class PluginManifest(_Strict):
     components: _Components
     documentation: str = Field(default="", max_length=256)
     python_requirements: list[str] = Field(default_factory=list, max_length=50)
+    settings_schema: dict[str, Any] | None = None
 
     @field_validator("python_requirements")
     @classmethod
@@ -127,6 +131,7 @@ class PluginManifest(_Strict):
             nodes=tuple(PluginNode(n.id, n.entry_point) for n in self.components.nodes),
             documentation=self.documentation,
             python_requirements=tuple(self.python_requirements),
+            settings_schema=self.settings_schema,
         )
 
 

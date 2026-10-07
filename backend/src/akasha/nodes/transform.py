@@ -28,13 +28,14 @@ from akasha.nodes.control import OPERATORS, UNARY_OPERATORS
 from akasha.nodes.core import (
     MISSING,
     PATH_SCHEMA,
+    TEMPLATE,
     VERSION,
     closed_schema,
     lookup,
+    render,
     value_in,
     value_out,
 )
-from akasha.nodes.llm import TEMPLATE, render
 from akasha.sdk import (
     Node,
     NodeDefinition,

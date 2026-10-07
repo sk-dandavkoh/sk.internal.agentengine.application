@@ -68,23 +68,22 @@ class NodeRegistry:
             self._definitions
         )
 
-    def register(
-        self, node_cls: type[Node], factory: Callable[[], Node] | None = None
-    ) -> NodeRegistration:
+    def register(self, node_cls: type[Node]) -> NodeRegistration:
         """Validate the contract and make the node type available.
 
-        ``factory`` builds instances of nodes with injected dependencies; it
-        must produce ``node_cls`` instances (checked once, here, so a wiring
-        mistake fails at startup instead of mid-execution).
+        Built-in or plugin, a node is constructed without arguments; its
+        dependencies arrive through the execution context (ADR 0011).
+        Constructed once here, so a wiring mistake fails at startup instead
+        of mid-execution.
         """
         check_node_contract(node_cls)
         definition = node_cls.definition
-        make = factory or node_cls
-        if not isinstance(make(), node_cls):
+        try:
+            node_cls()
+        except TypeError as exc:
             raise NodeContractError(
-                f"factory for {definition.node_id} does not create "
-                f"{node_cls.__name__} instances"
-            )
+                f"{node_cls.__name__} must be constructible without arguments"
+            ) from exc
         if definition.node_id in self._entries:
             raise NodeAlreadyRegisteredError(
                 "A node type with this id is already registered.",
@@ -93,7 +92,7 @@ class NodeRegistry:
                     "registered_version": self._definitions[definition.node_id].version,
                 },
             )
-        registration = NodeRegistration(definition, make)
+        registration = NodeRegistration(definition, node_cls)
         self._entries[definition.node_id] = registration
         self._definitions[definition.node_id] = definition
         return registration

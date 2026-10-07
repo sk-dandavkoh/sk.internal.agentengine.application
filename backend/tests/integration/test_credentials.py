@@ -28,6 +28,7 @@ from akasha.config import Settings
 from akasha.domain.credentials import CredentialKind, Secret
 from akasha.domain.execution import Execution, ExecutionStatus
 from akasha.domain.graph import Edge, Graph, NodeInstance
+from akasha.domain.node import NodeServices
 from akasha.domain.workflow import WorkflowDraft
 from akasha.infrastructure.database import Database
 from akasha.infrastructure.persistence import SqlAlchemyUnitOfWork
@@ -417,12 +418,12 @@ async def test_workflow_stores_and_returns_only_the_reference(
 # -- runtime: late resolution, scoped, masked --------------------------------------
 
 
-LOCAL = NetworkPolicy(allow_private_networks=True)
+LOCAL = NodeServices(network=NetworkPolicy(allow_private_networks=True))
 
 
 @pytest.fixture
 def registry() -> NodeRegistry:
-    return create_builtin_registry(network=LOCAL)
+    return create_builtin_registry()
 
 
 @pytest.fixture
@@ -449,7 +450,9 @@ async def run(
     version = await workflows.publish_workflow(workflow.id)
     executions = ExecutionService(uow)
     queued = await executions.create_execution(workflow.id, version.version)
-    runtime = ExecutionRuntime(uow, registry.catalog, credentials=credentials)
+    runtime = ExecutionRuntime(
+        uow, registry.catalog, credentials=credentials, services=LOCAL
+    )
     await runtime.run(queued.id)
     return await executions.get_execution(queued.id)
 
@@ -571,9 +574,9 @@ async def test_smtp_authenticates_with_a_stored_credential(
     queued = await executions.create_execution(
         workflow.id, version.version, input={"s": "hi"}
     )
-    await ExecutionRuntime(uow, registry.catalog, credentials=credentials).run(
-        queued.id
-    )
+    await ExecutionRuntime(
+        uow, registry.catalog, credentials=credentials, services=LOCAL
+    ).run(queued.id)
     execution = await executions.get_execution(queued.id)
 
     assert execution.status is ExecutionStatus.COMPLETED, execution.error

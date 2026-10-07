@@ -21,8 +21,7 @@ Not an agent tool (``waits_for_input``): a tool call cannot suspend.
 from datetime import timedelta
 from typing import Any
 
-from akasha.nodes.core import VERSION, closed_schema, value_in
-from akasha.nodes.llm import TEMPLATE, render
+from akasha.nodes.core import TEMPLATE, VERSION, closed_schema, render, value_in
 from akasha.sdk import (
     Node,
     NodeCapabilities,

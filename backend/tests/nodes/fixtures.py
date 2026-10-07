@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from akasha.domain.node import CredentialResolver, Node, NodeResult
+from akasha.domain.node import CredentialResolver, Node, NodeResult, NodeServices
 from tests.support import RunNode, make_context
 
 
@@ -22,6 +22,8 @@ def run_node() -> RunNode:
         is_cancelled: Callable[[], bool] | None = None,
         credentials: CredentialResolver | None = None,
         resume: Mapping[str, Any] | None = None,
+        services: NodeServices | None = None,
+        settings: Mapping[str, Any] | None = None,
     ) -> NodeResult:
         definition = node.definition
         definition.validate_config(config or {})
@@ -34,6 +36,8 @@ def run_node() -> RunNode:
             is_cancelled=is_cancelled,
             credentials=credentials,
             resume=resume,
+            services=services,
+            settings=settings,
         )
         result = await node.execute(context)
         # A NodeWait is not a result; drive waiting nodes with make_context.

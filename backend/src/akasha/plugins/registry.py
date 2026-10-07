@@ -42,15 +42,22 @@ import os
 import shutil
 import sys
 import uuid
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum, auto
 from pathlib import Path
 from types import MappingProxyType
+from typing import Any
 
 from akasha import __version__ as ENGINE_VERSION
-from akasha.domain.node import Node
+from akasha.domain.node import Node, NodeConfigSchema
 from akasha.domain.plugin import PluginMetadata, compatibility_issues
-from akasha.errors import AkashaError, ConfigurationError, InvalidStateTransitionError
+from akasha.errors import (
+    AkashaError,
+    ConfigurationError,
+    InvalidStateTransitionError,
+    NodeConfigurationError,
+)
 from akasha.nodes.registry import NodeRegistry
 from akasha.plugins.dependencies import PluginDependencies
 from akasha.plugins.manifest import PluginManifestError, read_manifest
@@ -91,6 +98,11 @@ class PluginLoadError(AkashaError):
     http_status = 422
 
 
+class PluginSettingsError(AkashaError):
+    code = "PLUGIN_SETTINGS_INVALID"
+    http_status = 422
+
+
 class PluginState(StrEnum):
     ENABLED = auto()
     DISABLED = auto()
@@ -113,7 +125,11 @@ class PluginRegistry:
         *,
         engine_version: str = ENGINE_VERSION,
         sdk_version: str = SDK_VERSION,
+        settings: Mapping[str, Mapping[str, Any]] = MappingProxyType({}),
     ) -> None:
+        """``settings``: operator settings per plugin id
+        (AKASHA_PLUGIN_SETTINGS), checked against each plugin's
+        ``settings_schema`` on activation."""
         if not directory.is_dir():
             raise ConfigurationError(
                 "The plugin directory does not exist.",
@@ -124,6 +140,7 @@ class PluginRegistry:
         self._deps = PluginDependencies(directory)
         self._engine_version = engine_version
         self._sdk_version = sdk_version
+        self._settings = settings
         self._records: dict[str, PluginRecord] = {}
         self._enabled: dict[str, PluginMetadata] = {}
         self._versions: dict[str, str] = {}
@@ -198,6 +215,12 @@ class PluginRegistry:
                     self._activate(path, metadata)
                 except AkashaError as exc:
                     self._fail(pid, metadata, exc)
+        # A misspelt plugin id would otherwise be ignored without a trace.
+        for plugin_id in sorted(self._settings.keys() - self._records.keys()):
+            logger.warning(
+                "plugin_settings_unused",
+                extra={"event": "plugin_settings_unused", "plugin_id": plugin_id},
+            )
 
     def install(self, source: Path) -> PluginRecord:
         """Validate, copy and activate the plugin package at ``source``.
@@ -393,8 +416,27 @@ class PluginRegistry:
                 details={"plugin_id": metadata.plugin_id, "issues": issues},
             )
 
+    def _check_settings(self, metadata: PluginMetadata) -> None:
+        values = self._settings.get(metadata.plugin_id)
+        if values is None:
+            return
+        details: dict[str, object] = {"plugin_id": metadata.plugin_id}
+        if metadata.settings_schema is None:
+            raise PluginSettingsError(
+                "AKASHA_PLUGIN_SETTINGS has settings for a plugin that takes none.",
+                details=details,
+            )
+        try:
+            NodeConfigSchema(dict(metadata.settings_schema)).validate_config(values)
+        except NodeConfigurationError as exc:
+            raise PluginSettingsError(
+                "AKASHA_PLUGIN_SETTINGS does not match the plugin's settings_schema.",
+                details=details | {"reason": exc.message},
+            ) from None
+
     def _activate(self, path: Path, metadata: PluginMetadata) -> None:
         self._check_compatible(metadata)
+        self._check_settings(metadata)
         libraries = self._deps.ensure(metadata)
         if libraries is not None:
             self._deps.activate(metadata.plugin_id, libraries)

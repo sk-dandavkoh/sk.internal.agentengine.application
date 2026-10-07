@@ -20,7 +20,8 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import timedelta
 from enum import StrEnum, auto
-from typing import Any, ClassVar, Protocol
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, ClassVar, Protocol
 
 from akasha.domain.credentials import (
     is_credential_reference,
@@ -33,6 +34,9 @@ from akasha.errors import (
     NodeContractError,
     NodeValidationError,
 )
+
+if TYPE_CHECKING:  # type-only: akasha.domain.ai imports this module
+    from akasha.domain.ai import LLMClient
 
 # Node type ids are globally unambiguous, e.g. "core.llm", "plugin_name.node".
 _NODE_ID_RE = re.compile(r"^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$")
@@ -580,6 +584,10 @@ class NodeExecutionContext:
     # ``{"response": <validated JSON object> | None, "responded_by": <user
     # id> | None, "timed_out": bool}``. None on every ordinary attempt.
     resume: Mapping[str, Any] | None = None
+    # Engine services, the same for built-in and plugin nodes.
+    services: "NodeServices" = field(default_factory=lambda: NodeServices())
+    # Operator settings of the plugin providing this node (``settings_for``).
+    settings: Mapping[str, Any] = field(default_factory=dict)
 
     async def resolve_credential(self, reference: str) -> str:
         """The secret behind a credential reference from this node's config.
@@ -685,17 +693,58 @@ class Node(ABC):
 
 class NodeFactory(Protocol):
     """What the runtime needs to run a node type: its definition and a way
-    to create a fresh instance per attempt.
-
-    A ``Node`` subclass with a no-argument constructor is itself a factory.
-    Nodes with injected dependencies (network policy, provider endpoint) are
-    registered with a factory closure instead (``NodeRegistry.register``).
+    to create a fresh instance per attempt. A ``Node`` subclass is one: nodes
+    are constructed without arguments and get everything else from their
+    ``NodeExecutionContext``.
     """
 
     @property
     def definition(self) -> NodeDefinition: ...
 
     def __call__(self) -> Node: ...
+
+
+@dataclass(frozen=True)
+class NetworkPolicy:
+    """The operator's outbound policy for user-configured destinations,
+    checked with ``check_destination``. ``allowed_hosts``: host names/IP
+    literals the operator trusts even though they resolve to private
+    addresses (e.g. one internal API), compared case-insensitively."""
+
+    allow_private_networks: bool = False
+    allowed_hosts: frozenset[str] = frozenset()
+
+
+BUILTIN_PLUGIN_ID = "core"
+
+
+@dataclass(frozen=True)
+class NodeServices:
+    """What the engine offers every node, built-in or plugin (ADR 0011).
+
+    ``llm``: the engine's LLM client (None: no LLM configured). ``network``:
+    the outbound policy. ``workspace_dir``: root of the per-workflow file
+    areas (None: not configured); nodes reach it through ``Workspace``,
+    never directly. ``nodes``: the node catalog, for nodes that run other
+    nodes (core.agent). ``settings``: operator settings per plugin id
+    (``core`` for the built-ins); never secrets, which are credentials.
+    ``owners``: node type id → plugin id, for ``settings_for``.
+    """
+
+    llm: "LLMClient | None" = None
+    network: NetworkPolicy = NetworkPolicy()
+    workspace_dir: Path | None = None
+    nodes: Mapping[str, NodeFactory] = field(default_factory=dict)
+    settings: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
+    owners: Mapping[str, str] = field(default_factory=dict)
+
+    def settings_for(self, node_id: str) -> Mapping[str, Any]:
+        """The settings of the plugin providing ``node_id``. Looked up by
+        owner, not by prefix: plugin ids may contain dots."""
+        owner = self.owners.get(node_id)
+        if owner is None and node_id.startswith(f"{BUILTIN_PLUGIN_ID}."):
+            owner = BUILTIN_PLUGIN_ID
+        return {} if owner is None else self.settings.get(owner, {})
 
 
 def check_node_contract(node_cls: type[Node]) -> None:

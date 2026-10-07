@@ -14,13 +14,14 @@ from typing import Any
 
 import pytest
 
-from akasha.domain.node import NodeError, NodeErrorKind
+from akasha.domain.node import NodeError, NodeErrorKind, NodeServices
 from akasha.errors import NodeConfigurationError
 from akasha.nodes.smtp import SmtpNode
 from akasha.security.network import NetworkPolicy
 from tests.support import SMTP_LOGIN, Mailpit, RunNode
 
-LOCAL = NetworkPolicy(allow_private_networks=True)
+LOCAL = NodeServices(network=NetworkPolicy(allow_private_networks=True))
+STRICT = NodeServices()
 USER, PASSWORD = SMTP_LOGIN
 REF = "credential:smtp-test"
 
@@ -62,13 +63,14 @@ async def send(
     *,
     credentials: FakeCredentials | None = GOOD,
     inputs: dict[str, Any] | None = None,
-    node: SmtpNode | None = None,
+    services: NodeServices = LOCAL,
 ) -> dict[str, Any]:
     result = await run_node(
-        node or SmtpNode(LOCAL),
+        SmtpNode(),
         config=cfg,
         inputs=inputs or MESSAGE,
         credentials=credentials,
+        services=services,
     )
     return dict(result.outputs)
 
@@ -212,7 +214,7 @@ async def test_credential_reference_without_a_resolver(
 async def test_private_smtp_hosts_are_blocked_by_default(
     run_node: RunNode, mailbox: Mailpit
 ) -> None:
-    error = await failure(run_node, config(mailbox), node=SmtpNode())
+    error = await failure(run_node, config(mailbox), services=STRICT)
     assert (error.code, error.kind) == ("DESTINATION_BLOCKED", NodeErrorKind.PERMANENT)
     assert mailbox.messages() == []
 
@@ -309,7 +311,7 @@ async def test_password_is_never_sent_in_plaintext_to_public_hosts(
         "sender": "engine@akasha.test",
         "recipients": ["ada@example.test"],
     }
-    error = await failure(run_node, cfg, node=SmtpNode(), credentials=Recording({}))
+    error = await failure(run_node, cfg, services=STRICT, credentials=Recording({}))
     assert (error.code, error.kind) == (
         "SMTP_INSECURE_AUTH",
         NodeErrorKind.CONFIGURATION,

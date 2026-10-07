@@ -35,11 +35,12 @@ def _node(node_id: str, version: str = "1.2.0") -> type[Node]:
 
 
 class Configured(Node):
-    """A node with an injected dependency, registered through a factory."""
+    """A node that wants a constructor argument (dependencies belong in the
+    execution context instead)."""
 
     definition = _node("test.configured").definition
 
-    def __init__(self, setting: str = "default") -> None:
+    def __init__(self, setting: str) -> None:
         self.setting = setting
 
     async def execute(self, context: NodeExecutionContext) -> NodeResult:
@@ -130,17 +131,8 @@ def test_contract_is_checked_at_registration() -> None:
     assert registry.list_nodes() == []
 
 
-def test_factory_injects_dependencies() -> None:
+def test_nodes_must_be_constructible_without_arguments() -> None:
     registry = NodeRegistry()
-    registration = registry.register(Configured, lambda: Configured("injected"))
-    node = registration()
-    assert isinstance(node, Configured) and node.setting == "injected"
-    assert registry.catalog["test.configured"].definition is Configured.definition
-
-
-def test_factory_must_build_the_registered_class() -> None:
-    registry = NodeRegistry()
-    other = _node("test.other")
-    with pytest.raises(NodeContractError, match="does not create"):
-        registry.register(Configured, other)
+    with pytest.raises(NodeContractError, match="without arguments"):
+        registry.register(Configured)
     assert "test.configured" not in registry.definitions

@@ -526,3 +526,48 @@ def test_container_loads_plugins_from_the_configured_directory(
     assert container.plugins.versions == {"text_tools": "1.0.0"}
     assert container.nodes.get("text_tools.slugify")
     assert container.nodes.get("core.http")  # built-ins unaffected
+
+
+# -- operator settings (ADR 0011) ------------------------------------------------
+
+SETTINGS_SCHEMA = {
+    "type": "object",
+    "properties": {"endpoint": {"type": "string"}},
+    "required": ["endpoint"],
+    "additionalProperties": False,
+}
+
+
+def test_plugin_settings_are_checked_against_the_manifest_schema(
+    tmp_path: Path, installed: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    for pid, schema in (
+        ("good", SETTINGS_SCHEMA),
+        ("wrong", SETTINGS_SCHEMA),
+        ("schemaless", None),
+    ):
+        write_plugin(tmp_path, pid, settings_schema=schema).rename(installed / pid)
+    settings = {
+        "good": {"endpoint": "http://intranet"},
+        "wrong": {"endpont": "http://intranet"},  # typo: rejected, not ignored
+        "schemaless": {"endpoint": "http://intranet"},
+        "missing": {"endpoint": "x"},  # no such plugin
+    }
+    nodes = NodeRegistry()
+    plugins = PluginRegistry(installed, nodes, settings=settings)
+    plugins.load_installed()
+
+    assert {r.plugin_id: (r.state, r.error) for r in plugins.list_plugins()} == {
+        "good": (PluginState.ENABLED, None),
+        "schemaless": (PluginState.FAILED, "PLUGIN_SETTINGS_INVALID"),
+        "wrong": (PluginState.FAILED, "PLUGIN_SETTINGS_INVALID"),
+    }
+    assert [d.node_id for d in nodes.list_nodes()] == ["good.echo"]
+    unused = [r for r in caplog.records if r.getMessage() == "plugin_settings_unused"]
+    assert [getattr(r, "plugin_id", None) for r in unused] == ["missing"]
+
+
+def test_an_invalid_settings_schema_is_a_manifest_error(tmp_path: Path) -> None:
+    package = write_plugin(tmp_path, settings_schema={"type": "string"})
+    with pytest.raises(AkashaError, match="manifest"):
+        read_manifest(package)

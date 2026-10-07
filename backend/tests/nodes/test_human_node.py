@@ -122,7 +122,7 @@ async def test_invalid_field_definitions_are_configuration_errors(
 async def test_missing_prompt_variable_fails_instead_of_asking_blank() -> None:
     with pytest.raises(NodeError) as exc:
         await ask({"prompt": "Contact {{ value.email }}?"})
-    assert exc.value.code == "PROMPT_VARIABLE_MISSING"
+    assert exc.value.code == "TEMPLATE_VARIABLE_MISSING"
 
 
 async def test_overlong_prompts_are_cut() -> None:

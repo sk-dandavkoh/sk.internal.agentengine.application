@@ -59,7 +59,7 @@ import logging
 from collections import deque
 from collections.abc import Awaitable, Callable, Mapping
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from functools import partial
 from types import MappingProxyType
@@ -82,6 +82,7 @@ from akasha.domain.node import (
     NodeExecutionContext,
     NodeMetrics,
     NodeResult,
+    NodeServices,
     NodeWait,
 )
 from akasha.domain.primitives import utcnow
@@ -268,9 +269,12 @@ class ExecutionRuntime:
         heartbeat_seconds: float = 5.0,
         limits: ResourceLimits | None = None,
         plugins: Mapping[str, str] = MappingProxyType({}),
+        services: NodeServices | None = None,
     ) -> None:
         """``plugins``: enabled plugin id → version (``PluginRegistry.versions``),
-        checked against each version's pinned plugin versions."""
+        checked against each version's pinned plugin versions. ``services``:
+        what every node gets (``context.services``); its ``nodes`` is this
+        runtime's ``catalog``."""
         if max_concurrency < 1:
             raise ConfigurationError("max_concurrency must be >= 1")
         if heartbeat_seconds <= 0:
@@ -280,6 +284,7 @@ class ExecutionRuntime:
         self._metrics = metrics or EngineMetrics()
         self._state = StateManager(uow, events or EventPublisher(), self._metrics)
         self._catalog = catalog
+        self._services = replace(services or NodeServices(), nodes=catalog)
         self._plugins = plugins
         self._max_concurrency = max_concurrency
         self._clock = clock
@@ -628,6 +633,8 @@ class ExecutionRuntime:
                 resume=deepcopy(ne.resume_input),
                 metrics=NodeMetrics(definition.metrics),
                 events=NodeEvents(definition.events),
+                services=self._services,
+                settings=self._services.settings_for(definition.node_id),
             )
             # The task copies the context it is created in: every log line
             # of the node's code (and libraries it calls) carries these ids,

@@ -30,6 +30,7 @@ from akasha.domain.node import (
     NodeExecutionContext,
     NodeMetrics,
     NodeResult,
+    NodeServices,
 )
 from akasha.domain.primitives import new_id
 from akasha.domain.workflow import WorkflowDraft
@@ -79,7 +80,10 @@ def make_context(
     is_cancelled: Callable[[], bool] | None = None,
     credentials: CredentialResolver | None = None,
     resume: Mapping[str, Any] | None = None,
+    services: NodeServices | None = None,
+    settings: Mapping[str, Any] | None = None,
 ) -> NodeExecutionContext:
+    services = services or NodeServices()
     return NodeExecutionContext(
         execution_id=new_id("exec"),
         node_execution_id=new_id("nexec"),
@@ -96,6 +100,10 @@ def make_context(
         metrics=NodeMetrics(node.definition.metrics),
         events=NodeEvents(node.definition.events),
         resume=resume,
+        services=services,
+        settings=services.settings_for(node.definition.node_id)
+        if settings is None
+        else settings,
     )
 
 

@@ -37,6 +37,7 @@ from akasha.domain.node import (
     NodeMetadata,
     NodeOutput,
     NodeResult,
+    NodeServices,
     PortType,
 )
 from akasha.nodes.agent import AgentNode, tool_parameters
@@ -47,6 +48,11 @@ from akasha.runtime.executor import execute_node
 from akasha.security.paths import Workspace
 from akasha.security.redaction import MASK
 from tests.support import RunNode, make_context
+
+
+def _root(workspace: Workspace | None) -> Path | None:
+    return None if workspace is None else workspace.root
+
 
 CANARY = "canary-agent-tool-5d1e-never-leak"
 LLM_REF = "credential:llm"
@@ -182,15 +188,19 @@ class _Store:
         return Secret(CANARY)
 
 
-def registry(llm: ScriptedLLM, workspace: Workspace | None = None) -> NodeRegistry:
-    reg = create_builtin_registry(llm=llm, workspace=workspace)
+def registry() -> NodeRegistry:
+    reg = create_builtin_registry()
     for node_cls in (Shout, Leaky, Slow, Binary):
         reg.register(node_cls)
     return reg
 
 
-def agent(llm: ScriptedLLM, workspace: Workspace | None = None) -> Node:
-    return registry(llm, workspace).get("core.agent")()
+def services(llm: ScriptedLLM, workspace: Workspace | None = None) -> NodeServices:
+    """The engine as the agent sees it: an LLM, a workspace and a node
+    catalog with the built-ins plus the test tools."""
+    return NodeServices(
+        llm=llm, workspace_dir=_root(workspace), nodes=registry().catalog
+    )
 
 
 SHOUT = {"name": "shout", "node_type": "test.shout"}
@@ -201,7 +211,10 @@ async def run(
 ) -> dict[str, Any]:
     config = {**BASE, "tools": list(tools), **cfg}
     result = await run_node(
-        agent(llm), config=config, inputs={"variables": {"task": "x"}}
+        AgentNode(),
+        config=config,
+        inputs={"variables": {"task": "x"}},
+        services=services(llm),
     )
     return dict(result.outputs)
 
@@ -378,9 +391,13 @@ async def test_a_failing_tool_is_reported_to_the_model(
     run_node: RunNode, tmp_path: Path
 ) -> None:
     llm = ScriptedLLM([reply(None, call("read", path="missing.txt")), reply("sorry")])
-    node = agent(llm, Workspace(tmp_path))
     config = {**BASE, "tools": [{"name": "read", "node_type": "core.file_read"}]}
-    result = await run_node(node, config=config, inputs={"variables": {"task": "x"}})
+    result = await run_node(
+        AgentNode(),
+        config=config,
+        inputs={"variables": {"task": "x"}},
+        services=services(llm, Workspace(tmp_path)),
+    )
     assert result.outputs["steps"][0]["error_code"] == "FILE_NOT_FOUND"
     assert "FILE_NOT_FOUND" in (llm.requests[1].messages[-1].content or "")
 
@@ -485,12 +502,13 @@ async def test_provider_errors_keep_their_retry_semantics(run_node: RunNode) -> 
 
 async def test_cancellation_is_honoured_between_model_calls() -> None:
     llm = ScriptedLLM([reply(None, call("shout", text="a")), reply("never")])
-    node = agent(llm)
+    node = AgentNode()
     context = make_context(
         node,
         config={**BASE, "tools": [SHOUT]},
         inputs={"variables": {"task": "x"}},
         is_cancelled=lambda: len(llm.requests) > 0,  # cancelled after call 1
+        services=services(llm),
     )
     with pytest.raises(NodeError) as exc:
         await node.execute(context)
@@ -503,10 +521,13 @@ async def test_cancellation_is_honoured_between_model_calls() -> None:
 
 async def test_the_node_timeout_stops_a_running_tool() -> None:
     llm = ScriptedLLM([reply(None, call("slow")), reply("never")])
-    reg = registry(llm)
+    reg = registry()
     config = {**BASE, "tools": [{"name": "slow", "node_type": "test.slow"}]}
     context = make_context(
-        reg.get("core.agent")(), config=config, inputs={"variables": {"task": "x"}}
+        reg.get("core.agent")(),
+        config=config,
+        inputs={"variables": {"task": "x"}},
+        services=services(llm),
     )
     outcome = await execute_node(
         reg.get("core.agent"), context, limit=timedelta(seconds=0.2)
@@ -530,7 +551,7 @@ async def test_file_tools_write_and_read_in_the_workflow_workspace(
         ]
     )
     workspace = Workspace(tmp_path)
-    node = agent(llm, workspace)
+    node = AgentNode()
     config = {
         **BASE,
         "tools": [
@@ -538,7 +559,12 @@ async def test_file_tools_write_and_read_in_the_workflow_workspace(
             {"name": "read", "node_type": "core.file_read"},
         ],
     }
-    context = make_context(node, config=config, inputs={"variables": {"task": "x"}})
+    context = make_context(
+        node,
+        config=config,
+        inputs={"variables": {"task": "x"}},
+        services=services(llm, workspace),
+    )
     result = await node.execute(context)
     assert isinstance(result, NodeResult)
     assert result.outputs["text"] == "saved and verified"
@@ -550,13 +576,14 @@ async def test_file_tools_write_and_read_in_the_workflow_workspace(
 
 
 async def _secure_run(llm: ScriptedLLM, tools: list[dict[str, Any]]) -> Any:
-    reg = registry(llm)
+    reg = registry()
     config = {**BASE, "credential": LLM_REF, "tools": tools}
     context = make_context(
         reg.get("core.agent")(),
         config=config,
         inputs={"variables": {"task": "x"}},
         credentials=NodeCredentials(_Store(), config),
+        services=services(llm),
     )
     return await execute_node(
         reg.get("core.agent"), context, limit=timedelta(seconds=5)
@@ -652,9 +679,12 @@ async def test_database_tool_binds_model_arguments_as_parameters(
         ]
     )
     workspace = Workspace(tmp_path)
-    node = agent(llm, workspace)
+    node = AgentNode()
     context = make_context(
-        node, config={**BASE, "tools": [tool]}, inputs={"variables": {"task": "x"}}
+        node,
+        config={**BASE, "tools": [tool]},
+        inputs={"variables": {"task": "x"}},
+        services=services(llm, workspace),
     )
     with sqlite3.connect(workspace.workflow_dir(context.workflow_id) / db) as conn:
         conn.execute("CREATE TABLE customers (email TEXT, name TEXT)")

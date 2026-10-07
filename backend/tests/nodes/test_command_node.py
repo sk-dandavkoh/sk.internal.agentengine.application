@@ -6,16 +6,21 @@ workspace; ``sh`` is allowlisted here only to script the test scenarios."""
 
 import asyncio
 import os
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from akasha.domain.node import NodeError, NodeErrorKind, NodeResult
+from akasha.domain.node import NodeError, NodeErrorKind, NodeResult, NodeServices
 from akasha.nodes.command import CommandNode
 from akasha.security.paths import Workspace
 from tests.support import make_context
+
+
+def _root(workspace: Workspace | None) -> Path | None:
+    return None if workspace is None else workspace.root
+
 
 WORKFLOW = "wf_cmd"
 ALLOWED = frozenset({"sh", "cat", "echo", "definitely-not-installed-xyz"})
@@ -28,21 +33,37 @@ def workspace(tmp_path: Path) -> Workspace:
     return Workspace(root)
 
 
-def node(workspace: Workspace | None, **kwargs: Any) -> CommandNode:
-    kwargs.setdefault("allowed_executables", ALLOWED)
-    return CommandNode(workspace, **kwargs)
+@dataclass(frozen=True)
+class Operator:
+    """What the operator configured for core.command."""
+
+    workspace: Workspace | None
+    allowed: frozenset[str] = ALLOWED
+    max_output_bytes: int | None = None
+
+
+def node(workspace: Workspace | None, **kwargs: Any) -> Operator:
+    return Operator(workspace, **kwargs)
 
 
 async def run(
-    command: CommandNode, config: dict[str, Any], inputs: dict[str, Any] | None = None
+    operator: Operator, config: dict[str, Any], inputs: dict[str, Any] | None = None
 ) -> NodeResult:
     inputs = inputs or {}
+    command = CommandNode()
     command.definition.validate_config(config)
     command.definition.validate_inputs(inputs)
-    context = replace(
-        make_context(command, config=config, inputs=inputs), workflow_id=WORKFLOW
+    settings: dict[str, Any] = {"command_allowed": operator.allowed}
+    if operator.max_output_bytes is not None:
+        settings["command_max_output_bytes"] = operator.max_output_bytes
+    context = make_context(
+        command,
+        config=config,
+        inputs=inputs,
+        services=NodeServices(workspace_dir=_root(operator.workspace)),
+        settings=settings,
     )
-    result = await command.execute(context)
+    result = await command.execute(replace(context, workflow_id=WORKFLOW))
     command.definition.validate_outputs(result.outputs)
     return result
 
@@ -51,9 +72,9 @@ def sh(script: str, **config: Any) -> dict[str, Any]:
     return {"executable": "sh", "args": ["-c", script], **config}
 
 
-async def failure(command: CommandNode, config: dict[str, Any]) -> NodeError:
+async def failure(operator: Operator, config: dict[str, Any]) -> NodeError:
     with pytest.raises(NodeError) as exc:
-        await run(command, config)
+        await run(operator, config)
     return exc.value
 
 
@@ -79,15 +100,15 @@ async def gone(pid: int) -> bool:
 
 
 @pytest.mark.parametrize(
-    "command",
+    "operator",
     [
-        CommandNode(None, allowed_executables=ALLOWED),
-        CommandNode(Workspace(Path("/nonexistent")), allowed_executables=frozenset()),
+        Operator(None),
+        Operator(Workspace(Path("/nonexistent")), allowed=frozenset()),
     ],
     ids=["no workspace", "empty allowlist"],
 )
-async def test_disabled_unless_operator_configures_it(command: CommandNode) -> None:
-    error = await failure(command, {"executable": "echo"})
+async def test_disabled_unless_operator_configures_it(operator: Operator) -> None:
+    error = await failure(operator, {"executable": "echo"})
     assert (error.code, error.kind) == (
         "COMMAND_NOT_CONFIGURED",
         NodeErrorKind.CONFIGURATION,

@@ -39,14 +39,21 @@ import asyncio
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
-from akasha.nodes.core import VERSION, closed_schema
-from akasha.nodes.http import (
+from akasha.nodes.core import (
+    TEMPLATE,
+    VERSION,
+    closed_schema,
+    render,
+    require_workspace,
+)
+from akasha.nodes.fetching import (
     DEFAULT_MAX_CHARS,
     MAX_CHARS,
     fetch,
 )
-from akasha.nodes.llm import TEMPLATE, render
+from akasha.nodes.settings import core_settings
 from akasha.sdk import (
+    NetworkPolicy,
     Node,
     NodeCapabilities,
     NodeDefinition,
@@ -59,8 +66,6 @@ from akasha.sdk import (
     NodeResult,
     PortType,
 )
-from akasha.security.network import NetworkPolicy
-from akasha.security.paths import Workspace
 
 if TYPE_CHECKING:
     from playwright.async_api import Page, Route
@@ -70,7 +75,6 @@ MAX_TIMEOUT_SECONDS = 120
 MAX_STEPS = 50
 MAX_REQUESTS = 300  # per attempt: a page cannot make the engine fetch forever
 MAX_EXTRACTED_ITEMS = 1000
-DEFAULT_MAX_RESPONSE_BYTES = 5 * 1024 * 1024
 ACTIONS = ("click", "extract", "fill", "press", "screenshot", "select", "wait_for")
 # Headers Chromium sets that httpx must compute itself (or must not get).
 _HOP_HEADERS = frozenset(
@@ -198,19 +202,6 @@ class BrowserNode(Node):
         ),
     )
 
-    def __init__(
-        self,
-        policy: NetworkPolicy | None = None,
-        workspace: Workspace | None = None,
-        *,
-        max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
-        max_file_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
-    ) -> None:
-        self._policy = policy or NetworkPolicy()
-        self._workspace = workspace
-        self._max_bytes = max_response_bytes
-        self._max_file_bytes = max_file_bytes
-
     async def execute(self, context: NodeExecutionContext) -> NodeResult:
         url = context.inputs["url"].strip()
         if urlsplit(url).scheme not in ("http", "https"):
@@ -229,7 +220,11 @@ class BrowserNode(Node):
                 "BROWSER_NOT_CONFIGURED",
             ) from None
         limit = context.config.get("timeout_seconds", DEFAULT_TIMEOUT_SECONDS)
-        fetcher = _Fetcher(self._policy, self._max_bytes, limit)
+        fetcher = _Fetcher(
+            context.services.network,
+            core_settings(context).http_max_response_bytes,
+            limit,
+        )
         try:
             async with asyncio.timeout(limit), async_playwright() as playwright:
                 browser = await playwright.chromium.launch(
@@ -364,18 +359,12 @@ class BrowserNode(Node):
     async def _screenshot(
         self, context: NodeExecutionContext, page: "Page", path: str
     ) -> None:
-        if self._workspace is None:
-            raise _error(
-                "no workspace directory is configured for this engine",
-                NodeErrorKind.CONFIGURATION,
-                "WORKSPACE_NOT_CONFIGURED",
-            )
-        target = self._workspace.resolve(context.workflow_id, path)
+        target = require_workspace(context).resolve(context.workflow_id, path)
         # Viewport only (never full_page): its size bounds the image.
         image = await page.screenshot(type="png")
-        if len(image) > self._max_file_bytes:
+        if len(image) > (limit := core_settings(context).workspace_max_file_bytes):
             raise _error(
-                f"the screenshot exceeds the limit of {self._max_file_bytes} bytes",
+                f"the screenshot exceeds the limit of {limit} bytes",
                 NodeErrorKind.PERMANENT,
                 "FILE_TOO_LARGE",
             )

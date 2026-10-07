@@ -18,7 +18,7 @@ import asyncio
 import logging
 from collections.abc import Callable, Mapping
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from secrets import token_hex
 from typing import Any, Final, cast
@@ -33,6 +33,7 @@ from akasha.domain.node import (
     NodeExecutionContext,
     NodeMetrics,
     NodeResult,
+    NodeServices,
     NodeWait,
 )
 from akasha.domain.primitives import utcnow
@@ -80,9 +81,11 @@ class NodeTester:
         credentials: SecretSource | None,
         limits: ResourceLimits,
         clock: Callable[[], datetime] = utcnow,
+        services: NodeServices | None = None,
     ) -> None:
         self._workflows = workflows
         self._catalog = catalog
+        self._services = replace(services or NodeServices(), nodes=catalog)
         self._credentials = credentials
         self._limits = limits
         self._clock = clock
@@ -157,6 +160,8 @@ class NodeTester:
             execution_input=deepcopy(dict(execution_input)),
             metrics=NodeMetrics(definition.metrics),
             events=NodeEvents(definition.events),
+            services=self._services,
+            settings=self._services.settings_for(definition.node_id),
         )
         logs = NodeLogCapture(self._clock)
         # A task of its own, as in an execution: resolved secrets and log

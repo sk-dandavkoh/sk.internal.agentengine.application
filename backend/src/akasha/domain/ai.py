@@ -181,11 +181,11 @@ class ProviderError(AkashaError):
 class LLMClient(Protocol):
     """The port through which nodes reach an LLM (architecture §27).
 
-    Nodes may depend only on domain contracts, never on the application
-    layer, so the LLM Node receives an ``LLMClient`` through its factory —
-    as ``core.http`` receives its ``NetworkPolicy`` — and the composition
-    root passes ``AIService``, which satisfies this structurally. Tests pass
-    a fake. ``credentials`` is the node's own ``context.credentials``.
+    Nodes may depend only on the SDK, never on the application layer, so
+    nodes receive an ``LLMClient`` as ``context.services.llm`` (ADR 0011)
+    and the composition root passes ``AIService``, which satisfies this
+    structurally. Tests pass a fake. ``credentials`` is the node's own
+    ``context.credentials``.
     """
 
     async def complete(

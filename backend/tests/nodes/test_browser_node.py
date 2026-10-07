@@ -18,11 +18,10 @@ from typing import Any
 
 import pytest
 
-from akasha.domain.node import NodeError, NodeErrorKind
+from akasha.domain.node import NodeError, NodeErrorKind, NodeServices
 from akasha.nodes.agent import tool_parameters
 from akasha.nodes.browser import BrowserNode
 from akasha.security.network import NetworkPolicy
-from akasha.security.paths import Workspace
 from tests.support import RunNode, make_context
 
 GUARD = 30
@@ -147,22 +146,25 @@ def _requires_chromium() -> None:
         pytest.skip(reason)
 
 
-def node(
-    tmp_path: Path | None = None, *, hosts: frozenset[str] = frozenset({"127.0.0.1"})
-) -> BrowserNode:
+def services(tmp_path: Path | None = None) -> NodeServices:
     """Trusts exactly 127.0.0.1 (the test site); every other private or
     loopback destination — ``localhost`` included — stays blocked."""
-    return BrowserNode(
-        NetworkPolicy(allowed_hosts=hosts),
-        None if tmp_path is None else Workspace(tmp_path),
+    return NodeServices(
+        network=NetworkPolicy(allowed_hosts=frozenset({"127.0.0.1"})),
+        workspace_dir=tmp_path,
     )
+
+
+@pytest.fixture
+def run_node(run_node: RunNode) -> RunNode:
+    return functools.partial(run_node, services=services())
 
 
 async def test_fills_a_form_runs_its_javascript_and_extracts(
     run_node: RunNode, site: Site
 ) -> None:
     result = await run_node(
-        node(),
+        BrowserNode(),
         config={
             "steps": [
                 {"action": "fill", "selector": "#name", "value": "{{ values.name }}"},
@@ -203,11 +205,12 @@ async def test_fills_a_form_runs_its_javascript_and_extracts(
 async def test_screenshot_is_written_into_the_workspace(
     run_node: RunNode, site: Site, tmp_path: Path
 ) -> None:
-    browser = node(tmp_path)
+    browser = BrowserNode()
     context = make_context(
         browser,
         config={"steps": [{"action": "screenshot", "path": "shots/page.png"}]},
         inputs={"url": f"{site.base}/form"},
+        services=services(tmp_path),
     )
     await browser.execute(context)
     image = (tmp_path / context.workflow_id / "shots" / "page.png").read_bytes()
@@ -219,9 +222,10 @@ async def test_screenshot_path_cannot_leave_the_workspace(
 ) -> None:
     with pytest.raises(NodeError) as exc:
         await run_node(
-            node(tmp_path),
+            BrowserNode(),
             config={"steps": [{"action": "screenshot", "path": "../../escape.png"}]},
             inputs={"url": f"{site.base}/form"},
+            services=services(tmp_path),
         )
     assert exc.value.code == "PATH_NOT_ALLOWED"
 
@@ -238,7 +242,7 @@ async def test_blocked_destinations_are_never_requested(
     run_node: RunNode, site: Site, url: str
 ) -> None:
     with pytest.raises(NodeError) as exc:
-        await run_node(node(), inputs={"url": url.format(port=site.port)})
+        await run_node(BrowserNode(), inputs={"url": url.format(port=site.port)})
     assert exc.value.code == "DESTINATION_BLOCKED"
     assert site.paths == []
 
@@ -246,14 +250,14 @@ async def test_blocked_destinations_are_never_requested(
 async def test_page_subrequests_to_blocked_hosts_fail(
     run_node: RunNode, site: Site
 ) -> None:
-    result = await run_node(node(), inputs={"url": f"{site.base}/private-sub"})
+    result = await run_node(BrowserNode(), inputs={"url": f"{site.base}/private-sub"})
     assert result.outputs["text"] == "main"
     assert "/secret" not in site.paths  # neither the image nor the fetch
 
 
 async def test_every_redirect_hop_is_checked(run_node: RunNode, site: Site) -> None:
     with pytest.raises(NodeError) as exc:
-        await run_node(node(), inputs={"url": f"{site.base}/redirect-out"})
+        await run_node(BrowserNode(), inputs={"url": f"{site.base}/redirect-out"})
     assert exc.value.code == "DESTINATION_BLOCKED"
     assert site.paths == ["/redirect-out"]
 
@@ -263,14 +267,14 @@ async def test_every_redirect_hop_is_checked(run_node: RunNode, site: Site) -> N
 )
 async def test_only_http_urls_open(run_node: RunNode, url: str) -> None:
     with pytest.raises(NodeError) as exc:
-        await run_node(node(), inputs={"url": url})
+        await run_node(BrowserNode(), inputs={"url": url})
     assert exc.value.code == "HTTP_INVALID_URL"
 
 
 async def test_attempts_share_no_cookies(run_node: RunNode, site: Site) -> None:
-    await run_node(node(), inputs={"url": f"{site.base}/cookie"})
+    await run_node(BrowserNode(), inputs={"url": f"{site.base}/cookie"})
     shown = await run_node(
-        node(),
+        BrowserNode(),
         config={"steps": [{"action": "extract", "selector": "#c", "name": "c"}]},
         inputs={"url": f"{site.base}/show-cookie"},
     )
@@ -281,14 +285,14 @@ async def test_error_status_and_missing_selector_fail_clearly(
     run_node: RunNode, site: Site
 ) -> None:
     with pytest.raises(NodeError) as status:
-        await run_node(node(), inputs={"url": f"{site.base}/missing"})
+        await run_node(BrowserNode(), inputs={"url": f"{site.base}/missing"})
     assert (status.value.code, status.value.kind) == (
         "HTTP_STATUS_ERROR",
         NodeErrorKind.PERMANENT,
     )
     with pytest.raises(NodeError) as step:
         await run_node(
-            node(),
+            BrowserNode(),
             config={
                 "steps": [{"action": "click", "selector": "#nope"}],
                 "timeout_seconds": 2,
@@ -303,7 +307,7 @@ async def test_step_without_its_parameter_is_a_configuration_error(
 ) -> None:
     with pytest.raises(NodeError) as exc:
         await run_node(
-            node(),
+            BrowserNode(),
             config={"steps": [{"action": "fill", "selector": "#name"}]},
             inputs={"url": f"{site.base}/form"},
         )
@@ -313,7 +317,9 @@ async def test_step_without_its_parameter_is_a_configuration_error(
 async def test_hanging_page_times_out(run_node: RunNode, site: Site) -> None:
     with pytest.raises(NodeError) as exc:
         await run_node(
-            node(), config={"timeout_seconds": 1}, inputs={"url": f"{site.base}/hang"}
+            BrowserNode(),
+            config={"timeout_seconds": 1},
+            inputs={"url": f"{site.base}/hang"},
         )
     assert (exc.value.code, exc.value.kind) == (
         "BROWSER_TIMEOUT",
@@ -322,9 +328,13 @@ async def test_hanging_page_times_out(run_node: RunNode, site: Site) -> None:
 
 
 async def test_cancellation_closes_the_browser(site: Site) -> None:
-    browser = node()
+    browser = BrowserNode()
     task = asyncio.create_task(
-        browser.execute(make_context(browser, inputs={"url": f"{site.base}/hang"}))
+        browser.execute(
+            make_context(
+                browser, inputs={"url": f"{site.base}/hang"}, services=services()
+            )
+        )
     )
     async with asyncio.timeout(GUARD):
         await asyncio.to_thread(site.hang_entered.wait, GUARD)

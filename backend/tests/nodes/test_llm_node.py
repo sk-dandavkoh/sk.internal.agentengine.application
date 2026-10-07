@@ -21,10 +21,16 @@ from akasha.domain.ai import (
 )
 from akasha.domain.credentials import Secret, plaintext_secret_paths
 from akasha.domain.execution import ExecutionError
-from akasha.domain.node import CredentialResolver, NodeError, NodeErrorKind
+from akasha.domain.node import (
+    CredentialResolver,
+    NodeError,
+    NodeErrorKind,
+    NodeServices,
+)
 from akasha.errors import NodeConfigurationError
 from akasha.nodes.builtins import create_builtin_registry
-from akasha.nodes.llm import MAX_PROMPT_CHARS, LlmNode, render
+from akasha.nodes.core import render
+from akasha.nodes.llm import MAX_PROMPT_CHARS, LlmNode
 from akasha.runtime.credentials import NodeCredentials
 from akasha.runtime.executor import execute_node
 from akasha.security.redaction import MASK
@@ -81,7 +87,9 @@ class FakeLLM:
 async def run(
     run_node: RunNode, llm: FakeLLM, *, inputs: dict[str, Any] | None = None, **cfg: Any
 ) -> dict[str, Any]:
-    result = await run_node(LlmNode(llm), config={**BASE, **cfg}, inputs=inputs)
+    result = await run_node(
+        LlmNode(), config={**BASE, **cfg}, inputs=inputs, services=NodeServices(llm=llm)
+    )
     return dict(result.outputs)
 
 
@@ -119,7 +127,7 @@ def test_render(template: str, expected: str) -> None:
 def test_missing_variable_is_a_validation_error(path: str) -> None:
     with pytest.raises(NodeError) as exc:
         render(f"x {{{{ {path} }}}} y", LEAD)
-    assert exc.value.code == "PROMPT_VARIABLE_MISSING"
+    assert exc.value.code == "TEMPLATE_VARIABLE_MISSING"
     assert exc.value.kind is NodeErrorKind.VALIDATION
     assert exc.value.details == {"variable": path}
 
@@ -156,7 +164,7 @@ def test_invalid_placeholder_is_rejected_at_render_too() -> None:
     # Defense in depth for configs that bypassed publish validation.
     with pytest.raises(NodeError) as exc:
         render("{{ a + b }}", {"a": 1, "b": 2})
-    assert exc.value.code == "PROMPT_TEMPLATE_INVALID"
+    assert exc.value.code == "TEMPLATE_INVALID"
 
 
 async def test_variables_come_from_the_input_port(run_node: RunNode) -> None:
@@ -202,7 +210,8 @@ async def test_provider_model_and_parameters_reach_the_request(
     llm = FakeLLM(reply("{}"))
     resolver = NodeCredentials(_Store("k"), {"credential": REF})
     await run_node(
-        LlmNode(llm),
+        LlmNode(),
+        services=NodeServices(llm=llm),
         config={
             "provider": "anthropic",
             "model": "claude-test",
@@ -433,11 +442,14 @@ class _Store:
 
 
 async def _execute(llm: FakeLLM, config: dict[str, Any]) -> Any:
-    node = LlmNode(llm)
+    node = LlmNode()
     context = make_context(
-        node, config=config, credentials=NodeCredentials(_Store(CANARY), config)
+        node,
+        config=config,
+        credentials=NodeCredentials(_Store(CANARY), config),
+        services=NodeServices(llm=llm),
     )
-    registration = create_builtin_registry(llm=llm).get("core.llm")
+    registration = create_builtin_registry().get("core.llm")
     return await execute_node(registration, context, limit=timedelta(seconds=5))
 
 
@@ -472,13 +484,14 @@ async def test_a_reference_in_variables_is_neither_resolved_nor_authorized() -> 
     # a reference in the prompt is plain text, and only config references
     # are resolvable by the node's resolver.
     llm = FakeLLM()
-    node = LlmNode(llm)
+    node = LlmNode()
     resolver = NodeCredentials(_Store(CANARY), BASE)
     context = make_context(
         node,
         config={**BASE, "user_prompt": "{{ ref }}"},
         inputs={"variables": {"ref": REF}},
         credentials=resolver,
+        services=NodeServices(llm=llm),
     )
     await node.execute(context)
     assert llm.requests[0].messages[0].content == REF
@@ -491,10 +504,3 @@ def test_plaintext_keys_in_prompts_are_caught_by_workflow_validation() -> None:
     config = {**BASE, "system_prompt": "use sk-live-abcdefghijklmnopqrstuvwxyz"}
     assert plaintext_secret_paths(config) == [".system_prompt"]
     assert plaintext_secret_paths({**BASE, "credential": REF}) == []
-
-
-def test_registry_injects_the_llm_client() -> None:
-    llm = FakeLLM()
-    node = create_builtin_registry(llm=llm).get("core.llm")()
-    assert isinstance(node, LlmNode)
-    assert node._llm is llm

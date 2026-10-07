@@ -40,13 +40,12 @@ from akasha.domain.event import EventType
 from akasha.domain.execution import ExecutionStatus
 from akasha.domain.graph import Edge, Graph, NodeInstance
 from akasha.domain.graph_validation import ValidationCode
-from akasha.domain.node import NodeDefinition
+from akasha.domain.node import NodeDefinition, NodeServices
 from akasha.domain.primitives import new_id
 from akasha.domain.trigger import Trigger, TriggerType
 from akasha.domain.workflow import Dependency, Workflow, WorkflowDraft, WorkflowStatus
 from akasha.infrastructure.database import Database
 from akasha.nodes.builtins import create_builtin_registry
-from akasha.nodes.registry import NodeRegistry
 from akasha.providers.litellm_adapter import LiteLLMAdapter
 from akasha.runtime.runtime import ExecutionRuntime
 from akasha.security.crypto import SecretCipher
@@ -79,9 +78,9 @@ LLM_CONFIG = {
 }
 
 
-def llm_registry(server: LocalHttpServer) -> NodeRegistry:
+def llm_services(server: LocalHttpServer) -> NodeServices:
     adapter = LiteLLMAdapter("openai", api_base=f"{server.base_url}/v1")
-    return create_builtin_registry(llm=AIService([LLMProvider("local", adapter)]))
+    return NodeServices(llm=AIService([LLMProvider("local", adapter)]))
 
 
 def llm_draft() -> WorkflowDraft:
@@ -168,7 +167,7 @@ async def test_round_trip_across_installations(
     await source_store.create(
         "llm-key", kind=CredentialKind.PROVIDER, value=Secret(SOURCE_VALUE)
     )
-    source_nodes = llm_registry(http_server)
+    source_nodes = create_builtin_registry()
     source_workflows = WorkflowService(uow, source_nodes.definitions)
     workflow = await source_workflows.create_workflow("Leads")
     await store_draft(uow, workflow.id, replace(llm_draft(), files=FILES))
@@ -203,7 +202,7 @@ async def test_round_trip_across_installations(
 
     # Target installation: empty database, its own key, nodes and secret.
     await truncate_all(database)
-    target_nodes = llm_registry(http_server)
+    target_nodes = create_builtin_registry()
     target_workflows = WorkflowService(uow, target_nodes.definitions)
     target_packages = WorkflowPackageService(uow, target_nodes.definitions)
     result = await target_packages.import_workflow(package)
@@ -230,9 +229,12 @@ async def test_round_trip_across_installations(
         target_version.version,
         input={"lead": {"name": "Ada", "company": "Analytical Engines"}},
     )
-    await ExecutionRuntime(uow, target_nodes.catalog, credentials=target_store).run(
-        queued.id
-    )
+    await ExecutionRuntime(
+        uow,
+        target_nodes.catalog,
+        credentials=target_store,
+        services=llm_services(http_server),
+    ).run(queued.id)
     done = await executions.get_execution(queued.id)
     assert done.status is ExecutionStatus.COMPLETED
     out = next(n for n in imported.draft.graph.nodes.values() if n.label == "out")
@@ -341,7 +343,7 @@ async def test_credential_values_never_enter_an_export(
     await store.create(
         "llm-key", kind=CredentialKind.PROVIDER, value=Secret(SOURCE_VALUE)
     )
-    nodes = llm_registry(http_server)
+    nodes = create_builtin_registry()
     workflows = WorkflowService(uow, nodes.definitions)
     workflow = await workflows.create_workflow("p")
     await store_draft(uow, workflow.id, llm_draft())

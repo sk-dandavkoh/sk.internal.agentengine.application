@@ -1685,14 +1685,14 @@ Implementation (Phase 15, `akasha.nodes.llm`, node type `core.llm`):
 - Config: `provider`, `model`, `credential` (reference), `system_prompt`,
   `user_prompt`, `temperature`, `max_tokens`, `output_schema`, `tools`,
   `timeout_seconds`. The node reaches providers only through the domain
-  port `LLMClient` (the container's `AIService`, injected via
-  `create_builtin_registry(llm=...)`). Without one it fails with
+  port `LLMClient` (the container's `AIService`, as
+  `context.services.llm`, ADR 0011). Without one it fails with
   `LLM_NOT_CONFIGURED`.
 - Templates: `{{ a.b.0 }}` is a dotted lookup into the `variables` input
   (mapping keys and list indexes only). There are no filters, calls,
   operators or attribute access. A malformed placeholder fails config
   validation at publish. A missing variable fails the node with
-  `PROMPT_VARIABLE_MISSING` (VALIDATION) before any provider call. Strings
+  `TEMPLATE_VARIABLE_MISSING` (VALIDATION) before any provider call. Strings
   are inserted verbatim and other values as JSON. The rendered prompt is
   capped at 400k characters (`PROMPT_TOO_LARGE`). This is the prompt
   subset of §31, not the general Expression Engine.

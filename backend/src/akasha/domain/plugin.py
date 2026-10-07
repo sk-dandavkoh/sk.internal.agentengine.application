@@ -10,12 +10,13 @@ incompatible metadata never reaches the node registry. Loading lives in
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from typing import Any
 
 from akasha.domain.graph_validation import ValidationCode, ValidationIssue
-from akasha.domain.node import NodeDefinition
+from akasha.domain.node import NodeConfigSchema, NodeDefinition
 from akasha.domain.primitives import SEMVER_RE, version_satisfies
 from akasha.domain.workflow import Dependency, validate_dependencies
-from akasha.errors import DomainValidationError
+from akasha.errors import DomainValidationError, NodeContractError
 
 _PLUGIN_ID_RE = re.compile(r"^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$")
 # "<module>[.<submodule>...]:<attribute>", relative to the plugin package.
@@ -57,6 +58,10 @@ class PluginMetadata:
     # imports, validated by ``plugins.manifest``; installed per plugin by
     # ``plugins.dependencies`` (ADR 0004).
     python_requirements: tuple[str, ...] = field(default_factory=tuple)
+    # JSON Schema (the config-schema subset) of the operator settings the
+    # plugin's nodes read as ``context.settings`` (AKASHA_PLUGIN_SETTINGS,
+    # ADR 0011). None: the plugin takes no settings.
+    settings_schema: Mapping[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if not _PLUGIN_ID_RE.match(self.plugin_id):
@@ -82,6 +87,11 @@ class PluginMetadata:
             if not constraint.strip():
                 raise DomainValidationError(f"{label} constraint must not be blank")
             version_satisfies("0.0.0", constraint)  # raises when malformed
+        if self.settings_schema is not None:
+            try:
+                NodeConfigSchema(dict(self.settings_schema))
+            except NodeContractError as exc:
+                raise DomainValidationError(f"settings_schema: {exc.message}") from None
         if any(
             d.kind == "plugin" and d.name == self.plugin_id for d in self.dependencies
         ):

@@ -43,7 +43,7 @@ for _layer in ("domain", "application", "runtime", "nodes", "sdk", "plugins"):
 INTERNAL_RULES: dict[str, set[str]] = {
     "domain": {"api", "application", "infrastructure", "runtime", "plugins"},
     "api": {"infrastructure"},
-    # Nodes see only the contract (+ security guards); never the engine.
+    # Nodes see only the SDK (test_builtin_nodes_could_be_a_plugin).
     "nodes": {"api", "application", "infrastructure", "runtime", "plugins"},
     # The SDK re-exports the contract; only its test harness borrows the
     # runtime's credential rule. Never HTTP or persistence.
@@ -101,23 +101,20 @@ def test_layers_exist() -> None:
         assert (SRC / layer / "__init__.py").exists(), f"missing layer: {layer}"
 
 
-def test_builtin_nodes_use_the_sdk_for_the_node_contract() -> None:
-    """Built-ins dogfood ``akasha.sdk``: a contract name imported from the
-    domain instead would let the SDK surface drift unnoticed. The registry
-    is engine code and exempt."""
-    import akasha.sdk
-
-    public = set(akasha.sdk.__all__)
-    violations = []
-    for py_file in (SRC / "nodes").glob("*.py"):
-        if py_file.name == "registry.py":
-            continue
-        for node in ast.walk(ast.parse(py_file.read_text())):
-            if isinstance(node, ast.ImportFrom) and node.module == "akasha.domain.node":
-                violations += [
-                    f"{py_file.name}: {a.name}" for a in node.names if a.name in public
-                ]
-    assert not violations, "import these from akasha.sdk:\n" + "\n".join(violations)
+def test_builtin_nodes_could_be_a_plugin() -> None:
+    """Built-ins get no special treatment (ADR 0011): like a plugin they
+    import only ``akasha.sdk`` and their own package. The registry is
+    engine code and exempt."""
+    violations = [
+        f"{py_file.name}: {imported}"
+        for py_file in (SRC / "nodes").glob("*.py")
+        if py_file.name != "registry.py"
+        for imported in _imports(py_file)
+        if imported.startswith("akasha")
+        and imported != "akasha.sdk"
+        and not imported.startswith("akasha.nodes")
+    ]
+    assert not violations, "nodes may import only akasha.sdk:\n" + "\n".join(violations)
 
 
 # Arbitrary-code paths (AGENTS §38/§64): user data is never evaluated,

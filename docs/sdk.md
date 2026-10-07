@@ -1,6 +1,6 @@
 # Python Node SDK
 
-SDK version: **1.2.0** (`akasha.sdk.SDK_VERSION`)
+SDK version: **1.3.0** (`akasha.sdk.SDK_VERSION`)
 
 The SDK is the supported way to write custom Nodes. A custom Node imports
 from two modules only:
@@ -119,6 +119,8 @@ repeat those checks.
 | `runtime_metadata` | Includes `attempt` (1-based) and `engine_version`. |
 | `execution_input` | The payload the execution started with. Entry nodes read it; other nodes use their ports. |
 | `resume` | `None`, except on the attempt after a `NodeWait` was answered or expired: `{"response", "responded_by", "timed_out"}`. |
+| `services` | (1.3.0) The engine's `NodeServices`, the same for built-in and plugin nodes (ADR 0011): `llm` (an `LLMClient`, or `None`), `network` (the operator's `NetworkPolicy`; check every user-configured destination with `check_destination(host, port, context.services.network)`), `workspace_dir` (the workspace root, or `None`; reach files only through `Workspace(context.services.workspace_dir).resolve(context.workflow_id, path)`, which refuses paths outside the workflow's folder), `nodes` (the node catalog, for nodes that run other nodes). |
+| `settings` | (1.3.0) The operator's settings for your plugin, from `AKASHA_PLUGIN_SETTINGS='{"acme": {...}}'` for the plugin with id `acme`, already checked against the manifest's `settings_schema`. Empty when none are set. Never secrets: use credentials. |
 
 ### Result and errors
 
@@ -306,6 +308,7 @@ acme/
 | `dependencies` | `kind` is `plugin` (default) or `node`, `id`, `version` constraint. A plugin dependency must be enabled first. |
 | `components.nodes` | 1–100 node types. Each `id` must start with `<plugin id>.`, so a plugin cannot shadow `core.*` or another plugin's nodes. `entry_point` is `module:Class` inside the package. |
 | `documentation` | Optional path of a file inside the package. |
+| `settings_schema` | Optional. The JSON Schema (the config-schema subset) of the operator settings your nodes read as `context.settings`. Settings for a plugin without one, or not matching it, keep the plugin from activating (`PLUGIN_SETTINGS_INVALID`). Use `"additionalProperties": false` so a misspelt key fails. |
 | `python_requirements` | Optional. The third-party libraries your code imports, as PEP 508 requirements (`"markdown==3.8"`, `"httpx[http2]>=0.28,<1"`). At most 50. No URLs or paths. Do not list `akasha-engine`. See below. |
 
 Unknown fields and component kinds are rejected. V1 plugins provide node
@@ -370,7 +373,18 @@ and their documented behaviour, are the SDK contract, versioned by
 - a removal, rename or behaviour change that breaks Nodes is a major bump;
 - an addition is a minor bump.
 
-`tests/test_sdk.py` pins the exported surface.
+`tests/test_sdk.py` pins the exported surface. Built-in nodes use only
+this surface too (`tests/test_architecture.py`), so anything a core node
+does, a plugin node can do.
+
+1.3.0 added `context.services`, `context.settings` and the names they
+need: `NodeServices`, `LLMClient`, `LLMRequest`, `LLMResponse`, `Message`,
+`Role`, `ToolCall`, `ToolDefinition`, `TokenUsage`, `CostEstimate`,
+`FinishReason`, `ProviderError`, `ProviderErrorKind`,
+`LLM_PROVIDER_FORMAT`, `NetworkPolicy`, `check_destination`, `Workspace`,
+`mask_known_secrets`, `redact_text`, `credential_references`,
+`json_equal`, `NodeFactory`, `NO_DEFAULT`. `run_node` takes `services`
+and `settings` to stand in for the engine's.
 
 The manifest has its own format version (`manifest_version`). Additive
 fields such as `python_requirements` are rejected by engines that predate

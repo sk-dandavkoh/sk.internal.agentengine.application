@@ -7,6 +7,7 @@ Missing or invalid critical configuration fails fast at startup (see
 
 from datetime import timedelta
 from pathlib import Path
+from typing import Any
 
 from pydantic import (
     AnyHttpUrl,
@@ -146,6 +147,14 @@ class Settings(BaseSettings):
     # admin session may read /metrics. Never commit it.
     metrics_token: SecretStr | None = Field(default=None, min_length=32)
 
+    # Operator settings per plugin id (JSON object), checked against the
+    # plugin manifest's settings_schema on activation:
+    # '{"acme": {"endpoint": "http://intranet/api"}}' reaches the acme
+    # plugin's nodes as ``context.settings`` (ADR 0011). The built-ins own
+    # ``core``, set through the AKASHA_* settings above. No secrets: use
+    # credentials.
+    plugin_settings: dict[str, dict[str, Any]] = Field(default_factory=dict)
+
     # Plugin System (Phase 17): directory of installed plugin packages; it
     # must exist. Unset → no plugins. Plugins are trusted code: only
     # operators may write here.
@@ -194,6 +203,8 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _stale_after_heartbeats(self) -> "Settings":
+        if "core" in self.plugin_settings:
+            raise ValueError("plugin_settings must not configure the core namespace")
         if self.execution_stale_seconds < 3 * self.worker_heartbeat_seconds:
             raise ValueError(
                 "execution_stale_seconds must be at least 3 worker heartbeats"

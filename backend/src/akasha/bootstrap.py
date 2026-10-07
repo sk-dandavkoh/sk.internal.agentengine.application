@@ -7,8 +7,8 @@ global singletons — tests build their own Container and FastAPI app via
 
 import asyncio
 import contextlib
-from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import asdict, dataclass, field
 from datetime import timedelta
 from types import MappingProxyType
 
@@ -30,11 +30,13 @@ from akasha.application.triggers import TriggerRegistry, TriggerService
 from akasha.application.workflows import WorkflowService
 from akasha.config import OpenAICompatibleEndpoint, Settings
 from akasha.domain.ai import LLMClient
+from akasha.domain.node import BUILTIN_PLUGIN_ID, NodeServices
 from akasha.infrastructure.database import Database, normalize_async_url
 from akasha.infrastructure.persistence import SqlAlchemyUnitOfWork
 from akasha.infrastructure.redis_queue import RedisExecutionQueue
 from akasha.nodes.builtins import create_builtin_registry
 from akasha.nodes.registry import NodeRegistry
+from akasha.nodes.settings import CoreSettings
 from akasha.observability.metrics import EngineMetrics
 from akasha.plugins.registry import PluginRegistry
 from akasha.providers.litellm_adapter import LiteLLMAdapter
@@ -44,7 +46,6 @@ from akasha.runtime.runtime import ExecutionRuntime
 from akasha.runtime.scheduler import TriggerScheduler
 from akasha.security.crypto import SecretCipher
 from akasha.security.network import NetworkPolicy
-from akasha.security.paths import Workspace
 from akasha.workers import Worker, WorkerManager
 
 # A readiness check returns None when healthy, or a human-readable reason.
@@ -87,8 +88,8 @@ class Container:
     # resolves secrets through this same service.
     credentials: CredentialService | None = None
     trigger_registry: TriggerRegistry | None = None
-    # core.llm calls providers through this service only (it is the
-    # registry's LLMClient).
+    # core.llm and core.agent call providers through this service only (it
+    # is the nodes' ``context.services.llm``).
     ai: AIService | None = None
     scheduler: TriggerScheduler | None = None
     # Fires EVENT triggers from the event log; runs where the scheduler runs.
@@ -165,11 +166,18 @@ def create_container(settings: Settings) -> Container:
     key = settings.credential_encryption_key
     cipher = None if key is None else SecretCipher.from_config(key.get_secret_value())
     ai = create_ai_service(settings)
-    nodes = create_node_registry(settings, llm=ai)
+    nodes = create_builtin_registry()
     plugins = None
     if settings.plugins_dir is not None:
-        plugins = PluginRegistry(settings.plugins_dir, nodes)
+        plugins = PluginRegistry(
+            settings.plugins_dir, nodes, settings=settings.plugin_settings
+        )
         plugins.load_installed()
+    services = create_node_services(
+        settings,
+        llm=ai,
+        owners=MappingProxyType({}) if plugins is None else plugins.node_plugins,
+    )
     if not settings.database_url:
         return Container(settings=settings, nodes=nodes, plugins=plugins, ai=ai)
     database = Database(normalize_async_url(settings.database_url))
@@ -214,6 +222,7 @@ def create_container(settings: Settings) -> Container:
         max_concurrency=settings.limit_execution_concurrency,
         limits=limits,
         plugins=plugin_versions,
+        services=services,
     )
     workers = (
         None
@@ -276,7 +285,11 @@ def create_container(settings: Settings) -> Container:
         executions=executions,
         runtime=runtime,
         node_tester=NodeTester(
-            workflows, nodes.catalog, credentials=credentials, limits=limits
+            workflows,
+            nodes.catalog,
+            credentials=credentials,
+            limits=limits,
+            services=services,
         ),
         queue=queue,
         workers=workers,
@@ -296,26 +309,33 @@ def create_container(settings: Settings) -> Container:
     )
 
 
-def create_node_registry(
-    settings: Settings, *, llm: LLMClient | None = None
-) -> NodeRegistry:
-    """Built-in nodes configured from settings; plugins add theirs."""
-    return create_builtin_registry(
+def create_node_services(
+    settings: Settings,
+    *,
+    llm: LLMClient | None,
+    owners: Mapping[str, str] = MappingProxyType({}),
+) -> NodeServices:
+    """What every node, built-in or plugin, gets from this deployment (ADR
+    0011). ``owners``: node type id → plugin id (``PluginRegistry.node_plugins``,
+    a live view). The runtime adds the node catalog."""
+    core = CoreSettings(
+        web_search_url=None
+        if settings.web_search_url is None
+        else str(settings.web_search_url),
+        http_max_response_bytes=settings.http_max_response_bytes,
+        workspace_max_file_bytes=settings.workspace_max_file_bytes,
+        command_allowed=tuple(settings.command_allowed),
+        command_max_output_bytes=settings.command_max_output_bytes,
+    )
+    return NodeServices(
         llm=llm,
         network=NetworkPolicy(
             allow_private_networks=settings.network_allow_private,
             allowed_hosts=frozenset(settings.network_allowed_hosts),
         ),
-        web_search_url=None
-        if settings.web_search_url is None
-        else str(settings.web_search_url),
-        http_max_response_bytes=settings.http_max_response_bytes,
-        workspace=None
-        if settings.workspace_dir is None
-        else Workspace(settings.workspace_dir),
-        max_file_bytes=settings.workspace_max_file_bytes,
-        allowed_commands=frozenset(settings.command_allowed),
-        command_max_output_bytes=settings.command_max_output_bytes,
+        workspace_dir=settings.workspace_dir,
+        settings={**settings.plugin_settings, BUILTIN_PLUGIN_ID: asdict(core)},
+        owners=owners,
     )
 
 

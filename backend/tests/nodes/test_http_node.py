@@ -1,6 +1,7 @@
 """core.http against a local HTTP server; SSRF guard (AGENTS §30/§34)."""
 
 import asyncio
+import functools
 import socket
 from typing import Any
 from urllib.parse import quote
@@ -8,18 +9,28 @@ from urllib.parse import quote
 import httpcore
 import pytest
 
-from akasha.domain.node import NodeError, NodeErrorKind
+from akasha.domain.node import NodeError, NodeErrorKind, NodeServices
 from akasha.errors import NodeConfigurationError
 from akasha.nodes.http import HttpNode
 from akasha.security.network import NetworkPolicy, check_destination
 from tests.support import LocalHttpServer, RunNode, make_context
 
-LOCAL = NetworkPolicy(allow_private_networks=True)
+LOCAL = NodeServices(network=NetworkPolicy(allow_private_networks=True))
+STRICT = NodeServices()  # the default policy: public destinations only
 CANARY = "sk-test-canary-value-123"  # must never appear in errors
 
 
-def local_node(**kwargs: Any) -> HttpNode:
-    return HttpNode(LOCAL, **kwargs)
+@pytest.fixture
+def run_node(run_node: RunNode) -> RunNode:
+    """These tests talk to a loopback server: private networks are allowed
+    unless a test passes its own ``services``."""
+    return functools.partial(run_node, services=LOCAL)
+
+
+def capped(run_node: RunNode, max_response_bytes: int) -> RunNode:
+    return functools.partial(
+        run_node, settings={"http_max_response_bytes": max_response_bytes}
+    )
 
 
 async def failure(run_node: RunNode, node: HttpNode, **config: Any) -> NodeError:
@@ -35,7 +46,7 @@ async def test_get_parses_json_and_sends_headers(
     run_node: RunNode, http_server: LocalHttpServer
 ) -> None:
     result = await run_node(
-        local_node(),
+        HttpNode(),
         config={
             "url": f"{http_server.base_url}/echo?x=1",
             "headers": {"X-Trace": "t1"},
@@ -54,7 +65,7 @@ async def test_post_sends_the_body_input_as_json(
     run_node: RunNode, http_server: LocalHttpServer
 ) -> None:
     result = await run_node(
-        local_node(),
+        HttpNode(),
         config={"method": "POST", "url": f"{http_server.base_url}/echo"},
         inputs={"body": {"lead": "Ada", "n": [1, None]}},
     )
@@ -68,7 +79,7 @@ async def test_explicit_content_type_is_kept(
     run_node: RunNode, http_server: LocalHttpServer
 ) -> None:
     await run_node(
-        local_node(),
+        HttpNode(),
         config={
             "method": "PUT",
             "url": f"{http_server.base_url}/echo",
@@ -85,10 +96,10 @@ async def test_head_and_text_responses(
     run_node: RunNode, http_server: LocalHttpServer
 ) -> None:
     head = await run_node(
-        local_node(), config={"method": "HEAD", "url": f"{http_server.base_url}/big"}
+        HttpNode(), config={"method": "HEAD", "url": f"{http_server.base_url}/big"}
     )
     assert (head.outputs["status"], head.outputs["body"]) == (200, "")
-    text = await run_node(local_node(), config={"url": f"{http_server.base_url}/text"})
+    text = await run_node(HttpNode(), config={"url": f"{http_server.base_url}/text"})
     assert text.outputs["body"] == "café"  # declared charset honoured
 
 
@@ -109,7 +120,7 @@ async def test_error_status_is_classified(
     run_node: RunNode, http_server: LocalHttpServer, status: int, kind: NodeErrorKind
 ) -> None:
     error = await failure(
-        run_node, local_node(), url=f"{http_server.base_url}/status/{status}"
+        run_node, HttpNode(), url=f"{http_server.base_url}/status/{status}"
     )
     assert (error.code, error.kind) == ("HTTP_STATUS_ERROR", kind)
     assert error.details == {"status": str(status)}
@@ -119,7 +130,7 @@ async def test_error_status_can_be_returned_instead(
     run_node: RunNode, http_server: LocalHttpServer
 ) -> None:
     result = await run_node(
-        local_node(),
+        HttpNode(),
         config={
             "url": f"{http_server.base_url}/status/404",
             "fail_on_error_status": False,
@@ -136,7 +147,7 @@ async def test_redirects_are_not_followed_by_default(
 ) -> None:
     target = quote(f"{http_server.base_url}/echo")
     result = await run_node(
-        local_node(), config={"url": f"{http_server.base_url}/redirect?to={target}"}
+        HttpNode(), config={"url": f"{http_server.base_url}/redirect?to={target}"}
     )
     assert result.outputs["status"] == 302
     assert result.outputs["headers"]["location"].endswith("/echo")
@@ -148,7 +159,7 @@ async def test_redirects_are_followed_when_enabled(
 ) -> None:
     target = quote(f"{http_server.base_url}/echo")
     result = await run_node(
-        local_node(),
+        HttpNode(),
         config={
             "url": f"{http_server.base_url}/redirect?to={target}",
             "follow_redirects": True,
@@ -163,7 +174,7 @@ async def test_redirect_loops_are_bounded(
 ) -> None:
     error = await failure(
         run_node,
-        local_node(),
+        HttpNode(),
         url=f"{http_server.base_url}/loop",
         follow_redirects=True,
     )
@@ -180,14 +191,17 @@ async def test_every_redirect_hop_passes_the_destination_guard(
     """The operator trusts 127.0.0.1 only; a redirect to another private
     destination (cloud metadata, ``localhost``) is blocked before any
     connection is made."""
-    node = HttpNode(NetworkPolicy(allowed_hosts=frozenset({"127.0.0.1"})))
+    node = HttpNode()
+    by_host = NodeServices(
+        network=NetworkPolicy(allowed_hosts=frozenset({"127.0.0.1"}))
+    )
     for target in (
         "http://169.254.169.254/latest/meta-data/",
         f"http://localhost:{http_server.port}/echo",
     ):
         http_server.state.requests.clear()
         error = await failure(
-            run_node,
+            functools.partial(run_node, services=by_host),
             node,
             url=f"{http_server.base_url}/redirect?to={quote(target)}",
             follow_redirects=True,
@@ -201,7 +215,7 @@ async def test_redirect_to_a_non_http_scheme_is_refused(
 ) -> None:
     error = await failure(
         run_node,
-        local_node(),
+        HttpNode(),
         url=f"{http_server.base_url}/redirect?to={quote('file:///etc/passwd')}",
         follow_redirects=True,
     )
@@ -222,8 +236,8 @@ async def test_oversized_responses_are_rejected(
 ) -> None:
     """Both a declared Content-Length and a close-delimited body."""
     error = await failure(
-        run_node,
-        local_node(max_response_bytes=_BIG[path] - short),
+        capped(run_node, _BIG[path] - short),
+        HttpNode(),
         url=http_server.base_url + path,
     )
     assert (error.code, error.kind) == (
@@ -236,8 +250,8 @@ async def test_oversized_responses_are_rejected(
 async def test_response_exactly_at_the_limit_is_accepted(
     run_node: RunNode, http_server: LocalHttpServer, path: str
 ) -> None:
-    result = await run_node(
-        local_node(max_response_bytes=_BIG[path]),
+    result = await capped(run_node, _BIG[path])(
+        HttpNode(),
         config={"url": f"{http_server.base_url}{path}"},
     )
     assert len(result.outputs["body"]) == _BIG[path]
@@ -246,9 +260,7 @@ async def test_response_exactly_at_the_limit_is_accepted(
 async def test_malformed_json_is_a_permanent_error(
     run_node: RunNode, http_server: LocalHttpServer
 ) -> None:
-    error = await failure(
-        run_node, local_node(), url=f"{http_server.base_url}/malformed"
-    )
+    error = await failure(run_node, HttpNode(), url=f"{http_server.base_url}/malformed")
     assert (error.code, error.kind) == (
         "HTTP_MALFORMED_RESPONSE",
         NodeErrorKind.PERMANENT,
@@ -258,7 +270,7 @@ async def test_malformed_json_is_a_permanent_error(
 async def test_timeout(run_node: RunNode, http_server: LocalHttpServer) -> None:
     error = await failure(
         run_node,
-        local_node(),
+        HttpNode(),
         url=f"{http_server.base_url}/hang",
         timeout_seconds=0.2,
     )
@@ -269,7 +281,7 @@ async def test_connection_refused_is_transient(run_node: RunNode) -> None:
     with socket.socket() as probe:  # a port that is certainly closed
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
-    error = await failure(run_node, local_node(), url=f"http://127.0.0.1:{port}/")
+    error = await failure(run_node, HttpNode(), url=f"http://127.0.0.1:{port}/")
     assert (error.code, error.kind) == (
         "HTTP_CONNECTION_ERROR",
         NodeErrorKind.TRANSIENT,
@@ -280,7 +292,7 @@ async def test_cancellation_aborts_an_in_flight_request(
     run_node: RunNode, http_server: LocalHttpServer
 ) -> None:
     task = asyncio.create_task(
-        run_node(local_node(), config={"url": f"{http_server.base_url}/hang"})
+        run_node(HttpNode(), config={"url": f"{http_server.base_url}/hang"})
     )
     # The server signals when the request is in flight (bounded wait).
     assert await asyncio.to_thread(http_server.state.hang_entered.wait, 5)
@@ -308,7 +320,7 @@ async def test_invalid_config_is_rejected_at_validation(
     run_node: RunNode, config: dict[str, Any]
 ) -> None:
     with pytest.raises(NodeConfigurationError):
-        await run_node(local_node(), config=config)
+        await run_node(HttpNode(), config=config)
 
 
 async def test_non_string_header_values_are_rejected() -> None:
@@ -318,9 +330,9 @@ async def test_non_string_header_values_are_rejected() -> None:
         HttpNode.definition.validate_config(config)
     # ... and the node still refuses them in versions published before the
     # schema typed header values (the runtime does not re-validate config).
-    node = local_node()
+    node = HttpNode()
     with pytest.raises(NodeError) as exc:
-        await node.execute(make_context(node, config=config))
+        await node.execute(make_context(node, config=config, services=LOCAL))
     assert (exc.value.code, exc.value.kind) == (
         "HTTP_INVALID_HEADERS",
         NodeErrorKind.CONFIGURATION,
@@ -338,7 +350,7 @@ def test_header_credentials_must_be_references() -> None:
 
 async def test_credentials_in_urls_are_rejected(run_node: RunNode) -> None:
     error = await failure(
-        run_node, local_node(), url=f"http://user:{CANARY}@127.0.0.1:1/"
+        run_node, HttpNode(), url=f"http://user:{CANARY}@127.0.0.1:1/"
     )
     assert error.code == "HTTP_INVALID_URL"
     assert CANARY not in error.message and CANARY not in str(error.details)
@@ -368,9 +380,11 @@ def blocked_urls(port: int) -> list[str]:
 async def test_private_destinations_are_blocked_by_default(
     run_node: RunNode, http_server: LocalHttpServer
 ) -> None:
-    node = HttpNode()  # default policy: public destinations only
+    node = HttpNode()
     for url in blocked_urls(http_server.port):
-        error = await failure(run_node, node, url=url)
+        error = await failure(
+            functools.partial(run_node, services=STRICT), node, url=url
+        )
         assert (error.code, error.kind) == (
             "DESTINATION_BLOCKED",
             NodeErrorKind.PERMANENT,
@@ -395,7 +409,7 @@ async def test_secrets_in_headers_never_reach_errors(
 ) -> None:
     headers = {"Authorization": f"Bearer {CANARY}"}
     for url in (f"{http_server.base_url}/status/500", "http://127.0.0.1:1/"):
-        error = await failure(run_node, local_node(), url=url, headers=headers)
+        error = await failure(run_node, HttpNode(), url=url, headers=headers)
         assert CANARY not in f"{error.message} {error.details} {error!r}"
 
 
@@ -425,7 +439,11 @@ async def test_connection_uses_the_addresses_the_guard_vetted(
     monkeypatch.setattr(asyncio.get_running_loop(), "getaddrinfo", rebinding)
     monkeypatch.setattr(httpcore.AnyIOBackend, "connect_tcp", no_network)
 
-    error = await failure(run_node, HttpNode(), url="http://rebind.test/")
+    error = await failure(
+        functools.partial(run_node, services=STRICT),
+        HttpNode(),
+        url="http://rebind.test/",
+    )
     assert error.code == "HTTP_CONNECTION_ERROR"
     assert lookups == ["rebind.test"]
     assert connected == public
@@ -441,7 +459,11 @@ async def test_one_private_answer_blocks_the_whole_name(
         ]
 
     monkeypatch.setattr(asyncio.get_running_loop(), "getaddrinfo", mixed)
-    error = await failure(run_node, HttpNode(), url="http://mixed.test/")
+    error = await failure(
+        functools.partial(run_node, services=STRICT),
+        HttpNode(),
+        url="http://mixed.test/",
+    )
     assert error.code == "DESTINATION_BLOCKED"
 
 
@@ -460,7 +482,7 @@ async def test_credential_headers_do_not_follow_cross_origin_redirects(
         (f"http://localhost:{http_server.port}/echo", False),
     ):
         result = await run_node(
-            local_node(),
+            HttpNode(),
             config={
                 "url": f"{http_server.base_url}/redirect?to={quote(target)}",
                 "follow_redirects": True,
@@ -481,7 +503,7 @@ async def test_query_input_is_merged_into_the_url(
     run_node: RunNode, http_server: LocalHttpServer
 ) -> None:
     await run_node(
-        local_node(),
+        HttpNode(),
         config={"url": f"{http_server.base_url}/echo?fixed=1"},
         inputs={
             "query": {"q": "a b&c", "n": 2, "on": True, "tag": ["x", "y"], "skip": None}
@@ -495,7 +517,7 @@ async def test_url_variables_are_encoded_into_the_path(
     run_node: RunNode, http_server: LocalHttpServer
 ) -> None:
     await run_node(
-        local_node(),
+        HttpNode(),
         config={
             "url": f"{http_server.base_url}/status/{{{{ code }}}}?id={{{{ lead.id }}}}"
         },
@@ -519,7 +541,7 @@ async def test_url_variables_cannot_choose_the_server(
 ) -> None:
     with pytest.raises(NodeError) as exc:
         await run_node(
-            local_node(),
+            HttpNode(),
             config={"url": url},
             inputs={"variables": {"host": "169.254.169.254", "port": "1", "x": "y"}},
         )
@@ -532,7 +554,7 @@ async def test_missing_or_structured_url_variables_fail(
 ) -> None:
     with pytest.raises(NodeError) as exc:
         await run_node(
-            local_node(),
+            HttpNode(),
             config={"url": f"{http_server.base_url}/echo/{{{{ id }}}}"},
             inputs={"variables": variables},
         )

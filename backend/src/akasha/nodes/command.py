@@ -5,8 +5,9 @@ with the engine's OS user and can do whatever that program can do —
 allowing ``python3`` or ``bash`` allows arbitrary code. The node therefore
 guarantees only what it can enforce:
 
-- off unless the operator lists executables (``AKASHA_COMMAND_ALLOWED``);
-  the config names one of them, a workflow cannot widen the list;
+- off unless the operator lists executables (setting ``command_allowed``,
+  env ``AKASHA_COMMAND_ALLOWED``); the config names one of them, a workflow
+  cannot widen the list;
 - argv execution, never a shell: arguments are passed verbatim, so ``;``,
   ``|`` or ``$(...)`` in model-written arguments are plain text;
 - a minimal environment (no engine variables, so no database URL or
@@ -24,6 +25,7 @@ from pathlib import Path
 from typing import cast
 
 from akasha.nodes.core import VERSION, closed_schema
+from akasha.nodes.settings import core_settings
 from akasha.sdk import (
     Node,
     NodeCapabilities,
@@ -36,12 +38,11 @@ from akasha.sdk import (
     NodeOutput,
     NodeResult,
     PortType,
+    Workspace,
 )
-from akasha.security.paths import Workspace
 
 DEFAULT_TIMEOUT_SECONDS = 30.0
 MAX_TIMEOUT_SECONDS = 600
-DEFAULT_MAX_OUTPUT_BYTES = 256 * 1024
 MAX_ARGS = 256
 _CHUNK = 64 * 1024
 
@@ -135,27 +136,18 @@ class CommandNode(Node):
         ),
     )
 
-    def __init__(
-        self,
-        workspace: Workspace | None = None,
-        *,
-        allowed_executables: frozenset[str] = frozenset(),
-        max_output_bytes: int = DEFAULT_MAX_OUTPUT_BYTES,
-    ) -> None:
-        self._workspace = workspace
-        self._allowed = allowed_executables
-        self._max_bytes = max_output_bytes
-
     async def execute(self, context: NodeExecutionContext) -> NodeResult:
         cfg = context.config
-        if self._workspace is None or not self._allowed:
+        root = context.services.workspace_dir
+        settings = core_settings(context)
+        if root is None or not settings.command_allowed:
             raise _error(
                 "running commands is not enabled for this engine",
                 NodeErrorKind.CONFIGURATION,
                 "COMMAND_NOT_CONFIGURED",
             )
         name = cfg["executable"]
-        if name not in self._allowed:
+        if name not in settings.command_allowed:
             raise _error(
                 "the executable is not allowed by the operator",
                 NodeErrorKind.CONFIGURATION,
@@ -183,7 +175,7 @@ class CommandNode(Node):
                 NodeErrorKind.VALIDATION,
                 "COMMAND_INVALID_ARGS",
             )
-        cwd = self._workspace.resolve(
+        cwd = Workspace(root).resolve(
             context.workflow_id, cfg.get("working_directory", ".")
         )
         if not cwd.is_dir():
@@ -192,12 +184,13 @@ class CommandNode(Node):
                 NodeErrorKind.CONFIGURATION,
                 "COMMAND_INVALID_WORKING_DIRECTORY",
             )
-        exit_code, stdout, stderr, truncated = await self._run(
+        exit_code, stdout, stderr, truncated = await _run(
             program,
             args,
             cwd,
             context.inputs.get("stdin", "").encode(),
             cfg.get("timeout_seconds", DEFAULT_TIMEOUT_SECONDS),
+            settings.command_max_output_bytes,
         )
         if exit_code != 0 and cfg.get("fail_on_nonzero_exit", True):
             raise _error(
@@ -215,63 +208,71 @@ class CommandNode(Node):
             }
         )
 
-    async def _run(
-        self, program: str, args: list[str], cwd: Path, stdin: bytes, limit: float
-    ) -> tuple[int, bytes, bytes, bool]:
-        env = {
-            "PATH": os.pathsep.join([str(Path(program).parent), os.defpath]),
-            "HOME": str(cwd),
-            "LANG": "C.UTF-8",
-        }
-        process = await asyncio.create_subprocess_exec(
-            program,
-            *args,
-            cwd=cwd,
-            env=env,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            start_new_session=True,  # own process group: killed as a whole
-        )
-        try:
-            async with asyncio.timeout(limit):
-                (out, out_cut), (err, err_cut), _ = await asyncio.gather(
-                    # PIPE was requested for all three streams.
-                    self._read(cast("asyncio.StreamReader", process.stdout)),
-                    self._read(cast("asyncio.StreamReader", process.stderr)),
-                    self._feed(cast("asyncio.StreamWriter", process.stdin), stdin),
-                )
-                exit_code = await process.wait()
-        except TimeoutError:
-            raise _error(
-                f"the command did not finish within {limit}s",
-                NodeErrorKind.TIMEOUT,
-                "COMMAND_TIMEOUT",
-            ) from None
-        finally:
-            if process.returncode is None:  # timeout or cancellation
-                with suppress(ProcessLookupError):
-                    os.killpg(process.pid, signal.SIGKILL)
-                await process.wait()
-        return exit_code, out, err, out_cut or err_cut
 
-    async def _read(self, stream: asyncio.StreamReader) -> tuple[bytes, bool]:
-        """Keep the first ``max_output_bytes``; drain the rest so the program
-        never blocks on a full pipe."""
-        kept = bytearray()
-        truncated = False
-        while chunk := await stream.read(_CHUNK):
-            room = self._max_bytes - len(kept)
-            kept += chunk[:room]
-            truncated |= len(chunk) > room
-        return bytes(kept), truncated
+async def _run(
+    program: str,
+    args: list[str],
+    cwd: Path,
+    stdin: bytes,
+    limit: float,
+    max_bytes: int,
+) -> tuple[int, bytes, bytes, bool]:
+    env = {
+        "PATH": os.pathsep.join([str(Path(program).parent), os.defpath]),
+        "HOME": str(cwd),
+        "LANG": "C.UTF-8",
+    }
+    process = await asyncio.create_subprocess_exec(
+        program,
+        *args,
+        cwd=cwd,
+        env=env,
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        start_new_session=True,  # own process group: killed as a whole
+    )
+    try:
+        async with asyncio.timeout(limit):
+            (out, out_cut), (err, err_cut), _ = await asyncio.gather(
+                # PIPE was requested for all three streams.
+                _read(cast("asyncio.StreamReader", process.stdout), max_bytes),
+                _read(cast("asyncio.StreamReader", process.stderr), max_bytes),
+                _feed(cast("asyncio.StreamWriter", process.stdin), stdin),
+            )
+            exit_code = await process.wait()
+    except TimeoutError:
+        raise _error(
+            f"the command did not finish within {limit}s",
+            NodeErrorKind.TIMEOUT,
+            "COMMAND_TIMEOUT",
+        ) from None
+    finally:
+        if process.returncode is None:  # timeout or cancellation
+            with suppress(ProcessLookupError):
+                os.killpg(process.pid, signal.SIGKILL)
+            await process.wait()
+    return exit_code, out, err, out_cut or err_cut
 
-    async def _feed(self, stream: asyncio.StreamWriter, data: bytes) -> None:
-        # A program that exits without reading its input closes the pipe;
-        # that is its choice, not a node failure.
-        with suppress(BrokenPipeError, ConnectionResetError):
-            if data:
-                stream.write(data)
-                await stream.drain()
-            stream.close()
-            await stream.wait_closed()
+
+async def _read(stream: asyncio.StreamReader, max_bytes: int) -> tuple[bytes, bool]:
+    """Keep the first ``max_output_bytes``; drain the rest so the program
+    never blocks on a full pipe."""
+    kept = bytearray()
+    truncated = False
+    while chunk := await stream.read(_CHUNK):
+        room = max_bytes - len(kept)
+        kept += chunk[:room]
+        truncated |= len(chunk) > room
+    return bytes(kept), truncated
+
+
+async def _feed(stream: asyncio.StreamWriter, data: bytes) -> None:
+    # A program that exits without reading its input closes the pipe;
+    # that is its choice, not a node failure.
+    with suppress(BrokenPipeError, ConnectionResetError):
+        if data:
+            stream.write(data)
+            await stream.drain()
+        stream.close()
+        await stream.wait_closed()

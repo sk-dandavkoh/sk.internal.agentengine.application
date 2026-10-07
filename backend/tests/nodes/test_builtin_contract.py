@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from akasha.bootstrap import create_container, create_node_registry
+from akasha.bootstrap import create_container, create_node_services
 from akasha.config import Settings
 from akasha.domain.node import (
     CREDENTIAL_REFERENCE_FORMAT,
@@ -15,10 +15,12 @@ from akasha.domain.node import (
 )
 from akasha.domain.primitives import SEMVER_RE
 from akasha.errors import NodeConfigurationError
-from akasha.nodes.agent import AgentNode
 from akasha.nodes.builtins import create_builtin_registry
-from akasha.nodes.llm import LlmNode
+from akasha.nodes.command import CommandNode
+from akasha.nodes.files import FileWriteNode
+from akasha.nodes.http import HttpNode, WebSearchNode
 from akasha.nodes.registry import NodeAlreadyRegisteredError, NodeRegistration
+from akasha.nodes.settings import CoreSettings
 from akasha.security.redaction import is_sensitive_key
 from tests.support import LocalHttpServer, RunNode
 
@@ -154,13 +156,14 @@ async def test_network_settings_reach_the_http_node(
     run_node: RunNode, http_server: LocalHttpServer
 ) -> None:
     config = {"url": f"{http_server.base_url}/echo"}
-    strict = create_node_registry(Settings()).get("core.http")()
+    strict = create_node_services(Settings(), llm=None)
     with pytest.raises(NodeError, match="not a public address"):
-        await run_node(strict, config=config)
-    by_host = create_node_registry(Settings(network_allowed_hosts=["127.0.0.1"])).get(
-        "core.http"
-    )()
-    assert (await run_node(by_host, config=config)).outputs["status"] == 200
+        await run_node(HttpNode(), config=config, services=strict)
+    by_host = create_node_services(
+        Settings(network_allowed_hosts=["127.0.0.1"]), llm=None
+    )
+    result = await run_node(HttpNode(), config=config, services=by_host)
+    assert result.outputs["status"] == 200
     assert http_server.state.requests  # really reached the local server
 
 
@@ -168,41 +171,65 @@ async def test_web_search_url_setting_reaches_the_node(
     run_node: RunNode, http_server: LocalHttpServer
 ) -> None:
     settings = Settings.model_validate({"web_search_url": http_server.base_url})
-    node = create_node_registry(settings).get("core.web_search")()
-    result = await run_node(node, inputs={"query": "q"})
+    services = create_node_services(settings, llm=None)
+    result = await run_node(WebSearchNode(), inputs={"query": "q"}, services=services)
     assert result.outputs == {"results": []}
 
 
-def test_container_wires_its_ai_service_into_core_llm() -> None:
+def test_container_wires_its_ai_service_into_the_runtime() -> None:
     container = create_container(Settings(environment="test"))
-    node = container.nodes.get("core.llm")()
-    assert isinstance(node, LlmNode)
-    assert node._llm is container.ai
-
-
-def test_container_wires_ai_service_and_live_catalog_into_core_agent() -> None:
-    container = create_container(Settings(environment="test"))
-    node = container.nodes.get("core.agent")()
-    assert isinstance(node, AgentNode)
-    assert node._llm is container.ai
-    assert node._catalog is container.nodes.catalog
+    services = create_node_services(container.settings, llm=container.ai)
+    assert services.llm is container.ai
 
 
 async def test_workspace_and_command_settings_reach_the_nodes(
     run_node: RunNode, tmp_path: Path
 ) -> None:
     settings = Settings(workspace_dir=tmp_path, command_allowed=["echo"])
-    registry = create_node_registry(settings)
+    services = create_node_services(settings, llm=None)
     written = await run_node(
-        registry.get("core.file_write")(), inputs={"path": "a.txt", "content": "hi"}
+        FileWriteNode(), inputs={"path": "a.txt", "content": "hi"}, services=services
     )
     assert written.outputs == {"path": "a.txt", "size": 2}
     echoed = await run_node(
-        registry.get("core.command")(),
+        CommandNode(),
         config={"executable": "echo"},
         inputs={"args": ["hello"]},
+        services=services,
     )
     assert echoed.outputs["stdout"] == "hello\n"
+
+
+def test_plugin_settings_reach_the_owning_plugin_only() -> None:
+    settings = Settings.model_validate(
+        {"plugin_settings": {"community.web": {"endpoint": "http://intranet"}}}
+    )
+    # Plugin ids may contain dots: ownership, not the id prefix, decides.
+    owners = {"community.web.fetch": "community.web", "community.other.x": "x"}
+    services = create_node_services(settings, llm=None, owners=owners)
+    assert services.settings_for("community.web.fetch") == {
+        "endpoint": "http://intranet"
+    }
+    assert services.settings_for("community.other.x") == {}
+    assert "endpoint" not in services.settings_for("core.http")
+    assert services.settings_for("unowned.node") == {}
+
+
+def test_core_settings_are_typed() -> None:
+    services = create_node_services(Settings(command_allowed=["echo"]), llm=None)
+    assert CoreSettings(**services.settings_for("core.command")).command_allowed == (
+        "echo",
+    )
+    typo: dict[str, object] = {"command_alowed": ("sh",)}
+    with pytest.raises(TypeError):
+        CoreSettings(**typo)  # type: ignore[arg-type]  # fails, never ignored
+
+
+def test_plugin_settings_cannot_configure_core() -> None:
+    with pytest.raises(ValueError, match="core"):
+        Settings.model_validate(
+            {"plugin_settings": {"core": {"command_allowed": ["sh"]}}}
+        )
 
 
 def test_workspace_dir_must_exist(tmp_path: Path) -> None:

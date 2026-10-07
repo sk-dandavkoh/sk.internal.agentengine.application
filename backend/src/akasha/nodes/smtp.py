@@ -31,6 +31,7 @@ from email.utils import formatdate
 from akasha.nodes.core import VERSION, closed_schema
 from akasha.sdk import (
     CREDENTIAL_REFERENCE_FORMAT,
+    NetworkPolicy,
     Node,
     NodeCapabilities,
     NodeDefinition,
@@ -42,8 +43,15 @@ from akasha.sdk import (
     NodeOutput,
     NodeResult,
     PortType,
+    check_destination,
 )
-from akasha.security.network import NetworkPolicy, check_destination
+
+
+def _trusted(policy: NetworkPolicy, host: str) -> bool:
+    return policy.allow_private_networks or host.lower() in {
+        h.lower() for h in policy.allowed_hosts
+    }
+
 
 MAX_RECIPIENTS = 50
 _ADDRESS = {"type": "string", "pattern": r"^[^\s@<>,]+@[^\s@<>,]+$"}
@@ -142,9 +150,6 @@ class SmtpNode(Node):
         capabilities=NodeCapabilities(has_side_effects=True),
     )
 
-    def __init__(self, policy: NetworkPolicy | None = None) -> None:
-        self._policy = policy or NetworkPolicy()
-
     async def execute(self, context: NodeExecutionContext) -> NodeResult:
         cfg = context.config
         if not cfg["recipients"]:
@@ -156,8 +161,9 @@ class SmtpNode(Node):
         security = cfg.get("security", DEFAULT_SECURITY)
         host, port = cfg["host"], cfg.get("port", _DEFAULT_PORTS[security])
         # Destination first: nothing is decrypted for a host never contacted.
-        addresses = await check_destination(host, port, self._policy)
-        if security == "none" and "username" in cfg and not self._trusted(host):
+        policy = context.services.network
+        addresses = await check_destination(host, port, policy)
+        if security == "none" and "username" in cfg and not _trusted(policy, host):
             raise _error(
                 "SMTP authentication requires TLS (security 'starttls' or 'tls')",
                 NodeErrorKind.CONFIGURATION,
@@ -182,11 +188,6 @@ class SmtpNode(Node):
                 "rejected_recipients": sorted(refused),
             }
         )
-
-    def _trusted(self, host: str) -> bool:
-        return self._policy.allow_private_networks or host.lower() in {
-            h.lower() for h in self._policy.allowed_hosts
-        }
 
     @staticmethod
     async def _password(context: NodeExecutionContext) -> str | None:

@@ -3,7 +3,7 @@ limits, status classification and the SSRF guard on every hop."""
 
 import pytest
 
-from akasha.domain.node import NodeError, NodeErrorKind
+from akasha.domain.node import NodeError, NodeErrorKind, NodeServices
 from akasha.nodes.http import WebFetchNode, html_to_text
 from akasha.security.network import NetworkPolicy
 from tests.support import LocalHttpServer, RunNode
@@ -12,7 +12,12 @@ LOCAL = NetworkPolicy(allowed_hosts=frozenset({"127.0.0.1"}))
 
 
 async def fetch(run_node: RunNode, url: str, **config: object) -> dict[str, object]:
-    result = await run_node(WebFetchNode(LOCAL), config=config, inputs={"url": url})
+    result = await run_node(
+        WebFetchNode(),
+        config=config,
+        inputs={"url": url},
+        services=NodeServices(network=LOCAL),
+    )
     return dict(result.outputs)
 
 
@@ -20,7 +25,9 @@ async def failure(
     run_node: RunNode, url: str, policy: NetworkPolicy = LOCAL
 ) -> NodeError:
     with pytest.raises(NodeError) as exc:
-        await run_node(WebFetchNode(policy), inputs={"url": url})
+        await run_node(
+            WebFetchNode(), inputs={"url": url}, services=NodeServices(network=policy)
+        )
     return exc.value
 
 

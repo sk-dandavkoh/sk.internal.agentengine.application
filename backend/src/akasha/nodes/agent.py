@@ -31,16 +31,6 @@ from copy import deepcopy
 from dataclasses import dataclass, replace
 from typing import Any
 
-from akasha.domain.ai import (
-    CostEstimate,
-    LLMClient,
-    Message,
-    ProviderError,
-    Role,
-    ToolCall,
-)
-from akasha.domain.credentials import credential_references
-from akasha.domain.node import NO_DEFAULT, NodeFactory
 from akasha.nodes.core import VERSION, closed_schema
 from akasha.nodes.llm import (
     MODEL_CONFIG,
@@ -54,7 +44,10 @@ from akasha.nodes.llm import (
     usage_metadata,
 )
 from akasha.sdk import (
+    NO_DEFAULT,
+    CostEstimate,
     CredentialResolver,
+    Message,
     Node,
     NodeCapabilities,
     NodeDefinition,
@@ -62,6 +55,7 @@ from akasha.sdk import (
     NodeErrorKind,
     NodeEvents,
     NodeExecutionContext,
+    NodeFactory,
     NodeInput,
     NodeMetadata,
     NodeMetrics,
@@ -69,8 +63,13 @@ from akasha.sdk import (
     NodeResult,
     NodeValidationError,
     PortType,
+    ProviderError,
+    Role,
+    ToolCall,
+    credential_references,
+    mask_known_secrets,
+    redact_text,
 )
-from akasha.security.redaction import mask_known_secrets, redact_text
 
 NODE_ID = "core.agent"
 MAX_TOOLS = 32
@@ -167,6 +166,45 @@ class _Tool:
             "description": self.description,
             "parameters": self.parameters,
         }
+
+
+def _tools(
+    catalog: Mapping[str, NodeFactory], entries: list[Mapping[str, Any]]
+) -> dict[str, _Tool]:
+    """Resolve and check every tool before the first model call, so a
+    broken tool fails the run without spending a model request.
+
+    ponytail: checked at run start, not at publish — graph validation
+    only sees the agent's own config schema. Upgrade path: let node
+    definitions declare referenced node types for publish validation.
+    """
+    tools: dict[str, _Tool] = {}
+    for entry in entries:
+        name, node_type = entry["name"], entry["node_type"]
+        if name in tools:
+            raise _tool_invalid(name, "the name is used twice")
+        factory = catalog.get(node_type)
+        if factory is None:
+            raise _tool_invalid(name, f"unknown node type {node_type!r}")
+        definition = factory.definition
+        # No nested agents: bounds agent/tool call depth (architecture
+        # §131). Control-flow nodes route graphs, they answer nothing;
+        # waiting nodes (core.human) cannot suspend a tool call.
+        caps = definition.capabilities
+        if node_type == NODE_ID or caps.is_control_flow or caps.waits_for_input:
+            raise _tool_invalid(name, f"{node_type!r} cannot be used as a tool")
+        config = entry.get("config", {})
+        if issues := definition.config_issues(config):
+            first = issues[0]
+            raise _tool_invalid(name, f"{first.location} {first.message}")
+        tools[name] = _Tool(
+            name=name,
+            description=entry.get("description") or definition.metadata.description,
+            factory=factory,
+            config=config,
+            parameters=tool_parameters(definition),
+        )
+    return tools
 
 
 class AgentNode(Node):
@@ -279,23 +317,16 @@ class AgentNode(Node):
         metrics=("model_calls", "tool_calls", "tool_errors"),
     )
 
-    def __init__(
-        self,
-        llm: LLMClient | None = None,
-        tools: Mapping[str, NodeFactory] | None = None,
-    ) -> None:
-        self._llm = llm
-        self._catalog = tools or {}
-
     async def execute(self, context: NodeExecutionContext) -> NodeResult:
-        if self._llm is None:
+        llm = context.services.llm
+        if llm is None:
             raise _error(
                 "no LLM service is configured for this engine",
                 NodeErrorKind.CONFIGURATION,
                 "LLM_NOT_CONFIGURED",
             )
         cfg = context.config
-        tools = self._tools(cfg.get("tools", []))
+        tools = _tools(context.services.nodes, cfg.get("tools", []))
         specs = [tool.spec for tool in tools.values()]
         messages = prompt_messages(cfg, context.inputs.get("variables", {}))
         steps: list[dict[str, Any]] = []
@@ -314,9 +345,7 @@ class AgentNode(Node):
             request = build_request(cfg, messages, specs)
             context.metrics.increment("model_calls")
             try:
-                response = await self._llm.complete(
-                    request, credentials=context.credentials
-                )
+                response = await llm.complete(request, credentials=context.credentials)
             except ProviderError as exc:
                 raise provider_node_error(exc) from exc
             for key, value in usage_metadata(response.usage).items():
@@ -357,42 +386,6 @@ class AgentNode(Node):
             "AGENT_MAX_ITERATIONS",
             iterations=str(cfg.get("max_iterations", DEFAULT_MAX_ITERATIONS)),
         )
-
-    def _tools(self, entries: list[Mapping[str, Any]]) -> dict[str, _Tool]:
-        """Resolve and check every tool before the first model call, so a
-        broken tool fails the run without spending a model request.
-
-        ponytail: checked at run start, not at publish — graph validation
-        only sees the agent's own config schema. Upgrade path: let node
-        definitions declare referenced node types for publish validation.
-        """
-        tools: dict[str, _Tool] = {}
-        for entry in entries:
-            name, node_type = entry["name"], entry["node_type"]
-            if name in tools:
-                raise _tool_invalid(name, "the name is used twice")
-            factory = self._catalog.get(node_type)
-            if factory is None:
-                raise _tool_invalid(name, f"unknown node type {node_type!r}")
-            definition = factory.definition
-            # No nested agents: bounds agent/tool call depth (architecture
-            # §131). Control-flow nodes route graphs, they answer nothing;
-            # waiting nodes (core.human) cannot suspend a tool call.
-            caps = definition.capabilities
-            if node_type == NODE_ID or caps.is_control_flow or caps.waits_for_input:
-                raise _tool_invalid(name, f"{node_type!r} cannot be used as a tool")
-            config = entry.get("config", {})
-            if issues := definition.config_issues(config):
-                first = issues[0]
-                raise _tool_invalid(name, f"{first.location} {first.message}")
-            tools[name] = _Tool(
-                name=name,
-                description=entry.get("description") or definition.metadata.description,
-                factory=factory,
-                config=config,
-                parameters=tool_parameters(definition),
-            )
-        return tools
 
     async def _call(
         self,
@@ -473,6 +466,8 @@ class AgentNode(Node):
             else _ToolCredentials(context.credentials, tool.config),
             metrics=NodeMetrics(definition.metrics),
             events=NodeEvents(definition.events),
+            # A plugin tool sees its own plugin's settings, not core's.
+            settings=context.services.settings_for(definition.node_id),
         )
         limit = context.config.get("tool_timeout_seconds", DEFAULT_TOOL_TIMEOUT_SECONDS)
         try:

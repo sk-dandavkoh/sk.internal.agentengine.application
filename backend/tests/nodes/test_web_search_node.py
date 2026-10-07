@@ -44,17 +44,30 @@ async def search(
     **config: Any,
 ) -> list[dict[str, str]]:
     result = await run_node(
-        WebSearchNode(server.base_url), config=config, inputs={"query": query}
+        WebSearchNode(),
+        config=config,
+        inputs={"query": query},
+        settings={"web_search_url": server.base_url},
     )
     results: list[dict[str, str]] = result.outputs["results"]
     return results
 
 
 async def failure(
-    run_node: RunNode, node: WebSearchNode, query: str = "q"
+    run_node: RunNode,
+    endpoint: str | None,
+    query: str = "q",
+    *,
+    max_response_bytes: int | None = None,
+    **config: Any,
 ) -> NodeError:
+    settings: dict[str, Any] = {"web_search_url": endpoint} if endpoint else {}
+    if max_response_bytes is not None:
+        settings["http_max_response_bytes"] = max_response_bytes
     with pytest.raises(NodeError) as exc:
-        await run_node(node, inputs={"query": query})
+        await run_node(
+            WebSearchNode(), config=config, inputs={"query": query}, settings=settings
+        )
     return exc.value
 
 
@@ -98,7 +111,7 @@ async def test_malformed_provider_response(
     run_node: RunNode, http_server: LocalHttpServer, body: bytes
 ) -> None:
     serve(http_server, body)
-    error = await failure(run_node, WebSearchNode(http_server.base_url))
+    error = await failure(run_node, http_server.base_url)
     assert (error.code, error.kind) == (
         "SEARCH_MALFORMED_RESPONSE",
         NodeErrorKind.PERMANENT,
@@ -117,13 +130,13 @@ async def test_provider_errors_are_classified(
     run_node: RunNode, http_server: LocalHttpServer, status: int, kind: NodeErrorKind
 ) -> None:
     serve(http_server, {"error": "x"}, status=status)
-    error = await failure(run_node, WebSearchNode(http_server.base_url))
+    error = await failure(run_node, http_server.base_url)
     assert (error.code, error.kind) == ("SEARCH_PROVIDER_ERROR", kind)
 
 
 async def test_timeout(run_node: RunNode, http_server: LocalHttpServer) -> None:
     http_server.state.search_hang = True
-    error = await failure(run_node, WebSearchNode(http_server.base_url, timeout=0.2))
+    error = await failure(run_node, http_server.base_url, timeout_seconds=0.2)
     assert (error.code, error.kind) == ("HTTP_TIMEOUT", NodeErrorKind.TIMEOUT)
 
 
@@ -131,13 +144,12 @@ async def test_oversized_response(
     run_node: RunNode, http_server: LocalHttpServer
 ) -> None:
     serve(http_server, {"results": RESULTS})
-    node = WebSearchNode(http_server.base_url, max_response_bytes=100)
-    error = await failure(run_node, node)
+    error = await failure(run_node, http_server.base_url, max_response_bytes=100)
     assert error.code == "HTTP_RESPONSE_TOO_LARGE"
 
 
 async def test_unconfigured_provider(run_node: RunNode) -> None:
-    error = await failure(run_node, WebSearchNode(None))
+    error = await failure(run_node, None)
     assert (error.code, error.kind) == (
         "SEARCH_NOT_CONFIGURED",
         NodeErrorKind.CONFIGURATION,
@@ -145,7 +157,7 @@ async def test_unconfigured_provider(run_node: RunNode) -> None:
 
 
 async def test_blank_query(run_node: RunNode, http_server: LocalHttpServer) -> None:
-    error = await failure(run_node, WebSearchNode(http_server.base_url), query="   ")
+    error = await failure(run_node, http_server.base_url, query="   ")
     assert (error.code, error.kind) == ("SEARCH_EMPTY_QUERY", NodeErrorKind.VALIDATION)
     assert http_server.state.requests == []
 
@@ -153,9 +165,9 @@ async def test_blank_query(run_node: RunNode, http_server: LocalHttpServer) -> N
 @pytest.mark.parametrize("config", [{"max_results": 0}, {"max_results": 21}, {"n": 1}])
 async def test_invalid_config(run_node: RunNode, config: dict[str, Any]) -> None:
     with pytest.raises(NodeConfigurationError):
-        await run_node(WebSearchNode("http://x"), config=config, inputs={"query": "q"})
+        await run_node(WebSearchNode(), config=config, inputs={"query": "q"})
 
 
 async def test_query_must_be_a_string(run_node: RunNode) -> None:
     with pytest.raises(NodeValidationError):
-        await run_node(WebSearchNode("http://x"), inputs={"query": 42})
+        await run_node(WebSearchNode(), inputs={"query": 42})

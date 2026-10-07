@@ -21,34 +21,22 @@ building (``build_request``) and model settings (``MODEL_CONFIG``).
 """
 
 import json
-import re
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
-from akasha.domain.ai import (
+from akasha.nodes.core import TEMPLATE, VERSION, closed_schema, render
+from akasha.sdk import (
+    CREDENTIAL_REFERENCE_FORMAT,
+    LLM_PROVIDER_FORMAT,
     CostEstimate,
-    LLMClient,
     LLMRequest,
     LLMResponse,
     Message,
-    ProviderError,
-    ProviderErrorKind,
-    Role,
-    TokenUsage,
-    ToolDefinition,
-)
-from akasha.domain.node import LLM_PROVIDER_FORMAT
-from akasha.errors import (
-    DomainValidationError,
-    NodeConfigurationError,
-    NodeContractError,
-)
-from akasha.nodes.core import MISSING, PATH, VERSION, closed_schema, lookup
-from akasha.sdk import (
-    CREDENTIAL_REFERENCE_FORMAT,
     Node,
     NodeCapabilities,
     NodeConfigSchema,
+    NodeConfigurationError,
+    NodeContractError,
     NodeDefinition,
     NodeError,
     NodeErrorKind,
@@ -58,6 +46,11 @@ from akasha.sdk import (
     NodeOutput,
     NodeResult,
     PortType,
+    ProviderError,
+    ProviderErrorKind,
+    Role,
+    TokenUsage,
+    ToolDefinition,
 )
 
 # Resource limits (AGENTS §43). A rendered prompt beyond ~100k tokens is a
@@ -65,18 +58,6 @@ from akasha.sdk import (
 MAX_PROMPT_CHARS = 400_000
 MAX_OUTPUT_TOKENS = 100_000
 MAX_TIMEOUT_SECONDS = 600
-
-_PATH = PATH
-_PLACEHOLDER = re.compile(r"\{\{(.*?)\}\}", re.DOTALL)
-# A whole template: text, single braces, and well-formed placeholders only,
-# so a malformed ``{{ ... }}`` is rejected when the workflow is published.
-TEMPLATE = {
-    "type": "string",
-    # Forms offer a prompt editor; the pattern below is the real check.
-    "format": "template",
-    "description": "Reference variables as {{ name }} or {{ lead.name }}.",
-    "pattern": rf"^(?:[^{{]|\{{(?!\{{)|\{{\{{\s*{_PATH}\s*\}}\}})*$",
-}
 
 # Retry semantics follow the provider's category (phase 14 handoff).
 _ERROR_KINDS = {
@@ -165,33 +146,6 @@ MODEL_CONFIG_REQUIRED = ("provider", "model", "user_prompt")
 TOOL_NAME_SCHEMA = {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,64}$"}
 
 
-def render(template: str, variables: Mapping[str, Any]) -> str:
-    """Substitute every ``{{ path }}``; a missing variable is an error, never
-    an empty string — a silently blank prompt still costs a model call."""
-
-    def substitute(match: re.Match[str]) -> str:
-        path = match.group(1).strip()
-        if not re.fullmatch(_PATH, path):
-            raise _error(
-                "the prompt template has an invalid placeholder",
-                NodeErrorKind.CONFIGURATION,
-                "PROMPT_TEMPLATE_INVALID",
-            )
-        value = lookup(variables, path)
-        if value is MISSING:
-            raise _error(
-                f"prompt variable is missing: {path}",
-                NodeErrorKind.VALIDATION,
-                "PROMPT_VARIABLE_MISSING",
-                variable=path,
-            )
-        if isinstance(value, str):
-            return value
-        return json.dumps(value, ensure_ascii=False)
-
-    return _PLACEHOLDER.sub(substitute, template)
-
-
 class LlmNode(Node):
     definition = NodeDefinition(
         metadata=NodeMetadata(
@@ -237,11 +191,9 @@ class LlmNode(Node):
         capabilities=NodeCapabilities(supports_cancellation=True),
     )
 
-    def __init__(self, llm: LLMClient | None = None) -> None:
-        self._llm = llm
-
     async def execute(self, context: NodeExecutionContext) -> NodeResult:
-        if self._llm is None:
+        llm = context.services.llm
+        if llm is None:
             raise _error(
                 "no LLM service is configured for this engine",
                 NodeErrorKind.CONFIGURATION,
@@ -252,9 +204,7 @@ class LlmNode(Node):
             cfg, prompt_messages(cfg, context.inputs.get("variables", {})), ()
         )
         try:
-            response = await self._llm.complete(
-                request, credentials=context.credentials
-            )
+            response = await llm.complete(request, credentials=context.credentials)
         except ProviderError as exc:
             raise provider_node_error(exc) from exc
         return NodeResult(
@@ -311,15 +261,16 @@ def build_request(
             timeout_seconds=cfg.get("timeout_seconds"),
             response_schema=schema,
         )
-    except (DomainValidationError, NodeContractError) as exc:
+    # LLMRequest/ToolDefinition reject bad values with a ValueError.
+    except (ValueError, NodeContractError) as exc:
         raise _error(
-            exc.message, NodeErrorKind.CONFIGURATION, "LLM_CONFIGURATION_INVALID"
+            str(exc), NodeErrorKind.CONFIGURATION, "LLM_CONFIGURATION_INVALID"
         ) from None
 
 
 def _tool(spec: Mapping[str, Any]) -> ToolDefinition:
     if "name" not in spec or "parameters" not in spec:
-        raise DomainValidationError("every tool needs a name and parameters")
+        raise ValueError("every tool needs a name and parameters")
     return ToolDefinition(spec["name"], spec.get("description", ""), spec["parameters"])
 
 
