@@ -1698,9 +1698,10 @@ Implementation (Phase 15, `akasha.nodes.llm`, node type `core.llm`):
   subset of §31, not the general Expression Engine.
 - Outputs: `text`, `structured` (reply parsed and checked against
   `output_schema` with the engine's JSON-Schema subset,
-  `LLM_STRUCTURED_OUTPUT_INVALID` otherwise), `tool_calls` (returned, not
-  executed) and `metadata` (provider, model, request id, finish reason,
-  token usage, `cost`).
+  `LLM_STRUCTURED_OUTPUT_INVALID` otherwise) and `metadata` (provider,
+  model, request id, finish reason, token usage, `cost`). One prompt, one
+  reply: core.llm offers no tools; a model that calls tools is core.agent
+  (ADR 0005).
 - Cost (§29): `LiteLLMAdapter` estimates from litellm's bundled list
   prices, only for routes without a custom `api_base`. The value is
   exposed as `{"amount", "currency", "estimated": true}`, or `null` when

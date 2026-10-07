@@ -201,7 +201,6 @@ async def test_provider_model_and_parameters_reach_the_request(
 ) -> None:
     llm = FakeLLM(reply("{}"))
     resolver = NodeCredentials(_Store("k"), {"credential": REF})
-    tool = {"name": "lookup", "description": "Find a lead", "parameters": _OBJ}
     await run_node(
         LlmNode(llm),
         config={
@@ -213,7 +212,6 @@ async def test_provider_model_and_parameters_reach_the_request(
             "max_tokens": 64,
             "timeout_seconds": 30,
             "output_schema": _OBJ,
-            "tools": [tool],
         },
         credentials=resolver,
     )
@@ -223,9 +221,7 @@ async def test_provider_model_and_parameters_reach_the_request(
     assert request.timeout_seconds == 30
     assert request.credential == REF
     assert request.response_schema == _OBJ
-    assert [(t.name, t.description) for t in request.tools] == [
-        ("lookup", "Find a lead")
-    ]
+    assert request.tools == ()  # one prompt, one reply: tools are core.agent's
     assert [m.role for m in request.messages] == [Role.USER]  # no system prompt
     # The node's own resolver is what authorizes the credential reference.
     assert llm.resolvers == [resolver]
@@ -245,7 +241,6 @@ async def test_defaults_leave_optional_parameters_to_the_provider(
 @pytest.mark.parametrize(
     ("override", "code"),
     [
-        ({"tools": [{"description": "no name"}]}, "LLM_CONFIGURATION_INVALID"),
         ({"output_schema": {"type": "array"}}, "LLM_CONFIGURATION_INVALID"),
     ],
 )
@@ -296,7 +291,6 @@ async def test_text_usage_and_metadata(run_node: RunNode) -> None:
     assert outputs == {
         "text": "Hello!",
         "structured": None,
-        "tool_calls": [],
         "metadata": {
             "provider": "openai",
             "model": "gpt-test-2026",
@@ -318,21 +312,20 @@ async def test_cost_is_reported_as_an_estimate(run_node: RunNode) -> None:
     }
 
 
-async def test_tool_calls_are_returned_not_executed(run_node: RunNode) -> None:
-    call = ToolCall("call_1", "lookup", {"email": "ada@example.com"})
-    llm = FakeLLM(reply(None, tool_calls=(call,)))
-    outputs = await run(
-        run_node,
-        llm,
-        output_schema=_OBJ,  # a tool call answers the turn: nothing to parse
-        tools=[{"name": "lookup", "parameters": _OBJ}],
+def test_tools_are_the_agents_not_the_llm_nodes() -> None:
+    """One prompt, one reply: a tools setting is refused when the workflow
+    is validated (closed schema), and there is no tool output to wire."""
+    definition = LlmNode.definition
+    issues = definition.config_schema.issues(
+        {
+            "provider": "openai",
+            "model": "m",
+            "user_prompt": "Hi",
+            "tools": [{"name": "lookup", "parameters": _OBJ}],
+        }
     )
-    assert outputs["text"] is None
-    assert outputs["structured"] is None
-    assert outputs["tool_calls"] == [
-        {"id": "call_1", "name": "lookup", "arguments": {"email": "ada@example.com"}}
-    ]
-    assert outputs["metadata"]["finish_reason"] == "tool_calls"
+    assert [i.path for i in issues] == [("tools",)]
+    assert [o.name for o in definition.outputs] == ["text", "structured", "metadata"]
 
 
 # -- structured output ------------------------------------------------------------

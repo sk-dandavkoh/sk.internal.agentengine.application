@@ -15,8 +15,9 @@ reads, not instructions it can trust: untrusted input (web search results,
 webhook payloads) belongs in ``user_prompt``, not ``system_prompt``
 (backend AGENTS §36). Rendering cannot tell the two apart.
 
-Tool calls are *returned*, not executed: the node offers tools and reports
-the calls the model asked for. Running them is a downstream node's job.
+One prompt, one reply: no tools. A model that calls tools and works with
+their results is core.agent (ADR 0005), which shares this module's request
+building (``build_request``) and model settings (``MODEL_CONFIG``).
 """
 
 import json
@@ -63,7 +64,6 @@ from akasha.sdk import (
 # wiring mistake (a whole upstream payload interpolated), not a prompt.
 MAX_PROMPT_CHARS = 400_000
 MAX_OUTPUT_TOKENS = 100_000
-MAX_TOOLS = 32
 MAX_TIMEOUT_SECONDS = 600
 
 _PATH = PATH
@@ -225,11 +225,6 @@ class LlmNode(Node):
                 description="The reply as data, when an output schema is set;"
                 " empty otherwise.",
             ),
-            NodeOutput(
-                "tool_calls",
-                PortType.LIST,
-                description="Tools the model asked to call, with their arguments.",
-            ),
             # Provider, model, finish reason, token usage and cost estimate.
             NodeOutput(
                 "metadata",
@@ -238,26 +233,7 @@ class LlmNode(Node):
                 " and estimated cost.",
             ),
         ),
-        config_schema=closed_schema(
-            {
-                **MODEL_CONFIG,
-                "tools": {
-                    "type": "array",
-                    "maxItems": MAX_TOOLS,
-                    "description": "Tools the model may ask to call; the calls"
-                    " are returned, not run.",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "name": TOOL_NAME_SCHEMA,
-                            "description": {"type": "string"},
-                            "parameters": {"type": "object"},
-                        },
-                    },
-                },
-            },
-            *MODEL_CONFIG_REQUIRED,
-        ),
+        config_schema=closed_schema(MODEL_CONFIG, *MODEL_CONFIG_REQUIRED),
         capabilities=NodeCapabilities(supports_cancellation=True),
     )
 
@@ -273,9 +249,7 @@ class LlmNode(Node):
             )
         cfg = context.config
         request = build_request(
-            cfg,
-            prompt_messages(cfg, context.inputs.get("variables", {})),
-            cfg.get("tools", []),
+            cfg, prompt_messages(cfg, context.inputs.get("variables", {})), ()
         )
         try:
             response = await self._llm.complete(
@@ -287,10 +261,6 @@ class LlmNode(Node):
             {
                 "text": response.content,
                 "structured": structured_output(request, response),
-                "tool_calls": [
-                    {"id": c.id, "name": c.name, "arguments": dict(c.arguments)}
-                    for c in response.tool_calls
-                ],
                 "metadata": _metadata(response),
             }
         )

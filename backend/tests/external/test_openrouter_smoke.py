@@ -7,6 +7,7 @@ leaves the machine. Assertions are shape-only: LLM output is nondeterministic.
 """
 
 import os
+from dataclasses import replace
 
 import pytest
 
@@ -18,6 +19,7 @@ from akasha.domain.ai import (
     ProviderError,
     ProviderErrorKind,
     Role,
+    ToolDefinition,
 )
 from akasha.domain.credentials import Secret
 from akasha.domain.node import NodeResult
@@ -143,21 +145,27 @@ async def test_node_structured_output() -> None:
     assert metadata["cost"] is None or metadata["cost"]["estimated"] is True
 
 
-async def test_node_tool_call() -> None:
-    config = node_config(
-        tools=[
-            {
-                "name": "get_weather",
-                "description": "Current weather for a city.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {"city": {"type": "string"}},
-                    "required": ["city"],
-                },
-            }
-        ],
+async def test_tool_call_is_normalized() -> None:
+    """What core.agent relies on: the provider's tool call, normalized."""
+    ai, creds = service(API_KEY)
+    weather = ToolDefinition(
+        "get_weather",
+        "Current weather for a city.",
+        {
+            "type": "object",
+            "properties": {"city": {"type": "string"}},
+            "required": ["city"],
+        },
     )
-    result = await run_llm_node(config, "Use the tool: weather in Paris?")
-    (call,) = result.outputs["tool_calls"]
-    assert call["name"] == "get_weather"
-    assert "city" in call["arguments"]
+    response = await ai.complete(
+        replace(
+            request(),
+            messages=(Message(Role.USER, "Use the tool: weather in Paris?"),),
+            tools=(weather,),
+            max_tokens=1024,
+        ),
+        credentials=creds,
+    )
+    (call,) = response.tool_calls
+    assert call.name == "get_weather"
+    assert "city" in call.arguments

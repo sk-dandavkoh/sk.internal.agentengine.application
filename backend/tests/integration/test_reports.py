@@ -50,7 +50,6 @@ def llm_outputs(*, cost: dict[str, Any] | None) -> dict[str, Any]:
     return {
         "text": "hello",
         "structured": None,
-        "tool_calls": [],
         "metadata": {
             "provider": "fake",
             "model": "fake-1",
