@@ -33,7 +33,10 @@ from akasha.api.auth import (
     current_identity,
     require_admin,
 )
-from akasha.api.credentials import create_credentials_router
+from akasha.api.credentials import (
+    create_credential_names_router,
+    create_credentials_router,
+)
 from akasha.api.executions import create_executions_router
 from akasha.api.live import create_live_router
 from akasha.api.monitoring import create_monitoring_router
@@ -44,9 +47,12 @@ from akasha.api.reports import create_reports_router
 from akasha.api.sharing import create_sharing_router
 from akasha.api.triggers import create_triggers_router, create_webhooks_router
 from akasha.api.workflows import create_workflows_router
+from akasha.application.ai import AIService
 from akasha.application.auth import AuthenticationRequiredError
 from akasha.application.auth import require_admin as require_admin_identity
+from akasha.config import Settings
 from akasha.observability.metrics import CONTENT_TYPE
+from akasha.runtime.node_test import TEST_TIMEOUT
 
 
 class HealthResponse(BaseModel):
@@ -109,8 +115,65 @@ async def _metrics_access(request: Request) -> None:
     require_admin_identity(await auth_service(request).authenticate(token))
 
 
+class EngineLimits(BaseModel):
+    """What this installation allows, so users need not guess (the
+    operator sets these: AKASHA_LIMIT_*, AKASHA_LLM_TIMEOUT_SECONDS)."""
+
+    execution_timeout_seconds: float  # a whole run, from its first start
+    node_timeout_seconds: float  # one attempt of one node
+    node_test_timeout_seconds: float  # a node test run (ADR 0010)
+    node_max_attempts: int  # including the first: retries + 1
+    graph_max_nodes: int
+    graph_max_depth: int
+    active_executions_per_workflow: int
+    execution_concurrency: int  # nodes in flight per run
+    node_output_max_bytes: int
+    execution_output_max_bytes: int
+    llm_timeout_seconds: float  # a model call without its own timeout
+    llm_max_output_tokens: int  # a reply without its own max_tokens
+    event_trigger_max_depth: int
+
+
+class LlmProviderInfo(BaseModel):
+    name: str
+    # False: no credential needed (e.g. a local Ollama or vLLM).
+    requires_credential: bool
+
+
 def create_system_router() -> APIRouter:
     router = APIRouter(prefix="/system", tags=["system"])
+
+    @router.get("/limits")
+    async def engine_limits(request: Request) -> EngineLimits:
+        settings: Settings = request.app.state.container.settings
+        limits = settings.resource_limits()
+        return EngineLimits(
+            execution_timeout_seconds=limits.execution_timeout.total_seconds(),
+            node_timeout_seconds=limits.node_timeout.total_seconds(),
+            node_test_timeout_seconds=min(
+                TEST_TIMEOUT, limits.node_timeout
+            ).total_seconds(),
+            node_max_attempts=limits.max_node_attempts,
+            graph_max_nodes=limits.max_graph_nodes,
+            graph_max_depth=limits.max_graph_depth,
+            active_executions_per_workflow=limits.max_active_executions_per_workflow,
+            execution_concurrency=settings.limit_execution_concurrency,
+            node_output_max_bytes=limits.max_node_output_bytes,
+            execution_output_max_bytes=limits.max_execution_output_bytes,
+            llm_timeout_seconds=settings.llm_timeout_seconds,
+            llm_max_output_tokens=settings.limit_llm_output_tokens,
+            event_trigger_max_depth=settings.limit_event_trigger_depth,
+        )
+
+    @router.get("/llm-providers")
+    async def llm_providers(request: Request) -> list[LlmProviderInfo]:
+        """The providers LLM and agent nodes can use here, by name. Names
+        and flags only: no URLs, keys or models."""
+        ai: AIService | None = request.app.state.container.ai
+        return [
+            LlmProviderInfo(name=p.name, requires_credential=p.requires_credential)
+            for p in ([] if ai is None else ai.providers)
+        ]
 
     @router.get("/status")
     async def system_status(request: Request) -> SystemStatus:
@@ -142,6 +205,9 @@ def create_api_v1_router() -> APIRouter:
     protected.include_router(create_reports_router())
     protected.include_router(create_monitoring_router())
     protected.include_router(create_system_router())
+    # Names for pickers, for every user: a member can already *use* any
+    # credential by name (architecture §60); this only spares the typing.
+    protected.include_router(create_credential_names_router())
     admin_only = [Depends(require_admin)]
     protected.include_router(create_credentials_router(), dependencies=admin_only)
     protected.include_router(create_users_router(), dependencies=admin_only)

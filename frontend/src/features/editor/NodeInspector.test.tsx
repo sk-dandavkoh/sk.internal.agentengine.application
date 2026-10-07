@@ -108,7 +108,8 @@ function backend({
                 items: [definition('acme.rich', schema)],
                 port_compatibility: {},
             }),
-        'GET /credentials': () => ok({ items: [], page: page() }),
+        'GET /credential-names': () =>
+            ok({ items: [{ name: 'crm-api', kind: 'api_key' }], page: page() }),
         'POST /nodes/acme.rich/config/validate': (_url, init) => {
             const body = JSON.parse(init.body as string) as {
                 config: JsonObject
@@ -184,8 +185,11 @@ describe('NodeInspector', () => {
             inspector.getByRole('textbox', { name: /^Prompt/ }).tagName,
         ).toBe('TEXTAREA')
         expect(
+            await inspector.findByRole('option', { name: 'crm-api (API key)' }),
+        ).toBeInTheDocument()
+        expect(
             inspector.getByRole('combobox', { name: /^Credential/ }),
-        ).toHaveAccessibleDescription(/its secret is never shown here/)
+        ).toHaveAccessibleDescription(/secret is never shown here/)
         const options = inspector.getByRole('group', { name: 'Options' })
         expect(
             within(options).getByRole('textbox', { name: /^Depth/ }),
@@ -413,62 +417,90 @@ describe('NodeInspector', () => {
     })
 
     it('stores credential references, never secrets', async () => {
-        const { saved, requests } = backend({
-            config: { url: 'u' },
-            handlers: {
-                'GET /credentials': () =>
-                    ok({
-                        items: [
-                            {
-                                name: 'crm-api',
-                                kind: 'api_key',
-                                description: 'CRM key',
-                                reference: 'credential:crm-api',
-                                created_at: AT,
-                                updated_at: AT,
-                            },
-                        ],
-                        page: page(),
-                    }),
-            },
-        })
+        const { saved, requests } = backend({ config: { url: 'u' } })
         const { inspector } = await openInspector()
         const credential = inspector.getByRole('combobox', {
             name: /^Credential/,
         })
 
-        // Suggestions are credential names from the metadata list.
-        await waitFor(() => {
-            expect(
-                document.querySelector('datalist option[value="crm-api"]'),
-            ).not.toBeNull()
-        })
-        type(credential, 'credential:crm-api')
+        // Picked from the names list, stored as a reference.
+        await inspector.findByRole('option', { name: 'crm-api (API key)' })
+        type(credential, 'crm-api')
         expect(credential).toHaveValue('crm-api')
         await saveDraft()
         expect(saved.at(-1)).toEqual({
             url: 'u',
             credential: 'credential:crm-api',
         })
-        // Only metadata was read: no request asks for a credential itself.
+        // Only names were read: never the admin API, never a credential.
         expect(
             requests.filter((u) =>
-                u.pathname.startsWith('/api/v1/credentials/'),
+                u.pathname.startsWith('/api/v1/credentials'),
             ),
         ).toEqual([])
+    })
+
+    it('offers the configured LLM providers to choose from', async () => {
+        const { saved } = backend({
+            schema: {
+                type: 'object',
+                properties: {
+                    provider: { type: 'string', format: 'llm-provider' },
+                },
+            },
+            handlers: {
+                'GET /system/llm-providers': () =>
+                    ok([
+                        { name: 'openai', requires_credential: true },
+                        { name: 'vllm', requires_credential: false },
+                    ]),
+            },
+        })
+        const { inspector } = await openInspector()
+        await inspector.findByRole('option', { name: 'vllm' })
+        const provider = inspector.getByRole('combobox', { name: /^Provider/ })
+        fireEvent.change(provider, { target: { value: 'vllm' } })
+        expect(provider).toHaveAccessibleDescription(/Needs no credential/)
+        await saveDraft()
+        expect(saved.at(-1)).toEqual({ provider: 'vllm' })
+    })
+
+    it('flags a reference to a credential that does not exist', async () => {
+        backend({ config: { url: 'u', credential: 'credential:gone' } })
+        const { inspector } = await openInspector()
+        await inspector.findByRole('option', { name: 'gone (not found)' })
+        expect(
+            inspector.getByRole('combobox', { name: /^Credential/ }),
+        ).toHaveAccessibleDescription(/no credential named "gone"/)
+    })
+
+    it('falls back to typing a name when the list is unavailable', async () => {
+        const { saved } = backend({
+            config: { url: 'u' },
+            handlers: {
+                'GET /credential-names': () =>
+                    apiError(500, 'INTERNAL_ERROR', 'Down.'),
+            },
+        })
+        const { inspector } = await openInspector()
+        const credential = await inspector.findByRole('textbox', {
+            name: /^Credential/,
+        })
+        type(credential, 'credential:smtp-main')
+        expect(credential).toHaveValue('smtp-main')
+        await saveDraft()
+        expect(saved.at(-1)).toMatchObject({
+            credential: 'credential:smtp-main',
+        })
     })
 
     it('hides a stored value that is not a credential reference', async () => {
         backend({
             config: { url: 'u', credential: 'sk-live-plaintext-123456' },
-            handlers: {
-                // A member may not list credentials; the name is typed freely.
-                'GET /credentials': () =>
-                    apiError(403, 'FORBIDDEN', 'Admins only.'),
-            },
         })
         const { inspector } = await openInspector()
 
+        await inspector.findByRole('option', { name: 'crm-api (API key)' })
         const credential = inspector.getByRole('combobox', {
             name: /^Credential/,
         })
@@ -480,8 +512,8 @@ describe('NodeInspector', () => {
             screen.queryByDisplayValue(/sk-live-plaintext/),
         ).not.toBeInTheDocument()
         expect(document.body.textContent).not.toContain('sk-live-plaintext')
-        type(credential, 'smtp-main')
-        expect(credential).toHaveValue('smtp-main')
+        type(credential, 'crm-api')
+        expect(credential).toHaveValue('crm-api')
     })
 
     it('keeps the edits and says so when saving fails', async () => {

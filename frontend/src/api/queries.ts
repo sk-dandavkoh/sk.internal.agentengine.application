@@ -5,7 +5,11 @@ import {
 } from '@tanstack/react-query'
 import { listAccessTokens } from './auth'
 import type { ApiClient } from './client'
-import { getCredential, listCredentials } from './credentials'
+import {
+    getCredential,
+    listCredentialNames,
+    listCredentials,
+} from './credentials'
 import {
     getExecution,
     getExecutionStatusCounts,
@@ -33,7 +37,7 @@ import { getMonitoringSummary, type MonitoringWindow } from './monitoring'
 import { getExecutionReport } from './reports'
 import type { JsonObject, PageParams } from './schemas'
 import { getWorkflowSharing } from './sharing'
-import { getSystemStatus } from './system'
+import { getEngineLimits, getSystemStatus, listLlmProviders } from './system'
 import { getUser, listUsers, type UserListParams } from './users'
 
 /**
@@ -88,6 +92,8 @@ export const queryKeys = {
     nodeConfigValidation: (nodeType: string, config: JsonObject) =>
         ['nodes', nodeType, 'config-validation', config] as const,
     system: () => ['system', 'status'] as const,
+    limits: () => ['system', 'limits'] as const,
+    llmProviders: () => ['system', 'llm-providers'] as const,
     /** The signed-in session (features/auth). Survives a user switch;
      * everything else is dropped then. */
     session: () => ['auth', 'session'] as const,
@@ -283,6 +289,13 @@ export const pluginQueries = {
 }
 
 export const credentialQueries = {
+    /** Names for pickers. Under the list key: credential changes refresh it. */
+    names: (client: ApiClient) =>
+        queryOptions({
+            queryKey: [...queryKeys.credentials.lists(), 'names'] as const,
+            queryFn: ({ signal }) =>
+                listCredentialNames(client, { limit: 100 }, signal),
+        }),
     list: (client: ApiClient, page: PageParams = {}) =>
         queryOptions({
             queryKey: queryKeys.credentials.list(page),
@@ -321,5 +334,18 @@ export const systemQueries = {
         queryOptions({
             queryKey: queryKeys.system(),
             queryFn: ({ signal }) => getSystemStatus(client, signal),
+        }),
+    /** Operator settings: they change only with a restart. */
+    limits: (client: ApiClient) =>
+        queryOptions({
+            queryKey: queryKeys.limits(),
+            queryFn: ({ signal }) => getEngineLimits(client, signal),
+            staleTime: INSTALLATION_STALE_TIME_MS,
+        }),
+    llmProviders: (client: ApiClient) =>
+        queryOptions({
+            queryKey: queryKeys.llmProviders(),
+            queryFn: ({ signal }) => listLlmProviders(client, signal),
+            staleTime: INSTALLATION_STALE_TIME_MS,
         }),
 }

@@ -17,6 +17,7 @@ import { formatDateTime } from '../../lib/format'
 import { SystemStatusCard } from '../dashboard/sections'
 import { useSession } from '../auth/session'
 import { AccessTokensCard } from './AccessTokensCard'
+import { EngineLimitsCard } from './EngineLimits'
 import { readTheme, saveTheme, THEMES, type Theme } from './theme'
 
 export function SettingsPage() {
@@ -31,6 +32,7 @@ export function SettingsPage() {
                 <PasswordCard />
                 <AppearanceCard />
                 <SystemStatusCard />
+                <EngineLimitsCard />
                 <AccessTokensCard />
             </div>
         </>

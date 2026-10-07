@@ -36,6 +36,7 @@ from akasha.domain.ai import (
     TokenUsage,
     ToolDefinition,
 )
+from akasha.domain.node import LLM_PROVIDER_FORMAT
 from akasha.errors import (
     DomainValidationError,
     NodeConfigurationError,
@@ -108,7 +109,9 @@ MODEL_CONFIG: dict[str, object] = {
     "provider": {
         "type": "string",
         "minLength": 1,
-        "description": "Provider name, e.g. openai or anthropic.",
+        "format": LLM_PROVIDER_FORMAT,
+        "description": "Which configured AI service to use, e.g. openai,"
+        " anthropic or a self-hosted one.",
     },
     "model": {
         "type": "string",
@@ -143,7 +146,8 @@ MODEL_CONFIG: dict[str, object] = {
         "minimum": 1,
         "maximum": MAX_OUTPUT_TOKENS,
         "description": "Longest reply allowed, in tokens (about ¾ of a word"
-        " each). Empty: the provider's default.",
+        " each). Empty: the engine's limit, which is also the most allowed"
+        " (see the run limits).",
     },
     "output_schema": {
         "type": "object",

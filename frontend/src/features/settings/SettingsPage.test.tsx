@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor } from '@testing-library/react'
+import { fireEvent, screen, within, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
     apiError,
@@ -9,6 +9,21 @@ import {
 } from '../../test/app'
 
 const status = { version: '0.27.0', ready: true, failures: {} }
+const limits = {
+    execution_timeout_seconds: 3600,
+    node_timeout_seconds: 900,
+    node_test_timeout_seconds: 120,
+    node_max_attempts: 5,
+    graph_max_nodes: 500,
+    graph_max_depth: 100,
+    active_executions_per_workflow: 100,
+    execution_concurrency: 8,
+    node_output_max_bytes: 1024 * 1024,
+    execution_output_max_bytes: 16 * 1024 * 1024,
+    llm_timeout_seconds: 60,
+    llm_max_output_tokens: 16384,
+    event_trigger_max_depth: 8,
+}
 
 afterEach(() => {
     localStorage.clear()
@@ -19,6 +34,7 @@ async function renderSettings(handlers: Record<string, Handler> = {}) {
     const bodies: unknown[] = []
     const requests = stubBackend({
         'GET /system/status': () => ok(status),
+        'GET /system/limits': () => ok(limits),
         'GET /auth/tokens': () => ok({ items: [] }),
         'POST /auth/password': (_url, init) => {
             bodies.push(JSON.parse(init.body as string))
@@ -57,6 +73,24 @@ describe('Settings', () => {
         expect(screen.getByText('Session expires')).toBeInTheDocument()
         expect(await screen.findByText('0.27.0')).toBeInTheDocument()
         expect(screen.getByText('Ready')).toBeInTheDocument()
+    })
+
+    it('says what the installation allows, in plain words', async () => {
+        await renderSettings()
+        const card = within(
+            (await screen.findByRole('heading', { name: 'Limits' })).closest(
+                'section',
+            ) ?? document.body,
+        )
+        const row = (term: string) =>
+            within(
+                card.getByText(term).closest('dt') ?? document.body,
+            ).getAllByText(/./)
+        expect(await card.findByText('A whole run')).toBeInTheDocument()
+        expect(row('A whole run').at(-1)).toHaveTextContent('1 h')
+        expect(row('One node').at(-1)).toHaveTextContent('15 min')
+        expect(row('An AI model call').at(-1)).toHaveTextContent('1 min')
+        expect(row('Output of one node').at(-1)).toHaveTextContent('1 MB')
     })
 
     it('changes the password and clears the form', async () => {

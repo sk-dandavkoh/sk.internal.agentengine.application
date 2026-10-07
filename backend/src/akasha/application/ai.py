@@ -69,6 +69,11 @@ class AIService:
     def provider_names(self) -> list[str]:
         return sorted(self._providers)
 
+    @property
+    def providers(self) -> list[LLMProvider]:
+        """The configured providers, by name."""
+        return [self._providers[name] for name in self.provider_names]
+
     async def complete(
         self, request: LLMRequest, *, credentials: CredentialResolver | None = None
     ) -> LLMResponse:

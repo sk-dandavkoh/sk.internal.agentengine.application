@@ -94,6 +94,39 @@ def _secret(value: SecretStr | None) -> Secret | None:
     return None if value is None else Secret(value.get_secret_value())
 
 
+class CredentialName(BaseModel):
+    """What a picker needs: the name to reference and its kind. Not the
+    description (admins may write anything there), never a value."""
+
+    name: str
+    kind: CredentialKind
+
+
+class CredentialNamePage(BaseModel):
+    items: list[CredentialName]
+    page: PageInfo
+
+
+def create_credential_names_router() -> APIRouter:
+    router = APIRouter(
+        prefix="/credential-names",
+        tags=["credentials"],
+        responses={422: {"model": ErrorResponse}},
+    )
+
+    @router.get("")
+    async def list_credential_names(
+        svc: Service, offset: Offset = 0, limit: Limit = MAX_PAGE_SIZE
+    ) -> CredentialNamePage:
+        page = await svc.list(offset=offset, limit=limit)
+        return CredentialNamePage(
+            items=[CredentialName(name=c.name, kind=c.kind) for c in page.items],
+            page=PageInfo(offset=page.offset, limit=page.limit, has_more=page.has_more),
+        )
+
+    return router
+
+
 def create_credentials_router() -> APIRouter:
     errors: dict[int | str, dict[str, Any]] = {
         code: {"model": ErrorResponse} for code in (404, 409, 422, 500)

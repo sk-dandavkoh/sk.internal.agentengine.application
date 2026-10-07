@@ -170,18 +170,9 @@ function backend({
                 ],
                 page: { offset: 0, limit: 100, has_more: false },
             }),
-        'GET /credentials': () =>
+        'GET /credential-names': () =>
             ok({
-                items: [
-                    {
-                        name: 'hook-key',
-                        kind: 'generic',
-                        description: 'Webhook signing',
-                        reference: 'credential:hook-key',
-                        created_at: AT,
-                        updated_at: AT,
-                    },
-                ],
+                items: [{ name: 'hook-key', kind: 'generic' }],
                 page: { offset: 0, limit: 100, has_more: false },
             }),
         ...overrides,
@@ -352,7 +343,11 @@ describe('TriggersPage', () => {
         ],
         [
             'webhook',
-            (d: HTMLElement) => {
+            async (d: HTMLElement) => {
+                // Picked from the credential names, once they are loaded.
+                await within(d).findByRole('option', {
+                    name: 'hook-key (secret)',
+                })
                 fireEvent.change(within(d).getByLabelText(/Signing secret/), {
                     target: { value: 'hook-key' },
                 })
@@ -373,7 +368,7 @@ describe('TriggersPage', () => {
 
             const dialog = await openCreate()
             chooseType(dialog, type)
-            fill(dialog)
+            await fill(dialog)
             submit(dialog)
 
             await waitFor(() => {

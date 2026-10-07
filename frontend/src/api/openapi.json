@@ -483,6 +483,44 @@
         "title": "CredentialKind",
         "type": "string"
       },
+      "CredentialName": {
+        "description": "What a picker needs: the name to reference and its kind. Not the\ndescription (admins may write anything there), never a value.",
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/CredentialKind"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "kind"
+        ],
+        "title": "CredentialName",
+        "type": "object"
+      },
+      "CredentialNamePage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CredentialName"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "$ref": "#/components/schemas/PageInfo"
+          }
+        },
+        "required": [
+          "items",
+          "page"
+        ],
+        "title": "CredentialNamePage",
+        "type": "object"
+      },
       "CredentialPage": {
         "properties": {
           "items": {
@@ -646,6 +684,80 @@
           "target_port"
         ],
         "title": "EdgeBody",
+        "type": "object"
+      },
+      "EngineLimits": {
+        "description": "What this installation allows, so users need not guess (the\noperator sets these: AKASHA_LIMIT_*, AKASHA_LLM_TIMEOUT_SECONDS).",
+        "properties": {
+          "active_executions_per_workflow": {
+            "title": "Active Executions Per Workflow",
+            "type": "integer"
+          },
+          "event_trigger_max_depth": {
+            "title": "Event Trigger Max Depth",
+            "type": "integer"
+          },
+          "execution_concurrency": {
+            "title": "Execution Concurrency",
+            "type": "integer"
+          },
+          "execution_output_max_bytes": {
+            "title": "Execution Output Max Bytes",
+            "type": "integer"
+          },
+          "execution_timeout_seconds": {
+            "title": "Execution Timeout Seconds",
+            "type": "number"
+          },
+          "graph_max_depth": {
+            "title": "Graph Max Depth",
+            "type": "integer"
+          },
+          "graph_max_nodes": {
+            "title": "Graph Max Nodes",
+            "type": "integer"
+          },
+          "llm_max_output_tokens": {
+            "title": "Llm Max Output Tokens",
+            "type": "integer"
+          },
+          "llm_timeout_seconds": {
+            "title": "Llm Timeout Seconds",
+            "type": "number"
+          },
+          "node_max_attempts": {
+            "title": "Node Max Attempts",
+            "type": "integer"
+          },
+          "node_output_max_bytes": {
+            "title": "Node Output Max Bytes",
+            "type": "integer"
+          },
+          "node_test_timeout_seconds": {
+            "title": "Node Test Timeout Seconds",
+            "type": "number"
+          },
+          "node_timeout_seconds": {
+            "title": "Node Timeout Seconds",
+            "type": "number"
+          }
+        },
+        "required": [
+          "execution_timeout_seconds",
+          "node_timeout_seconds",
+          "node_test_timeout_seconds",
+          "node_max_attempts",
+          "graph_max_nodes",
+          "graph_max_depth",
+          "active_executions_per_workflow",
+          "execution_concurrency",
+          "node_output_max_bytes",
+          "execution_output_max_bytes",
+          "llm_timeout_seconds",
+          "llm_max_output_tokens",
+          "event_trigger_max_depth"
+        ],
+        "title": "EngineLimits",
         "type": "object"
       },
       "ErrorCount": {
@@ -1492,6 +1604,24 @@
         "type": "object"
       },
       "JsonValue": {},
+      "LlmProviderInfo": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "requires_credential": {
+            "title": "Requires Credential",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "requires_credential"
+        ],
+        "title": "LlmProviderInfo",
+        "type": "object"
+      },
       "LogLevel": {
         "description": "Python's level names; the order is severity (``at_least``).",
         "enum": [
@@ -4132,6 +4262,62 @@
         ]
       }
     },
+    "/api/v1/credential-names": {
+      "get": {
+        "operationId": "list_credential_names_api_v1_credential_names_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CredentialNamePage"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          }
+        },
+        "summary": "List Credential Names",
+        "tags": [
+          "credentials"
+        ]
+      }
+    },
     "/api/v1/credentials": {
       "get": {
         "operationId": "list_credentials_api_v1_credentials_get",
@@ -5899,6 +6085,53 @@
         "summary": "Execution Report",
         "tags": [
           "reports"
+        ]
+      }
+    },
+    "/api/v1/system/limits": {
+      "get": {
+        "operationId": "engine_limits_api_v1_system_limits_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EngineLimits"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Engine Limits",
+        "tags": [
+          "system"
+        ]
+      }
+    },
+    "/api/v1/system/llm-providers": {
+      "get": {
+        "description": "The providers LLM and agent nodes can use here, by name. Names\nand flags only: no URLs, keys or models.",
+        "operationId": "llm_providers_api_v1_system_llm_providers_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/LlmProviderInfo"
+                  },
+                  "title": "Response Llm Providers Api V1 System Llm Providers Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Llm Providers",
+        "tags": [
+          "system"
         ]
       }
     },

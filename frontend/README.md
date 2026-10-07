@@ -593,10 +593,18 @@ credential-reference`), nested object, list (`items`, `maxItems`), map
   config), and each issue shows at its field and in a list. Locally only
   unparsable input is caught (a number or JSON being typed); it is not
   committed, so the draft keeps the last valid value.
-- Credentials: the field takes a credential name and stores
-  `credential:<name>`; names are suggested from the credential list (admin
-  only; members type the name). A stored value that is not a reference is
-  hidden, never shown, since it might be a secret.
+- Credentials: a dropdown of the installation's credential names (`GET
+/credential-names`, every user: names and kinds only) that stores
+  `credential:<name>`; a reference to a missing credential is shown and
+  flagged, and without the list a name can be typed. A stored value that
+  is not a reference is hidden, never shown, since it might be a secret.
+- LLM provider (`format: llm-provider`): a dropdown of the providers this
+  server configured (`GET /system/llm-providers`), saying whether the
+  picked one needs a credential.
+- Limits (`GET /system/limits`): all of them in plain words in Settings,
+  the common ones under "Run limits" beside the canvas, and in the node
+  dialog the ones that apply to that node (how long it may run; for nodes
+  that call a model, the default timeout and token cap).
 - Schema changes: keys the schema does not know stay visible (as JSON,
   with Remove), and a value of the wrong type is shown as JSON instead of
   being dropped. A node type missing from the catalog shows no form.

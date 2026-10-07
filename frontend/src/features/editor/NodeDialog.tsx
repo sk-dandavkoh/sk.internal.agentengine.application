@@ -1,4 +1,7 @@
+import { useQuery } from '@tanstack/react-query'
+import { useApiClient } from '../../api/context'
 import type { NodeDefinition } from '../../api/nodes'
+import { systemQueries } from '../../api/queries'
 import type { JsonObject } from '../../api/schemas'
 import type { Edge, Graph, NodeInstance } from '../../api/workflows'
 import { Alert, Button, Dialog, Input } from '../../components/ui'
@@ -7,6 +10,7 @@ import { ConnectionsPanel } from './ConnectionsPanel'
 import { nodeTitle } from './graphView'
 import { NodeInspector } from './NodeInspector'
 import { NodeTestPanel } from './NodeTestPanel'
+import { limitNotes } from './limitNotes'
 import { capabilitiesOf } from './vocabulary'
 
 /**
@@ -47,7 +51,11 @@ export function NodeDialog({
     onDuplicate: () => void
     onDelete: () => void
 }) {
-    const capabilities = definition ? capabilitiesOf(definition) : []
+    const limits = useQuery(systemQueries.limits(useApiClient())).data
+    const notes = [
+        ...(definition ? capabilitiesOf(definition) : []),
+        ...(limits ? limitNotes(limits, definition) : []),
+    ]
     return (
         <Dialog
             open
@@ -84,10 +92,10 @@ export function NodeDialog({
                     onRename(event.target.value)
                 }}
             />
-            {capabilities.length > 0 && (
+            {notes.length > 0 && (
                 <Alert tone="info" title="Good to know">
                     <ul className="list-inside list-disc">
-                        {capabilities.map((c) => (
+                        {notes.map((c) => (
                             <li key={c.label}>
                                 <span className="font-medium">{c.label}</span>
                                 {c.description && `: ${c.description}`}

@@ -54,6 +54,28 @@ export function listCredentials(
     })
 }
 
+/** Names and kinds for pickers; every signed-in user may list them. */
+export const credentialNamePageSchema = pageSchema(
+    z.object({ name: z.string(), kind: credentialKindSchema }),
+)
+export type CredentialNamePage = z.infer<typeof credentialNamePageSchema>
+
+export function listCredentialNames(
+    client: ApiClient,
+    page: PageParams = {},
+    signal?: AbortSignal,
+) {
+    return client.request(
+        'GET',
+        '/credential-names',
+        credentialNamePageSchema,
+        {
+            query: { ...page },
+            signal,
+        },
+    )
+}
+
 export function getCredential(
     client: ApiClient,
     name: string,

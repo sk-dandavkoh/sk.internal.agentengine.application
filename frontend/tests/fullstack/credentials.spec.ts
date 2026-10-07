@@ -96,12 +96,11 @@ test('a credential is created, referenced, exported without its secret and repor
             .fill('Authorization')
         await secrets.getByRole('button', { name: 'Add entry' }).click()
         const field = secrets.getByRole('combobox', { name: /^Authorization/ })
-        // Suggested from the backend's credential list: names, no values.
-        const listId = (await field.getAttribute('list')) ?? ''
+        // Offered from the backend's credential names: names, no values.
         await expect(
-            p.locator(`datalist[id="${listId}"] option[value="${name}"]`),
+            field.getByRole('option', { name: new RegExp(`^${name} `) }),
         ).toHaveCount(1)
-        await field.fill(name)
+        await field.selectOption(name)
         await expect(inspector.getByText('Configuration valid')).toBeVisible()
         await p.keyboard.press('ControlOrMeta+s')
         await expect(p.getByText('All changes saved to draft')).toBeVisible()

@@ -1311,9 +1311,12 @@ Implemented in V1 (Phase 27 closed the gaps the frontend needs):
 /api/v1/nodes/{type}/config/validate             config issues per field (stateless, §3.5)
 /api/v1/plugins[/{id}[/enable|/disable]]         installed plugins, lifecycle (admin, ADR 0001)
 /api/v1/credentials                              admin only, values never returned
+/api/v1/credential-names                         names and kinds for pickers (every user)
 /api/v1/reports/executions/{id}                  execution report
 /api/v1/monitoring/summary?since=&until=         aggregates over runs created in a window (§113)
 /api/v1/system/status                            version + readiness (/health, /ready) for the UI
+/api/v1/system/limits                            effective resource limits and LLM defaults
+/api/v1/system/llm-providers                     configured LLM provider names (+ needs a credential)
 ```
 
 `/validate` and `/publish` accept an optional `{"expected_revision": n}`:
@@ -3097,7 +3100,14 @@ Implementation (Phase 20):
   because the runtime resolves by name. A member can therefore *use* a
   credential through a node without ever reading it through the API.
   Per-credential grants need owner-aware resolution in the runtime; that is
-  future work.
+  future work. Hence `GET /credential-names` is open to every user: names
+  and kinds only (no description, never a value), so editors pick a
+  credential instead of typing its name; it grants nothing new.
+- `GET /system/limits` and `GET /system/llm-providers` (every user) say
+  what the installation allows and which providers it configured (names
+  and whether one needs a credential; no URLs or models). The editor shows
+  them; a provider field carries `format: llm-provider` as a form hint
+  (not validated: the configured set is deployment state).
 - Public by design: `/health`, `/ready`, the OpenAPI docs and webhooks.
   Webhooks are fired by external systems without a session; since Phase 25
   each request must carry an HMAC signature under the trigger's secret

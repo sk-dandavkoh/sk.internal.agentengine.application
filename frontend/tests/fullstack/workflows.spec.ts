@@ -298,6 +298,15 @@ test('the inspector configures a built-in node from its backend schema', async (
     page: p,
 }) => {
     const workflow = await createViaApi(unique('Inspector'))
+    // Credentials are picked from a list of names: one must exist.
+    const crm = `crm-${randomUUID().slice(0, 8)}`
+    expect(
+        (
+            await api.post('/api/v1/credentials', {
+                data: { name: crm, value: randomUUID() },
+            })
+        ).status(),
+    ).toBe(201)
     await p.goto(`/workflows/${workflow.id}/editor`)
     const library = p.getByRole('region', { name: 'Node library' })
     await library
@@ -330,7 +339,7 @@ test('the inspector configures a built-in node from its backend schema', async (
     await secrets.getByRole('button', { name: 'Add entry' }).click()
     await secrets
         .getByRole('combobox', { name: /^Authorization/ })
-        .fill('crm-api')
+        .selectOption(crm)
     await expect(inspector.getByText('Configuration valid')).toBeVisible()
     await p.keyboard.press('ControlOrMeta+s')
     await expect(p.getByText('All changes saved to draft')).toBeVisible()
@@ -342,7 +351,7 @@ test('the inspector configures a built-in node from its backend schema', async (
     expect(body.draft.graph.nodes[0]?.config).toEqual({
         url: 'https://example.com/hook',
         method: 'POST',
-        header_credentials: { Authorization: 'credential:crm-api' },
+        header_credentials: { Authorization: `credential:${crm}` },
     })
 })
 
@@ -995,7 +1004,7 @@ test('triggers are configured, validated and stored by the backend', async ({
     await p.getByRole('button', { name: 'New trigger' }).click()
     dialog = p.getByRole('dialog', { name: 'New trigger' })
     await dialog.getByLabel('Type').selectOption('webhook')
-    await dialog.getByLabel('Signing secret').fill(secret)
+    await dialog.getByLabel('Signing secret').selectOption(secret)
     await dialog.getByRole('button', { name: 'Create trigger' }).click()
     const webhook = row('Webhook')
     await expect(

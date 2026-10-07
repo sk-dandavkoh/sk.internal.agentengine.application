@@ -183,9 +183,7 @@ async def test_runs_the_draft_node_once_and_persists_nothing(env: Env) -> None:
     assert SECRET not in response.text
     assert body["outputs"]["api_key"] == "[REDACTED]"
     assert [line["level"] for line in body["logs"]] == ["WARNING"]
-    executions = await env.client.get(
-        f"/api/v1/workflows/{env.workflow_id}/executions"
-    )
+    executions = await env.client.get(f"/api/v1/workflows/{env.workflow_id}/executions")
     assert executions.json()["items"] == []
 
 

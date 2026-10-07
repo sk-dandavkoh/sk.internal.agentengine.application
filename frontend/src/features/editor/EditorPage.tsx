@@ -39,6 +39,7 @@ import { GRID, GraphCanvas } from './GraphCanvas'
 import { edgeKey, edgesOf, nodeTitle } from './graphView'
 import { NodeDialog } from './NodeDialog'
 import { NodeLibrary } from './NodeLibrary'
+import { RunLimits } from './RunLimits'
 import { useDraftEditor } from './useDraftEditor'
 import { useFocusMode } from './useFocusMode'
 import { usePublishFlow } from './usePublishFlow'
@@ -560,6 +561,7 @@ function DraftEditor({
                         }}
                         onLocate={locate}
                     />
+                    <RunLimits />
                     {/* The canvas as a list: the graph without pointer or sight
                     (frontend/AGENTS §100). */}
                     <section

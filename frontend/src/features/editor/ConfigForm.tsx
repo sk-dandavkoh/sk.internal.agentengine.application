@@ -2,7 +2,7 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { useId, useState, type ReactNode } from 'react'
 import { useApiClient } from '../../api/context'
 import type { NodeDefinition } from '../../api/nodes'
-import { nodeQueries } from '../../api/queries'
+import { nodeQueries, systemQueries } from '../../api/queries'
 import { Button, Checkbox, Input, Select, Textarea } from '../../components/ui'
 import {
     describePath,
@@ -171,6 +171,8 @@ function Control(props: FieldProps) {
             return <CredentialField {...props} />
         case 'nodeType':
             return <NodeTypeField {...props} />
+        case 'provider':
+            return <ProviderField {...props} />
         case 'nodeConfig':
             return <NodeConfigField {...props} />
         case 'number':
@@ -288,6 +290,59 @@ const offeredAsTool = (d: NodeDefinition) =>
 
 function useNodeCatalog() {
     return useQuery(nodeQueries.catalog(useApiClient()))
+}
+
+/** The LLM providers this installation configured; a typed name only
+ * while the list is unavailable. */
+function ProviderField(props: FieldProps) {
+    const { spec, label, path, value, required, optional, onChange, issues } =
+        props
+    const providers = useQuery({
+        ...systemQueries.llmProviders(useApiClient()),
+        retry: false,
+    })
+    if (!providers.data) return <TextField {...props} multiline={false} />
+    const selected = typeof value === 'string' ? value : ''
+    const picked = providers.data.find((p) => p.name === selected)
+    const note =
+        picked === undefined
+            ? undefined
+            : picked.requires_credential
+              ? 'Needs a credential with its API key.'
+              : 'Needs no credential.'
+    return (
+        <Select
+            label={label}
+            required={required}
+            description={[helpText(spec), note].filter(Boolean).join(' ')}
+            error={
+                errorFor(issues, path) ??
+                (selected !== '' && !picked
+                    ? `"${selected}" is not configured on this server.`
+                    : providers.data.length === 0
+                      ? 'This server has no AI provider configured; an operator sets one up.'
+                      : undefined)
+            }
+            value={selected}
+            onChange={(e) => {
+                onChange(
+                    e.target.value === '' && optional
+                        ? undefined
+                        : e.target.value,
+                )
+            }}
+        >
+            <option value="">Choose a provider…</option>
+            {selected !== '' && !picked && (
+                <option value={selected}>{selected} (not configured)</option>
+            )}
+            {providers.data.map((p) => (
+                <option key={p.name} value={p.name}>
+                    {p.name}
+                </option>
+            ))}
+        </Select>
+    )
 }
 
 function NodeTypeField(props: FieldProps) {

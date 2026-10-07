@@ -13,6 +13,8 @@ export type ConfigPath = readonly (string | number)[]
 export const CREDENTIAL_REFERENCE_FORMAT = 'credential-reference'
 /** `format` of a prompt template string. */
 export const TEMPLATE_FORMAT = 'template'
+/** `format` of a string naming a configured LLM provider. */
+export const LLM_PROVIDER_FORMAT = 'llm-provider'
 /** `format` of a string naming a registered node type (agent tools). */
 export const NODE_TYPE_FORMAT = 'node-type'
 /** `format` of an object holding the config of the node type named by the
@@ -33,6 +35,7 @@ export type FieldSpec = Annotations &
         | { kind: 'text'; multiline: boolean }
         | { kind: 'credential' }
         | { kind: 'nodeType' }
+        | { kind: 'provider' }
         | { kind: 'nodeConfig' }
         | { kind: 'number'; integer: boolean }
         | { kind: 'boolean' }
@@ -91,6 +94,8 @@ export function fieldSpec(schema: JsonValue | undefined): FieldSpec {
                 return { ...base, kind: 'credential' }
             if (s['format'] === NODE_TYPE_FORMAT)
                 return { ...base, kind: 'nodeType' }
+            if (s['format'] === LLM_PROVIDER_FORMAT)
+                return { ...base, kind: 'provider' }
             return {
                 ...base,
                 kind: 'text',
@@ -138,6 +143,7 @@ export function fits(spec: FieldSpec, value: JsonValue): boolean {
         case 'text':
         case 'credential':
         case 'nodeType':
+        case 'provider':
             return typeof value === 'string'
         case 'number':
             return typeof value === 'number'

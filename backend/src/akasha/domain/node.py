@@ -135,6 +135,12 @@ class NodeCapabilities:
 # a credential picker rather than a text field (architecture §32).
 CREDENTIAL_REFERENCE_FORMAT = "credential-reference"
 
+# ``format`` of a string naming an LLM provider: a hint only, so forms offer
+# the providers this installation configured (GET /system/llm-providers).
+# Not enforced by validation: the configured set is deployment state, not
+# part of the node contract; an unknown provider fails when the node runs.
+LLM_PROVIDER_FORMAT = "llm-provider"
+
 
 @dataclass(frozen=True)
 class ConfigIssue:
