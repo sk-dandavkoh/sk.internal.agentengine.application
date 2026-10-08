@@ -28,7 +28,7 @@ from akasha.application.reports import ReportService
 from akasha.application.sharing import SharingService
 from akasha.application.triggers import TriggerRegistry, TriggerService
 from akasha.application.workflows import WorkflowService
-from akasha.config import OpenAICompatibleEndpoint, Settings
+from akasha.config import Settings
 from akasha.domain.ai import LLMClient
 from akasha.domain.node import BUILTIN_PLUGIN_ID, NodeServices
 from akasha.infrastructure.database import Database, normalize_async_url
@@ -345,25 +345,6 @@ def create_ai_service(settings: Settings) -> AIService:
         LLMProvider("openai", LiteLLMAdapter("openai"), timeout_seconds=timeout),
         LLMProvider("anthropic", LiteLLMAdapter("anthropic"), timeout_seconds=timeout),
     ]
-    if settings.ollama_base_url is not None:
-        providers.append(
-            LLMProvider(
-                "ollama",
-                # ollama_chat (not ollama) speaks the chat API, incl. tools.
-                LiteLLMAdapter("ollama_chat", api_base=str(settings.ollama_base_url)),
-                requires_credential=False,
-                timeout_seconds=timeout,
-            )
-        )
-    endpoints = list(settings.llm_endpoints)
-    if settings.openai_compatible_base_url is not None:
-        endpoints.append(
-            OpenAICompatibleEndpoint(
-                name=settings.openai_compatible_name,
-                base_url=settings.openai_compatible_base_url,
-                requires_credential=settings.openai_compatible_requires_credential,
-            )
-        )
     providers += [
         LLMProvider(
             endpoint.name,
@@ -371,7 +352,7 @@ def create_ai_service(settings: Settings) -> AIService:
             requires_credential=endpoint.requires_credential,
             timeout_seconds=timeout,
         )
-        for endpoint in endpoints
+        for endpoint in settings.llm_endpoints
     ]
     # A duplicate name, or one clashing with a built-in provider, fails
     # startup (ConfigurationError).

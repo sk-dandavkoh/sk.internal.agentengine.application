@@ -45,7 +45,7 @@ from pydantic import AnyHttpUrl, SecretStr
 
 from akasha.api.app import create_app
 from akasha.bootstrap import Container
-from akasha.config import Settings
+from akasha.config import OpenAICompatibleEndpoint, Settings
 from akasha.domain.event import Event, EventType
 from akasha.domain.primitives import new_id
 from akasha.runtime.scheduler import TriggerScheduler
@@ -123,8 +123,11 @@ async def engine(db_url: str, redis_url: str, tmp_path: Path) -> AsyncIterator[E
             redis_url=SecretStr(redis_url),
             queue_prefix=new_id("e2e")[-32:],  # isolated from other tests' queues
             credential_encryption_key=SecretStr(KEY),
-            openai_compatible_base_url=AnyHttpUrl(f"{server.base_url}/v1"),
-            openai_compatible_name="local",
+            llm_endpoints=[
+                OpenAICompatibleEndpoint(
+                    name="local", base_url=AnyHttpUrl(f"{server.base_url}/v1")
+                )
+            ],
             web_search_url=AnyHttpUrl(server.base_url),
             # Mailpit and the loopback servers live on private addresses.
             network_allow_private=True,

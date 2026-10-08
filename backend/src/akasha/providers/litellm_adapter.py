@@ -1,9 +1,10 @@
 """LiteLLM-backed ``ProviderAdapter`` (architecture §27: LiteLLM != domain).
 
-One adapter instance serves one provider route (``openai``, ``anthropic``,
-``ollama_chat``, ...). The route and ``api_base`` are operator configuration;
-the request's ``model`` is appended to the route, so user data can pick a
-model but never a different provider or endpoint.
+One adapter instance serves one provider route (``openai``, ``anthropic``;
+``openai`` with an ``api_base`` for OpenAI-compatible endpoints). The route
+and ``api_base`` are operator configuration; the request's ``model`` is
+appended to the route, so user data can pick a model but never a different
+provider or endpoint.
 
 Keys come only from the Credential Store. Given no key, litellm would fall
 back to ambient env vars (``OPENAI_API_KEY``, ...), so keyless providers

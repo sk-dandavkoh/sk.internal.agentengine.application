@@ -204,74 +204,29 @@ def test_provider_configuration_from_settings() -> None:
     service = create_ai_service(Settings())
     assert service.provider_names == ["anthropic", "openai"]
 
-    service = create_ai_service(
-        Settings.model_validate(
-            {"ollama_base_url": "http://ollama:11434", "llm_timeout_seconds": 12}
-        )
-    )
-    assert service.provider_names == ["anthropic", "ollama", "openai"]
-    ollama = service._providers["ollama"]
-    assert not ollama.requires_credential
-    assert ollama.timeout_seconds == 12
 
-
-def test_openai_compatible_provider_from_settings() -> None:
-    service = create_ai_service(
-        Settings.model_validate(
-            {
-                "openai_compatible_base_url": "http://vllm:8000/v1",
-                "openai_compatible_name": "vllm",
-                "openai_compatible_requires_credential": False,
-            }
-        )
-    )
-    assert service.provider_names == ["anthropic", "openai", "vllm"]
-    assert not service._providers["vllm"].requires_credential
-    # Credential required unless the operator says otherwise.
-    service = create_ai_service(
-        Settings.model_validate({"openai_compatible_base_url": "http://x/v1"})
-    )
-    assert service._providers["openai_compatible"].requires_credential
-
-
-def test_openai_compatible_name_must_not_shadow_a_builtin() -> None:
-    with pytest.raises(ConfigurationError):
-        create_ai_service(
-            Settings.model_validate(
-                {
-                    "openai_compatible_base_url": "http://x/v1",
-                    "openai_compatible_name": "openai",
-                }
-            )
-        )
-
-
-def test_several_openai_compatible_endpoints_from_settings() -> None:
+def test_openai_compatible_endpoints_from_settings() -> None:
     service = create_ai_service(
         Settings.model_validate(
             {
                 "llm_endpoints": [
                     {"name": "openrouter", "base_url": "https://openrouter.ai/api/v1"},
                     {
-                        "name": "vllm",
-                        "base_url": "http://vllm:8000/v1",
+                        "name": "ollama",
+                        "base_url": "http://ollama:11434/v1",
                         "requires_credential": False,
                     },
                 ],
-                "openai_compatible_base_url": "http://lmstudio:1234/v1",
-                "openai_compatible_name": "lmstudio",
+                "llm_timeout_seconds": 12,
             }
         )
     )
-    assert service.provider_names == [
-        "anthropic",
-        "lmstudio",
-        "openai",
-        "openrouter",
-        "vllm",
-    ]
+    assert service.provider_names == ["anthropic", "ollama", "openai", "openrouter"]
+    # Credential required unless the operator says otherwise.
     assert service._providers["openrouter"].requires_credential
-    assert not service._providers["vllm"].requires_credential
+    ollama = service._providers["ollama"]
+    assert not ollama.requires_credential
+    assert ollama.timeout_seconds == 12
 
 
 def test_llm_endpoints_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:

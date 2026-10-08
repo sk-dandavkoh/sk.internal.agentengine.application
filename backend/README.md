@@ -45,9 +45,7 @@ LLM providers (`openai` and `anthropic` are always registered; keys are credenti
 | Variable | Default | Meaning |
 |---|---|---|
 | `AKASHA_LLM_TIMEOUT_SECONDS` | `60` | ceiling for one LLM request |
-| `AKASHA_OLLAMA_BASE_URL` | unset | registers `ollama` (no key) |
-| `AKASHA_LLM_ENDPOINTS` | `[]` | JSON list of OpenAI-compatible endpoints, each `{"name", "base_url", "requires_credential": true}`; every name becomes a provider |
-| `AKASHA_OPENAI_COMPATIBLE_BASE_URL` / `_NAME` / `_REQUIRES_CREDENTIAL` | unset / `openai_compatible` / `true` | older single-endpoint form, adds one more |
+| `AKASHA_LLM_ENDPOINTS` | `[]` | JSON list of OpenAI-compatible endpoints (OpenRouter, vLLM, LM Studio, Ollama at `/v1`, ...), each `{"name", "base_url", "requires_credential": true}`; every name becomes a provider |
 
 Authentication settings:
 
