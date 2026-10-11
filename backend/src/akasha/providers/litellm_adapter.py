@@ -55,6 +55,11 @@ def _litellm() -> ModuleType:
     # GitHub — a hidden network call at startup (AGENTS §124). The bundled
     # map is used instead. setdefault: an operator may still opt in.
     os.environ.setdefault("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+    # In its default DEV mode, importing litellm loads the nearest .env
+    # into os.environ: a developer's or operator's file would silently
+    # change the engine's AKASHA_* configuration and provider keys mid-run.
+    # Configuration comes from akasha.config only (AGENTS §52).
+    os.environ.setdefault("LITELLM_MODE", "PRODUCTION")
     import litellm
 
     litellm.suppress_debug_info = True  # it prints help banners to stdout

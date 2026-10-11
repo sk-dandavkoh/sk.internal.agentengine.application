@@ -77,6 +77,12 @@ select = ["E", "F", "I", "UP", "B", "ASYNC", "S", "T20", "RUF"]
 # Reuses test_auth_api's ``env`` fixture by importing it, which pyflakes
 # reads as an unused import shadowed by each test's parameter.
 "tests/integration/test_access_tokens.py" = ["F401", "F811"]
+# Starts a fresh interpreter (fixed argv: sys.executable, no shell) to see
+# what importing litellm does to the environment.
+"tests/providers/test_litellm_adapter.py" = ["S603"]
+# Imports test_browser_node's autouse fixture (skip without Chromium),
+# which pyflakes reads as an unused import.
+"tests/nodes/test_browser_agent_node.py" = ["F401"]
 
 [tool.mypy]
 mypy_path = "src"

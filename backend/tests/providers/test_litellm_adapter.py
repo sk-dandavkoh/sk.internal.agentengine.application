@@ -4,6 +4,8 @@ exercised through litellm itself, never a public provider."""
 
 import json
 import os
+import subprocess
+import sys
 from typing import Any
 
 import pytest
@@ -134,6 +136,30 @@ def test_litellm_is_imported_with_the_local_cost_map() -> None:
     # Without it, the import fetches the price list from GitHub (F1).
     _litellm()
     assert os.environ["LITELLM_LOCAL_MODEL_COST_MAP"] == "True"
+
+
+def test_importing_litellm_never_loads_a_dotenv_file() -> None:
+    """litellm's default loads the nearest .env into os.environ, where it
+    would override the engine's AKASHA_* settings. A fresh interpreter,
+    since litellm is imported once per process."""
+    probe = (
+        "import dotenv\n"
+        "calls = []\n"
+        "dotenv.load_dotenv = lambda *a, **k: calls.append(1)\n"
+        "from akasha.providers.litellm_adapter import _litellm\n"
+        "_litellm()\n"
+        "print(len(calls))\n"
+    )
+    env = {k: v for k, v in os.environ.items() if k != "LITELLM_MODE"}
+    result = subprocess.run(
+        [sys.executable, "-c", probe],
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=120,
+        check=True,
+    )
+    assert result.stdout.strip() == "0"
 
 
 def _usage(input_tokens: int, output_tokens: int) -> LLMResponse:
