@@ -242,6 +242,19 @@ def wait_for(d: Deployment, api: httpx.Client, execution_id: str, wanted: str) -
     d.wait_until(f"execution {execution_id} {wanted}", reached)
 
 
+# What core.browser and core.browser_agent need from the image: Playwright
+# and a Chromium that launches for the unprivileged engine user.
+BROWSER_PROBE = """
+from playwright.sync_api import sync_playwright
+with sync_playwright() as p:
+    browser = p.chromium.launch()
+    page = browser.new_page()
+    page.set_content("<p>ok</p>")
+    print(page.inner_text("p"))
+    browser.close()
+"""
+
+
 def test_install_run_restart_backup_restore_recover(deployment: Deployment) -> None:
     d = deployment
 
@@ -271,6 +284,10 @@ def test_install_run_restart_backup_restore_recover(deployment: Deployment) -> N
     first = start(api, pid, version, "before backup")
     wait_for(d, api, first, "completed")
     headers = dict(api.headers)
+
+    # -- browser nodes: Chromium starts in the worker, as its user ---------
+    probe = d.compose("exec", "-T", "worker", "python", "-c", BROWSER_PROBE)
+    assert probe.stdout.strip() == b"ok", probe.stderr
 
     # -- stop: graceful, exit 0, shutdown logged ----------------------------
     d.compose("stop")

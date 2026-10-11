@@ -52,6 +52,8 @@ ROADMAP_NODES = {
     "core.transform",
     "core.database",
     "core.browser",
+    # ADR 0012: the model operates the browser itself.
+    "core.browser_agent",
 }
 REGISTRY = create_builtin_registry()
 BUILTINS = REGISTRY.list_nodes()
@@ -111,10 +113,11 @@ def test_capabilities_are_declared_truthfully() -> None:
     assert ids("is_control_flow") == {"core.human", "core.if", "core.switch"}
     assert ids("waits_for_input") == {"core.human"}
     # core.agent: its tools may have side effects. core.database: writes;
-    # core.browser: clicks may submit forms.
+    # core.browser / core.browser_agent: clicks may submit forms.
     assert ids("has_side_effects") == {
         "core.agent",
         "core.browser",
+        "core.browser_agent",
         "core.command",
         "core.database",
         "core.file_write",
@@ -126,6 +129,7 @@ def test_capabilities_are_declared_truthfully() -> None:
     assert ids("supports_cancellation") == {
         "core.agent",
         "core.browser",
+        "core.browser_agent",
         "core.command",
         "core.database",
         "core.delay",

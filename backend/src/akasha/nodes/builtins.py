@@ -9,6 +9,7 @@ operator settings) reaches it through ``context.services`` and
 
 from akasha.nodes.agent import AgentNode
 from akasha.nodes.browser import BrowserNode
+from akasha.nodes.browser_agent import BrowserAgentNode
 from akasha.nodes.command import CommandNode
 from akasha.nodes.control import IfNode, SwitchNode
 from akasha.nodes.core import (
@@ -52,6 +53,7 @@ BUILTIN_NODES: tuple[type[Node], ...] = (
     FileListNode,
     DatabaseNode,
     BrowserNode,
+    BrowserAgentNode,
     CommandNode,
     AgentNode,
 )

@@ -170,11 +170,13 @@ Optional node dependencies:
   in the workflow's workspace directory); with PostgreSQL the connection
   URL is a credential, and a database on a private network must be allowed
   like any other destination (`AKASHA_NETWORK_ALLOWED_HOSTS`).
-- `core.browser` needs the backend's optional `browser` extra and a
-  Chromium build: `uv sync --extra browser && uv run playwright install
-  --with-deps chromium`. The default image does not include them (they add
-  several hundred megabytes); without them the node fails with
-  `BROWSER_NOT_CONFIGURED`. Screenshots need `AKASHA_WORKSPACE_DIR`.
+- `core.browser` and `core.browser_agent` work out of the box: the image
+  ships Playwright and Chromium (headless shell, with its system
+  libraries; about 1 GB of the image). Outside Docker they need the
+  backend's optional `browser` extra and a Chromium build: `uv sync --extra
+  browser && uv run playwright install --with-deps --only-shell chromium`;
+  without them the nodes fail with `BROWSER_NOT_CONFIGURED`. Screenshots
+  need `AKASHA_WORKSPACE_DIR`.
 - `core.human` answers that nobody gives are settled by the workers'
   recovery pass (`AKASHA_QUEUE_RECOVERY_SECONDS`), so a wait deadline is
   honoured within that interval. The execution timeout

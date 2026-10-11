@@ -2081,8 +2081,9 @@ use the same node set. Duplicate ids are rejected
   core.pick, (ADR 0005) core.agent, core.web_fetch, core.file_read,
   core.file_write, core.file_list and core.command, and (core node
   portfolio, docs/reports/backend/core-node-portfolio.md) core.human,
-  core.transform, core.database and core.browser. The composition root
-  builds the registry from settings (`bootstrap.create_node_registry`).
+  core.transform, core.database and core.browser, and (ADR 0012)
+  core.browser_agent. Every built-in registers as a plain class; settings
+  reach it through its context (ADR 0011, `bootstrap.create_node_services`).
 - Core node portfolio rules: one node per capability, operations are
   config of that node (HTTP methods, SQL statement kinds, browser actions,
   transform steps), never sibling node types. Data enters through input
@@ -3223,7 +3224,14 @@ Implementation (Phase 09, `security/network.py`, `nodes/http.py`):
   disabled and unroutable traffic (WebSockets) goes to a dead proxy.
   Service workers and downloads are off; there is no upload step. Each
   attempt gets its own browser process and context (no shared cookies or
-  storage). The browser is an optional extra (`uv sync --extra browser`).
+  storage). Redirects of a page load reach the browser hop by hop, so the
+  page keeps its real URL and each hop's cookies (ADR 0012). The browser
+  ships in the image; outside Docker it is an optional extra (`uv sync
+  --extra browser`).
+- `core.browser_agent` (ADR 0012) shares that browser: the model sees each
+  page (text and numbered elements) and chooses every action (navigate,
+  click, type, select, press, back) in one session per attempt, within
+  `max_steps` and the optional `allowed_domains`.
 
 ----------
 
@@ -3592,7 +3600,10 @@ Each cap is enforced by the layer that owns the resource:
 | database statement duration | 30 s (config, ≤ 600 s) | `core.database` (SQLite interrupted, PostgreSQL cancelled) | node `DATABASE_TIMEOUT` |
 | database result rows | 1000 (config, ≤ 10000) | `core.database` | rows cut, `truncated: true` |
 | browser attempt duration | 30 s (config, ≤ 120 s) | `core.browser`, browser closed | node `BROWSER_TIMEOUT` |
-| browser requests per attempt | 300 | `core.browser` interception | further requests aborted |
+| browser requests per attempt | 300 (`core.browser`), 3000 (`core.browser_agent`) | interception | further requests aborted |
+| browser agent model calls | 30 (config, ≤ 100) | `core.browser_agent` | node `BROWSER_AGENT_MAX_STEPS` |
+| browser action duration | 15 s | `core.browser_agent` | action error, shown to the model |
+| page-load redirects | 5 | browser interception | `HTTP_TOO_MANY_REDIRECTS` |
 | human answer | 64 KiB JSON | `ExecutionService.respond` | 422 |
 | human prompt | 10000 chars | `core.human` | prompt cut |
 
@@ -5028,7 +5039,8 @@ SSRF guard on every hop, readable text extracted from HTML),
 `core.command` (ADR 0005); from the core node portfolio `core.database`
 (the model supplies only `params`, never SQL), `core.http` (`body`,
 `query`, `variables`), `core.transform` (`value`) and `core.browser`
-(`url`, `values`; selectors stay config).
+(`url`, `values`; selectors stay config). `core.browser_agent` (`task`,
+`url`) is the exception by design (ADR 0012): it chooses its own clicks.
 
 ----------
 

@@ -36,8 +36,11 @@ later nodes) need session ownership across workers and WAITING; not core.
 """
 
 import asyncio
+import json
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager, suppress
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 from akasha.nodes.core import (
     TEMPLATE,
@@ -49,6 +52,8 @@ from akasha.nodes.core import (
 from akasha.nodes.fetching import (
     DEFAULT_MAX_CHARS,
     MAX_CHARS,
+    MAX_REDIRECTS,
+    FetchedResponse,
     fetch,
 )
 from akasha.nodes.settings import core_settings
@@ -210,78 +215,40 @@ class BrowserNode(Node):
                 NodeErrorKind.VALIDATION,
                 "HTTP_INVALID_URL",
             )
-        try:
-            from playwright.async_api import Error as PlaywrightError
-            from playwright.async_api import async_playwright
-        except ImportError:
-            raise _error(
-                "browser automation is not installed in this engine",
-                NodeErrorKind.CONFIGURATION,
-                "BROWSER_NOT_CONFIGURED",
-            ) from None
+        playwright_error = playwright_errors()
         limit = context.config.get("timeout_seconds", DEFAULT_TIMEOUT_SECONDS)
-        fetcher = _Fetcher(
+        fetcher = Fetcher(
             context.services.network,
             core_settings(context).http_max_response_bytes,
             limit,
         )
         try:
-            async with asyncio.timeout(limit), async_playwright() as playwright:
-                browser = await playwright.chromium.launch(
-                    # Nothing may bypass the interception below: hosts do
-                    # not resolve and unrouted traffic hits a dead proxy.
-                    args=["--host-resolver-rules=MAP * ~NOTFOUND"],
-                    proxy={"server": "http://127.0.0.1:1"},
-                )
-                try:
-                    browser_context = await browser.new_context(
-                        service_workers="block", accept_downloads=False
-                    )
-                    await browser_context.route("**/*", fetcher.handle)
-                    browser_context.set_default_timeout(limit * 1000)
-                    page = await browser_context.new_page()
-                    page.on(
-                        "dialog", lambda dialog: asyncio.ensure_future(dialog.dismiss())
-                    )
-                    return await self._run(context, page, url)
-                finally:
-                    await browser.close()
+            async with asyncio.timeout(limit), browser_page(fetcher, limit) as page:
+                return await self._run(context, page, url, fetcher)
         except TimeoutError:
             raise _error(
                 f"the browser did not finish within {limit}s",
                 NodeErrorKind.TIMEOUT,
                 "BROWSER_TIMEOUT",
             ) from None
-        except PlaywrightError as exc:
-            if fetcher.navigation_error is not None:
-                # The page itself was refused (blocked destination, too
-                # large, unreachable): report why, not "navigation failed".
-                raise fetcher.navigation_error from None
-            # The first line names the failure (selector not found, page
-            # crashed, navigation refused); the call log below can quote
-            # page content, so it is dropped.
-            first = str(exc).split("\n", 1)[0][:300]
-            if "Executable doesn't exist" in first:
-                raise _error(
-                    "the browser is not installed (playwright install chromium)",
-                    NodeErrorKind.CONFIGURATION,
-                    "BROWSER_NOT_CONFIGURED",
-                ) from None
-            raise _error(
-                f"the browser step failed: {first}",
-                NodeErrorKind.PERMANENT,
-                "BROWSER_STEP_FAILED",
-            ) from None
+        except playwright_error as exc:
+            raise step_error(exc, fetcher) from None
 
     async def _run(
-        self, context: NodeExecutionContext, page: "Page", url: str
+        self,
+        context: NodeExecutionContext,
+        page: "Page",
+        url: str,
+        fetcher: "Fetcher",
     ) -> NodeResult:
-        response = await page.goto(url)
-        if response is not None and response.status >= 400:
+        await page.goto(url)
+        await fetcher.settle()
+        status = fetcher.status
+        if status is not None and status >= 400:
             raise _error(
-                f"HTTP status {response.status}",
+                f"HTTP status {status}",
                 NodeErrorKind.TRANSIENT
-                if response.status == 429 or response.status >= 500
+                if status == 429 or status >= 500
                 else NodeErrorKind.PERMANENT,
                 "HTTP_STATUS_ERROR",
             )
@@ -295,6 +262,7 @@ class BrowserNode(Node):
                     "BROWSER_CANCELLED",
                 )
             await self._step(context, page, step, values, extracted)
+            await fetcher.settle()  # a click may have started a page load
         text = await page.inner_text("body")
         limit = context.config.get("max_chars", DEFAULT_MAX_CHARS)
         return NodeResult(
@@ -377,26 +345,129 @@ class BrowserNode(Node):
         await asyncio.to_thread(target.write_bytes, image)
 
 
-class _Fetcher:
+def playwright_errors() -> type[Exception]:
+    """Playwright's error class; ``BROWSER_NOT_CONFIGURED`` without it."""
+    try:
+        from playwright.async_api import Error
+    except ImportError:
+        raise _error(
+            "browser automation is not installed in this engine",
+            NodeErrorKind.CONFIGURATION,
+            "BROWSER_NOT_CONFIGURED",
+        ) from None
+    return Error
+
+
+@asynccontextmanager
+async def browser_page(
+    fetcher: "Fetcher", action_timeout: float
+) -> "AsyncIterator[Page]":
+    """A page in a fresh browser and context, closed on exit (also on
+    timeout and cancellation): no cookie, storage or session outlives it.
+    Every request goes through ``fetcher``; ``action_timeout`` bounds each
+    single action."""
+    from playwright.async_api import async_playwright
+
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch(
+            # Nothing may bypass the interception below: hosts do not
+            # resolve and unrouted traffic hits a dead proxy.
+            args=["--host-resolver-rules=MAP * ~NOTFOUND"],
+            proxy={"server": "http://127.0.0.1:1"},
+        )
+        try:
+            browser_context = await browser.new_context(
+                service_workers="block", accept_downloads=False
+            )
+            await browser_context.route("**/*", fetcher.handle)
+            browser_context.set_default_timeout(action_timeout * 1000)
+            page = await browser_context.new_page()
+            page.on("dialog", lambda dialog: asyncio.ensure_future(dialog.dismiss()))
+            yield page
+        finally:
+            await browser.close()
+
+
+def step_error(exc: Exception, fetcher: "Fetcher") -> NodeError:
+    """A Playwright failure as a ``NodeError``."""
+    if fetcher.navigation_error is not None:
+        # The page itself was refused (blocked destination, too large,
+        # unreachable): report why, not "navigation failed".
+        error, fetcher.navigation_error = fetcher.navigation_error, None
+        return error
+    # The first line names the failure (selector not found, page crashed,
+    # navigation refused); the call log below can quote page content, so it
+    # is dropped.
+    first = str(exc).split("\n", 1)[0][:300]
+    if "Executable doesn't exist" in first:
+        return _error(
+            "the browser is not installed (playwright install chromium)",
+            NodeErrorKind.CONFIGURATION,
+            "BROWSER_NOT_CONFIGURED",
+        )
+    return _error(
+        f"the browser step failed: {first}",
+        NodeErrorKind.PERMANENT,
+        "BROWSER_STEP_FAILED",
+    )
+
+
+def domain_allowed(url: str, allowed: frozenset[str]) -> bool:
+    if not allowed:
+        return True
+    host = (urlsplit(url).hostname or "").lower()
+    return any(host == d or host.endswith(f".{d}") for d in allowed)
+
+
+class Fetcher:
     """Performs the page's requests through the engine's guarded client."""
 
     def __init__(
-        self, policy: NetworkPolicy, max_bytes: int, time_limit: float
+        self,
+        policy: NetworkPolicy,
+        max_bytes: int,
+        time_limit: float,
+        *,
+        max_requests: int = MAX_REQUESTS,
+        allowed_domains: frozenset[str] = frozenset(),
     ) -> None:
+        """``allowed_domains``: when set, top-level navigation is limited to
+        these hosts and their subdomains; a page's resources (CDNs, APIs)
+        are not."""
         self._policy = policy
         self._max_bytes = max_bytes
         self._time_limit = time_limit
+        self._max_requests = max_requests
+        self._allowed = allowed_domains
         self._requests = 0
+        self._hops = 0  # redirects of the current top-level navigation
+        # Set once the current top-level navigation reached a real page or
+        # was refused; cleared while it passes through redirect pages.
+        self._settled = asyncio.Event()
+        self._settled.set()
         # Why the latest top-level navigation was refused, if it was.
         self.navigation_error: NodeError | None = None
+        # HTTP status of the latest page a top-level navigation reached.
+        self.status: int | None = None
 
     async def handle(self, route: "Route") -> None:
         request = route.request
         self._requests += 1
-        if self._requests > MAX_REQUESTS or urlsplit(request.url).scheme not in (
+        if self._requests > self._max_requests or urlsplit(request.url).scheme not in (
             "http",
             "https",
         ):
+            await route.abort("blockedbyclient")
+            return
+        top_level = (
+            request.is_navigation_request() and request.frame.parent_frame is None
+        )
+        if top_level and not domain_allowed(request.url, self._allowed):
+            self.navigation_error = _error(
+                "the page is outside the allowed domains",
+                NodeErrorKind.PERMANENT,
+                "BROWSER_DOMAIN_NOT_ALLOWED",
+            )
             await route.abort("blockedbyclient")
             return
         try:
@@ -413,25 +484,93 @@ class _Fetcher:
                 },
                 content=request.post_data_buffer,
                 # Chromium does not route the next hop of a fulfilled
-                # redirect (it would hit the dead proxy), so the engine
-                # follows redirects itself — each hop through the guard.
-                # ponytail: the page keeps its first URL, so relative links
-                # after a cross-path redirect resolve against it.
-                follow_redirects=True,
+                # redirect (it would hit the dead proxy). Page loads get
+                # each hop as a redirect page (below), so the browser keeps
+                # the right URL and each hop's cookies under its own origin.
+                # A page's own requests (scripts, XHR) need the final
+                # response at once: the engine follows those itself, each
+                # hop through the guard. ponytail: their intermediate
+                # cookies stay with the engine's client; move them to the
+                # browser if a site needs that.
+                follow_redirects=not top_level,
             )
         except NodeError as exc:
             # Blocked destination, oversize, timeout: the page sees a failed
             # request, like any network error.
-            if request.is_navigation_request() and request.frame.parent_frame is None:
-                self.navigation_error = exc
+            if top_level:
+                self._refuse(exc)
             await route.abort("blockedbyclient")
             return
+        location = response.headers.get("location")
+        if top_level and response.status in _REDIRECTS and location:
+            await self._redirect(route, response, urljoin(request.url, location))
+            return
+        if top_level:
+            self._hops, self.status = 0, response.status
+            self._settled.set()
         await route.fulfill(
             status=response.status,
-            headers={
-                k: v
-                for k, v in response.headers.items()
-                if k.lower() not in _DECODED_HEADERS
-            },
+            headers=_browser_headers(response),
             body=response.content,
         )
+
+    async def _redirect(
+        self, route: "Route", response: FetchedResponse, target: str
+    ) -> None:
+        """One redirect hop of a page load, as a tiny page that replaces
+        itself with ``target``: Chromium then requests the next hop through
+        this handler again (guard, allowlist and all)."""
+        self._hops += 1
+        if self._hops > MAX_REDIRECTS or urlsplit(target).scheme not in (
+            "http",
+            "https",
+        ):
+            self._refuse(
+                _error(
+                    f"more than {MAX_REDIRECTS} redirects, or a redirect to"
+                    " a non-http(s) URL",
+                    NodeErrorKind.PERMANENT,
+                    "HTTP_TOO_MANY_REDIRECTS",
+                )
+            )
+            await route.abort("blockedbyclient")
+            return
+        self._settled.clear()
+        # "<" escaped: the URL is the server's, it must not end the script.
+        url = json.dumps(target).replace("<", "\\u003c")
+        await route.fulfill(
+            status=200,
+            headers=_browser_headers(response)
+            | {"content-type": "text/html; charset=utf-8"},
+            body=f"<!doctype html><script>location.replace({url})</script>",
+        )
+
+    def _refuse(self, error: NodeError) -> None:
+        self.navigation_error = error
+        self._hops = 0
+        self._settled.set()
+
+    async def settle(self) -> None:
+        """Wait until the latest page load has passed its redirects; raise
+        why it was refused, if it was."""
+        with suppress(TimeoutError):  # still loading: describe the page as is
+            async with asyncio.timeout(self._time_limit):
+                await self._settled.wait()
+        if self.navigation_error is not None:
+            error, self.navigation_error = self.navigation_error, None
+            raise error
+
+
+_REDIRECTS = frozenset({301, 302, 303, 307, 308})
+
+
+def _browser_headers(response: FetchedResponse) -> dict[str, str]:
+    headers = {
+        k: v
+        for k, v in response.headers.items()
+        if k.lower() not in _DECODED_HEADERS and k.lower() != "set-cookie"
+    }
+    if response.set_cookies:
+        # Playwright splits a newline-joined value into separate headers.
+        headers["set-cookie"] = "\n".join(response.set_cookies)
+    return headers

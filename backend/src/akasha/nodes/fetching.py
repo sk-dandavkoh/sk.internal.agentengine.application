@@ -37,10 +37,13 @@ _DEFAULT_PORTS = {"http": 80, "https": 443}
 @dataclass(frozen=True)
 class FetchedResponse:
     status: int
-    headers: dict[str, str]
+    headers: dict[str, str]  # repeated headers joined by ", "
     content: bytes
     content_type: str
     encoding: str | None
+    # One per Set-Cookie header: joined like other headers they would be
+    # unparseable (Expires dates contain commas).
+    set_cookies: tuple[str, ...] = ()
 
 
 def _error(message: str, kind: NodeErrorKind, code: str, **details: str) -> NodeError:
@@ -233,6 +236,7 @@ async def _exchange(
                         content=body,
                         content_type=response.headers.get("content-type", ""),
                         encoding=response.charset_encoding,
+                        set_cookies=tuple(response.headers.get_list("set-cookie")),
                     )
             finally:
                 await response.aclose()
