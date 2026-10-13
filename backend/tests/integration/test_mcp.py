@@ -308,6 +308,7 @@ EXPECTED_TOOLS = {
     "workflow_create",
     "workflow_update",
     "workflow_delete",
+    "workflow_archive",
     "workflow_draft_get",
     "workflow_draft_update",
     "graph_get",

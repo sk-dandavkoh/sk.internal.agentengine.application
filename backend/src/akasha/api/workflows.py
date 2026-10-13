@@ -183,6 +183,17 @@ def create_workflows_router() -> APIRouter:
         await svc.delete_workflow(workflow_id)
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
+    @router.post("/{workflow_id}/archive", **requires(Access.MANAGE))
+    async def archive_workflow(workflow_id: str, svc: Service) -> WorkflowDetail:
+        """Retire the workflow: versions and history stay, its triggers stop,
+        new executions are refused (409 WORKFLOW_ARCHIVED) and it leaves the
+        default listing."""
+        return WorkflowDetail.from_domain(await svc.set_archived(workflow_id, True))
+
+    @router.post("/{workflow_id}/unarchive", **requires(Access.MANAGE))
+    async def unarchive_workflow(workflow_id: str, svc: Service) -> WorkflowDetail:
+        return WorkflowDetail.from_domain(await svc.set_archived(workflow_id, False))
+
     # Reading is enough: the copy belongs to the caller.
     @router.post(
         "/{workflow_id}/duplicate",

@@ -161,7 +161,7 @@ function Filters({
                     update({ status: e.target.value })
                 }}
             >
-                <option value="">All statuses</option>
+                <option value="">All except archived</option>
                 {workflowStatusSchema.options.map((s) => (
                     <option key={s} value={s}>
                         {workflowStatusLabels[s]}

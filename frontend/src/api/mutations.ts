@@ -28,6 +28,8 @@ import {
     deleteWorkflow,
     duplicateWorkflow,
     importWorkflow,
+    archiveWorkflow,
+    unarchiveWorkflow,
     publishWorkflow,
     restoreWorkflowVersion,
     testNode,
@@ -160,6 +162,19 @@ export function useDeleteWorkflow() {
             qc.removeQueries({
                 queryKey: queryKeys.workflows.detail(workflowId),
             })
+            return invalidate(qc, queryKeys.workflows.lists())
+        },
+    )
+}
+
+export function useSetWorkflowArchived() {
+    return useApiMutation(
+        (client, v: { workflowId: string; archived: boolean }) =>
+            v.archived
+                ? archiveWorkflow(client, v.workflowId)
+                : unarchiveWorkflow(client, v.workflowId),
+        (qc, workflow) => {
+            qc.setQueryData(queryKeys.workflows.detail(workflow.id), workflow)
             return invalidate(qc, queryKeys.workflows.lists())
         },
     )

@@ -18,6 +18,7 @@ from akasha.application.queue import ExecutionQueue, Job, QueueUnavailableError
 from akasha.application.workflows import (
     Page,
     UowFactory,
+    WorkflowArchivedError,
     WorkflowVersionNotFoundError,
     check_page,
     load_workflow,
@@ -37,6 +38,7 @@ from akasha.domain.execution import (
 )
 from akasha.domain.limits import ResourceLimitError, ResourceLimits, json_size
 from akasha.domain.primitives import is_storable, utcnow
+from akasha.domain.workflow import WorkflowStatus
 from akasha.errors import AkashaError, DomainValidationError
 from akasha.observability.execution import observe_execution
 from akasha.observability.metrics import EngineMetrics
@@ -161,6 +163,12 @@ class ExecutionService:
                 raise WorkflowVersionNotFoundError(
                     "Workflow version not found.",
                     details={"workflow_id": workflow_id, "version": version},
+                )
+            workflow = await uow.workflows.get(workflow_id)
+            if workflow is not None and workflow.status is WorkflowStatus.ARCHIVED:
+                raise WorkflowArchivedError(
+                    "The workflow is archived; unarchive it to run it again.",
+                    details={"workflow_id": workflow_id},
                 )
             self._limits.check_graph(snapshot.graph)
             self._limits.check_capacity(

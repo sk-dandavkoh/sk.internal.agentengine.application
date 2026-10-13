@@ -132,6 +132,7 @@ class WorkflowVersionRepository(Protocol):
         self, *, workflow_id: str | None = None
     ) -> Sequence[tuple[str, WorkflowVersion]]:
         """The highest published version of every workflow, or of one.
+        Archived workflows are left out: their triggers no longer exist.
 
         Triggers always resolve against the latest published version
         (architecture §125): publishing retires the previous version's

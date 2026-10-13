@@ -244,6 +244,42 @@ test('a published workflow cannot be deleted', async ({ page: p }) => {
     )
 })
 
+test('a published workflow is retired by archiving it', async ({ page: p }) => {
+    const workflow = await createViaApi(unique('Retired'))
+    await publishHelloWorld(workflow)
+
+    await p.goto(`/workflows/${workflow.id}`)
+    await p.getByRole('button', { name: 'Archive', exact: true }).click()
+    await p
+        .getByRole('dialog', { name: 'Archive workflow?' })
+        .getByRole('button', { name: 'Archive' })
+        .click()
+    await expect(p.getByText('Archived', { exact: true })).toBeVisible()
+
+    // The backend refuses runs; the default list leaves it out.
+    expect(
+        (
+            await api.post(
+                `/api/v1/workflows/${workflow.id}/versions/1/execute`,
+                {
+                    data: {},
+                },
+            )
+        ).status(),
+    ).toBe(409)
+    const listed = (await (await api.get('/api/v1/workflows')).json()) as {
+        items: { id: string }[]
+    }
+    expect(listed.items.map((w) => w.id)).not.toContain(workflow.id)
+
+    await p.getByRole('button', { name: 'Unarchive', exact: true }).click()
+    await p
+        .getByRole('dialog', { name: 'Unarchive workflow?' })
+        .getByRole('button', { name: 'Unarchive' })
+        .click()
+    await expect(p.getByText('Published', { exact: true })).toBeVisible()
+})
+
 test('an edit based on a stale revision is refused, then reloaded', async ({
     page: p,
 }) => {

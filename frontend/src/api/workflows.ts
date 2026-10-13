@@ -299,6 +299,22 @@ export function deleteWorkflow(client: ApiClient, workflowId: string) {
 }
 
 /**
+ * Archives a workflow (or restores it): versions and history stay, its
+ * triggers stop and runs are refused. The way to retire a published workflow.
+ */
+export function archiveWorkflow(client: ApiClient, workflowId: string) {
+    return client.request('POST', `${path(workflowId)}/archive`, workflowSchema)
+}
+
+export function unarchiveWorkflow(client: ApiClient, workflowId: string) {
+    return client.request(
+        'POST',
+        `${path(workflowId)}/unarchive`,
+        workflowSchema,
+    )
+}
+
+/**
  * Validates the stored draft; nothing is persisted. With `expectedRevision`
  * the backend rejects (409) a draft other than the one the caller shows.
  */

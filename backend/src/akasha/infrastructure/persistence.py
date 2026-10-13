@@ -348,10 +348,15 @@ class SqlAlchemyWorkflowVersionRepository(WorkflowVersionRepository):
         # ponytail: the scheduler scans one full row per workflow and filters
         # triggers in Python; push trigger matching into SQL (JSONB ops) when
         # catalogs get large. Webhook/invoke resolution passes workflow_id.
-        latest = select(
-            m.workflow_versions.c.workflow_id,
-            func.max(m.workflow_versions.c.version).label("max_version"),
-        ).group_by(m.workflow_versions.c.workflow_id)
+        latest = (
+            select(
+                m.workflow_versions.c.workflow_id,
+                func.max(m.workflow_versions.c.version).label("max_version"),
+            )
+            .join(m.workflows, m.workflows.c.id == m.workflow_versions.c.workflow_id)
+            .where(m.workflows.c.status != WorkflowStatus.ARCHIVED.value)
+            .group_by(m.workflow_versions.c.workflow_id)
+        )
         if workflow_id is not None:
             latest = latest.where(m.workflow_versions.c.workflow_id == workflow_id)
         newest = latest.subquery()

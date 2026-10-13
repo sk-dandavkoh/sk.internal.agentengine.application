@@ -486,6 +486,17 @@ def register(kit: Kit) -> None:
         await workflows().delete_workflow(workflow_id)
         return DraftChange(workflow_id=workflow_id, revision=0)
 
+    @kit.tool(title="Archive workflow")
+    async def workflow_archive(
+        workflow_id: WorkflowId, archived: bool = True
+    ) -> WorkflowOverview:
+        """Archive a workflow (archived=false restores it). Versions and
+        history stay; its triggers stop and runs are refused
+        (WORKFLOW_ARCHIVED). Use this for published workflows, which cannot be
+        deleted. Needs the owner or an admin."""
+        await workflow(workflow_id, Access.MANAGE)
+        return _overview(await workflows().set_archived(workflow_id, archived))
+
     @kit.tool(title="Get workflow draft", read_only=True)
     async def workflow_draft_get(workflow_id: WorkflowId) -> DraftOut:
         """The whole mutable draft: graph (nodes with config, edges),

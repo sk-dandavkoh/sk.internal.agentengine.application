@@ -484,6 +484,33 @@ async def test_delete_published_workflow_is_a_conflict(api: httpx.AsyncClient) -
     assert (await api.get(f"/api/v1/workflows/{pid}/versions/1")).status_code == 200
 
 
+async def test_archive_and_unarchive(api: httpx.AsyncClient) -> None:
+    pid = (await create(api))["id"]
+    assert (await put_draft(api, pid, valid_draft(), revision=1)).status_code == 200
+    assert (await api.post(f"/api/v1/workflows/{pid}/publish")).status_code == 201
+
+    archived = await api.post(f"/api/v1/workflows/{pid}/archive")
+    assert archived.status_code == 200, archived.text
+    assert archived.json()["status"] == "archived"
+
+    async def ids(query: str) -> list[str]:
+        return [
+            w["id"]
+            for w in (await api.get(f"/api/v1/workflows{query}")).json()["items"]
+        ]
+
+    assert await ids("") == []
+    assert await ids("?status=archived") == [pid]
+
+    restored = await api.post(f"/api/v1/workflows/{pid}/unarchive")
+    assert restored.json()["status"] == "published"
+    assert_error(
+        await api.post(f"/api/v1/workflows/{UNKNOWN}/archive"),
+        404,
+        "WORKFLOW_NOT_FOUND",
+    )
+
+
 async def test_infrastructure_failure_is_opaque_500(
     node_definitions: dict[str, NodeDefinition],
 ) -> None:

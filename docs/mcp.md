@@ -148,7 +148,7 @@ a typed output schema, and annotations (`readOnlyHint`, `destructiveHint`,
 |---|---|
 | Discovery | `system_info` (caller, role, capabilities, limits) |
 | Nodes | `node_types_list` (filter `query`/`category`, paged, + port compatibility rules), `node_type_get` (ports, config schema, capabilities, owning plugin), `node_config_validate` |
-| Workflows | `workflow_list`, `workflow_get`, `workflow_create`, `workflow_update` (name/description), `workflow_delete` (never-published only) |
+| Workflows | `workflow_list`, `workflow_get`, `workflow_create`, `workflow_update` (name/description), `workflow_delete` (never-published only), `workflow_archive` (retire / restore) |
 | Drafts | `workflow_draft_get`, `workflow_draft_update` (whole draft, like the editor's save) |
 | Graph | `graph_get`, `graph_node_add`, `graph_node_update`, `graph_node_delete` (removes its edges), `graph_edge_add`, `graph_edge_delete` |
 | Validation and publishing | `workflow_validate`, `workflow_publish`, `workflow_versions_list`, `workflow_version_get` |

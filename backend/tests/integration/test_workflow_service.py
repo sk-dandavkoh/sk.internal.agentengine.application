@@ -9,8 +9,10 @@ import asyncio
 
 import pytest
 
+from akasha.application.executions import ExecutionService
 from akasha.application.persistence import ConcurrentModificationError
 from akasha.application.workflows import (
+    WorkflowArchivedError,
     WorkflowHasVersionsError,
     WorkflowNotFoundError,
     WorkflowService,
@@ -293,6 +295,49 @@ async def test_delete_published_workflow_is_refused(
     with pytest.raises(WorkflowHasVersionsError):
         await workflow_service.delete_workflow(workflow_id)
     assert (await workflow_service.get_version(workflow_id, 1)).version == 1
+
+
+async def test_archive_retires_a_published_workflow(
+    workflow_service: WorkflowService, database: Database
+) -> None:
+    """Archiving is how a published workflow is retired (vision §7): the
+    history stays, but nothing can run it and its triggers disappear."""
+    workflow_id, _ = await published_workflow(workflow_service)
+    executions = ExecutionService(lambda: SqlAlchemyUnitOfWork(database))
+
+    async def latest_ids() -> list[str]:
+        async with SqlAlchemyUnitOfWork(database) as uow:
+            return [pid for pid, _ in await uow.versions.list_latest()]
+
+    async def listed(*statuses: WorkflowStatus) -> list[str]:
+        page = await workflow_service.list_workflows(statuses=statuses)
+        return [w.id for w in page.items]
+
+    archived = await workflow_service.set_archived(workflow_id, True)
+    assert archived.status is WorkflowStatus.ARCHIVED
+    assert await latest_ids() == []
+    assert await listed() == []
+    assert await listed(WorkflowStatus.ARCHIVED) == [workflow_id]
+    with pytest.raises(WorkflowArchivedError):
+        await executions.create_execution(workflow_id, 1, dispatch=False)
+    with pytest.raises(WorkflowHasVersionsError):
+        await workflow_service.delete_workflow(workflow_id)
+    assert (await workflow_service.get_version(workflow_id, 1)).version == 1
+
+    restored = await workflow_service.set_archived(workflow_id, False)
+    assert restored.status is WorkflowStatus.PUBLISHED
+    assert await latest_ids() == [workflow_id]
+    assert await listed() == [workflow_id]
+    await executions.create_execution(workflow_id, 1, dispatch=False)
+
+
+async def test_unarchive_never_published_returns_to_draft(
+    workflow_service: WorkflowService,
+) -> None:
+    workflow = await workflow_service.create_workflow("demo")
+    await workflow_service.set_archived(workflow.id, True)
+    restored = await workflow_service.set_archived(workflow.id, False)
+    assert restored.status is WorkflowStatus.DRAFT
 
 
 async def test_version_lookups_on_missing_data(

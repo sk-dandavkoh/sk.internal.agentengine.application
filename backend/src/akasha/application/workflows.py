@@ -59,6 +59,11 @@ class WorkflowHasVersionsError(AkashaError):
     http_status = 409
 
 
+class WorkflowArchivedError(AkashaError):
+    code = "WORKFLOW_ARCHIVED"
+    http_status = 409
+
+
 class WorkflowValidationFailedError(AkashaError):
     code = "WORKFLOW_VALIDATION_FAILED"
     http_status = 422
@@ -174,8 +179,12 @@ class WorkflowService:
         sort: WorkflowSort = WorkflowSort.CREATED,
     ) -> Page[Workflow]:
         """All workflows, or only those ``visible_to`` that user; ``search`` matches
-        a case-insensitive substring of the name."""
+        a case-insensitive substring of the name. Archived workflows are left
+        out unless ``statuses`` asks for them."""
         check_page(offset, limit)
+        statuses = statuses or [
+            s for s in WorkflowStatus if s is not WorkflowStatus.ARCHIVED
+        ]
         async with self._uow() as uow:
             rows = await uow.workflows.list(
                 offset=offset,
@@ -321,6 +330,20 @@ class WorkflowService:
                 )
             await uow.commit()
         _log("workflow_deleted", workflow)
+
+    async def set_archived(self, workflow_id: str, archived: bool) -> Workflow:
+        """Archive (or restore) a workflow: the way to retire one that has
+        published versions, which ``delete_workflow`` refuses."""
+        async with self._uow() as uow:
+            workflow = await load_workflow(uow, workflow_id)
+            if archived:
+                workflow.archive()
+            else:
+                workflow.unarchive()
+            await uow.workflows.save(workflow)
+            await uow.commit()
+        _log("workflow_archived" if archived else "workflow_unarchived", workflow)
+        return workflow
 
     async def workflows_using_plugin(
         self, plugin_id: str, node_types: Sequence[str]

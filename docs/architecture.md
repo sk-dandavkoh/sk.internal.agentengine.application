@@ -1296,7 +1296,8 @@ Implemented in V1 (Phase 27 closed the gaps the frontend needs):
 ```text
 /api/v1/auth, /api/v1/users                      local accounts, sessions
 /api/v1/workflows[/{id}[/validate|/publish|/duplicate|/export|/versions]], /import
-/api/v1/workflows?q=&status=&sort=                 search (name), status filter, sort
+/api/v1/workflows/{id}/archive|/unarchive          retire / restore a workflow (manage)
+/api/v1/workflows?q=&status=&sort=                 search (name), status filter (archived only on request), sort
 /api/v1/workflows/{id}/executions?version=        execution history (paginated), optionally of one version
 /api/v1/workflows/{id}/versions/{n}/execute       manual run
 /api/v1/workflows/{id}/versions/{n}/restore       copy a version into the draft (expected_revision)
@@ -1325,6 +1326,14 @@ the draft revision the client shows. A different stored revision is a 409
 publish never freezes, a draft the user has not seen. Publishing advances
 the draft revision (the workflow row is saved); clients reload the draft
 afterwards.
+
+A workflow with published versions cannot be deleted (409
+`WORKFLOW_HAS_VERSIONS`: versions are execution history). It is retired by
+archiving (vision §7): status `archived`, versions and history kept, its
+triggers are no longer resolved (`list_latest` skips it), new executions are
+refused with 409 `WORKFLOW_ARCHIVED`, and the default listing leaves it out.
+Executions already queued or running finish. Unarchiving restores `published`
+(or `draft` if never published).
 
 A published version records its author: `published_by` is the id of the
 user whose session published it (migration `0011_version_author`; null for

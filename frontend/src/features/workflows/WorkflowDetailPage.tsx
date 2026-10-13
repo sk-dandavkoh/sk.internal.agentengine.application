@@ -6,6 +6,7 @@ import { ApiError, errorMessage } from '../../api/errors'
 import {
     useDeleteWorkflow,
     useDuplicateWorkflow,
+    useSetWorkflowArchived,
     useUpdateWorkflow,
 } from '../../api/mutations'
 import { exportWorkflow, type Workflow } from '../../api/workflows'
@@ -30,7 +31,7 @@ import { WorkflowStatusBadge } from './WorkflowStatusBadge'
 import { SharingCard } from './SharingCard'
 import { allows } from './access'
 
-type Action = 'edit' | 'duplicate' | 'delete' | null
+type Action = 'edit' | 'duplicate' | 'archive' | 'delete' | null
 
 const workflowPath = (id: string) => `/workflows/${encodeURIComponent(id)}`
 
@@ -145,6 +146,8 @@ function WorkflowView({ workflow }: { workflow: Workflow }) {
     const update = useUpdateWorkflow()
     const duplicate = useDuplicateWorkflow()
     const remove = useDeleteWorkflow()
+    const archive = useSetWorkflowArchived()
+    const archived = workflow.status === 'archived'
     const queryClient = useQueryClient()
     const navigate = useNavigate()
     const toast = useToast()
@@ -153,6 +156,7 @@ function WorkflowView({ workflow }: { workflow: Workflow }) {
         update.reset()
         duplicate.reset()
         remove.reset()
+        archive.reset()
         setAction(null)
     }
     // A conflict means our copy is stale: reload it, so the user sees what
@@ -208,6 +212,15 @@ function WorkflowView({ workflow }: { workflow: Workflow }) {
                         >
                             Duplicate
                         </Button>
+                        {allows(access, 'manage') && (
+                            <Button
+                                onClick={() => {
+                                    setAction('archive')
+                                }}
+                            >
+                                {archived ? 'Unarchive' : 'Archive'}
+                            </Button>
+                        )}
                         {allows(access, 'manage') && (
                             <Button
                                 variant="danger"
@@ -290,6 +303,34 @@ function WorkflowView({ workflow }: { workflow: Workflow }) {
                 }}
             />
             <ConfirmDialog
+                open={action === 'archive'}
+                onCancel={close}
+                title={archived ? 'Unarchive workflow?' : 'Archive workflow?'}
+                confirmLabel={archived ? 'Unarchive' : 'Archive'}
+                pending={archive.isPending}
+                error={archive.error ? errorMessage(archive.error) : undefined}
+                onConfirm={() => {
+                    archive.mutate(
+                        { workflowId: workflow.id, archived: !archived },
+                        {
+                            onSuccess: () => {
+                                close()
+                                toast.notify({
+                                    tone: 'success',
+                                    title: archived
+                                        ? `Workflow “${workflow.name}” unarchived`
+                                        : `Workflow “${workflow.name}” archived`,
+                                })
+                            },
+                        },
+                    )
+                }}
+            >
+                {archived
+                    ? `“${workflow.name}” can run again and its triggers fire again.`
+                    : `“${workflow.name}” keeps its versions and execution history, but its triggers stop, it cannot be run and it is hidden from the workflow list. You can unarchive it later.`}
+            </ConfirmDialog>
+            <ConfirmDialog
                 open={action === 'delete'}
                 onCancel={close}
                 title="Delete workflow?"
@@ -311,7 +352,7 @@ function WorkflowView({ workflow }: { workflow: Workflow }) {
                 }}
             >
                 “{workflow.name}” and its draft will be deleted. Workflows with
-                published versions cannot be deleted.
+                published versions cannot be deleted; archive them instead.
             </ConfirmDialog>
         </>
     )

@@ -561,6 +561,23 @@ class Workflow(Entity):
         self._touch(snapshot.published_at)
         return snapshot
 
+    def archive(self) -> None:
+        """Retire the workflow (vision §7). Published versions and execution
+        history stay; its triggers stop and no new execution may start."""
+        if self.status is not WorkflowStatus.ARCHIVED:
+            self.status = WorkflowStatus.ARCHIVED
+            self._touch(utcnow())
+
+    def unarchive(self) -> None:
+        """Back to the status it would have without archiving."""
+        if self.status is WorkflowStatus.ARCHIVED:
+            self.status = (
+                WorkflowStatus.PUBLISHED
+                if self.current_version
+                else WorkflowStatus.DRAFT
+            )
+            self._touch(utcnow())
+
     def _touch(self, at: datetime) -> None:
         self.timestamps = Timestamps(
             created_at=self.timestamps.created_at, updated_at=at

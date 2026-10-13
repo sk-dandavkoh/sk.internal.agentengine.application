@@ -265,6 +265,8 @@ void workflows.updateWorkflow(recorder, 'p', {
 void workflows.duplicateWorkflow(recorder, 'p', 'copy', 1)
 void workflows.restoreWorkflowVersion(recorder, 'p', 1, 2)
 void workflows.deleteWorkflow(recorder, 'p')
+void workflows.archiveWorkflow(recorder, 'p')
+void workflows.unarchiveWorkflow(recorder, 'p')
 void workflows.validateWorkflow(recorder, 'p', 1)
 void workflows.publishWorkflow(recorder, 'p', 1)
 void workflows.listWorkflowVersions(recorder, 'p')
